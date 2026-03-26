@@ -1,25 +1,31 @@
 <?php
 require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../config/security.php';
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-if (!isset($_SESSION['user_id'])) {
-    session_unset();
-    session_destroy();
+/*
+|--------------------------------------------------------------------------
+| Gestion simple de session
+|--------------------------------------------------------------------------
+| - si l’utilisateur n’est pas connecté -> retour login
+| - si session inactive trop longtemps -> déconnexion
+|--------------------------------------------------------------------------
+*/
+$maxInactivity = 60 * 60 * 4; // 4 heures
 
-    header('Location: ' . APP_URL . 'login.php?error=Veuillez%20vous%20connecter');
+if (empty($_SESSION['user_id'])) {
+    header('Location: ' . APP_URL . 'login.php?error=' . urlencode('Merci de vous connecter.'));
     exit;
 }
 
-$timeout = 3600;
-
-if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity']) > $timeout) {
+if (!empty($_SESSION['last_activity']) && (time() - (int)$_SESSION['last_activity']) > $maxInactivity) {
     session_unset();
     session_destroy();
 
-    header('Location: ' . APP_URL . 'login.php?error=Session%20expir%C3%A9e');
+    header('Location: ' . APP_URL . 'login.php?error=' . urlencode('Session expirée.'));
     exit;
 }
 

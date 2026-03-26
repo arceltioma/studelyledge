@@ -6,165 +6,159 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-$pagePermission = 'admin_roles_manage';
-enforcePagePermission($pdo, $pagePermission);
+enforcePagePermission($pdo, 'admin_roles_manage');
 
 require_once __DIR__ . '/../../includes/header.php';
 
-$successMessage = $_SESSION['admin_success'] ?? '';
-$errorMessage = $_SESSION['admin_error'] ?? '';
-unset($_SESSION['admin_success'], $_SESSION['admin_error']);
-
-$roles = $pdo->query("
-    SELECT id, role_code, role_name
-    FROM roles
-    ORDER BY id ASC
-")->fetchAll(PDO::FETCH_ASSOC);
-
-$permissions = $pdo->query("
-    SELECT id, permission_code, permission_name, module_name
-    FROM permissions
-    ORDER BY module_name ASC, permission_code ASC
-")->fetchAll(PDO::FETCH_ASSOC);
-
-$permissionsByModule = [];
-foreach ($permissions as $permission) {
-    $module = $permission['module_name'] ?: 'autre';
-    $permissionsByModule[$module][] = $permission;
+if (tableExists($pdo, 'roles') === false) {
+    $pdo->exec("
+        CREATE TABLE roles (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            code VARCHAR(100) NOT NULL UNIQUE,
+            label VARCHAR(150) NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
 }
 
-$currentMatrix = [];
-$matrixRows = $pdo->query("
-    SELECT role_id, permission_id
-    FROM role_permissions
-")->fetchAll(PDO::FETCH_ASSOC);
-
-foreach ($matrixRows as $row) {
-    $currentMatrix[(int)$row['role_id']][(int)$row['permission_id']] = true;
+if (tableExists($pdo, 'permissions') === false) {
+    $pdo->exec("
+        CREATE TABLE permissions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            code VARCHAR(120) NOT NULL UNIQUE,
+            label VARCHAR(180) NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
 }
+
+if (tableExists($pdo, 'role_permissions') === false) {
+    $pdo->exec("
+        CREATE TABLE role_permissions (
+            role_id INT NOT NULL,
+            permission_id INT NOT NULL,
+            PRIMARY KEY(role_id, permission_id),
+            CONSTRAINT fk_role_permissions_role FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE,
+            CONSTRAINT fk_role_permissions_permission FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+}
+
+$permissionSeeds = [
+    ['dashboard_view', 'Voir dashboard'],
+    ['clients_view', 'Voir clients'],
+    ['clients_create', 'Créer / modifier clients'],
+    ['operations_view', 'Voir opérations'],
+    ['operations_create', 'Créer / modifier opérations'],
+    ['treasury_view', 'Gérer comptes internes'],
+    ['imports_preview', 'Prévisualiser imports'],
+    ['imports_validate', 'Valider imports'],
+    ['imports_journal', 'Voir journal imports'],
+    ['statements_export', 'Exporter relevés et fiches'],
+    ['admin_dashboard_view', 'Voir dashboard admin technique'],
+    ['admin_users_manage', 'Gérer utilisateurs'],
+    ['admin_roles_manage', 'Gérer rôles'],
+    ['admin_logs_view', 'Voir logs'],
+];
+
+foreach ($permissionSeeds as [$code, $label]) {
+    $stmt = $pdo->prepare("SELECT id FROM permissions WHERE code = ? LIMIT 1");
+    $stmt->execute([$code]);
+    if (!$stmt->fetch()) {
+        $insert = $pdo->prepare("INSERT INTO permissions (code, label, created_at) VALUES (?, ?, NOW())");
+        $insert->execute([$code, $label]);
+    }
+}
+
+$successMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $postedMatrix = $_POST['matrix'] ?? [];
+    $roleId = (int)($_POST['role_id'] ?? 0);
+    $permissionIds = array_map('intval', $_POST['permission_ids'] ?? []);
 
-    try {
+    if ($roleId > 0) {
         $pdo->beginTransaction();
+        $stmtDelete = $pdo->prepare("DELETE FROM role_permissions WHERE role_id = ?");
+        $stmtDelete->execute([$roleId]);
 
-        $pdo->exec("DELETE FROM role_permissions");
-
-        $insert = $pdo->prepare("
-            INSERT INTO role_permissions (role_id, permission_id, created_at)
-            VALUES (?, ?, NOW())
-        ");
-
-        foreach ($roles as $role) {
-            $roleId = (int)$role['id'];
-
-            if (!isset($postedMatrix[$roleId]) || !is_array($postedMatrix[$roleId])) {
-                continue;
-            }
-
-            foreach ($postedMatrix[$roleId] as $permissionId => $value) {
-                $permissionId = (int)$permissionId;
-                if ($permissionId <= 0) {
-                    continue;
-                }
-
-                $insert->execute([$roleId, $permissionId]);
-            }
+        foreach ($permissionIds as $permissionId) {
+            $stmtInsert = $pdo->prepare("INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)");
+            $stmtInsert->execute([$roleId, $permissionId]);
         }
-
-        logUserAction(
-            $pdo,
-            (int)$_SESSION['user_id'],
-            'update_access_matrix',
-            'admin',
-            'role_permissions',
-            null,
-            'Sauvegarde complète de la matrice des accès'
-        );
 
         $pdo->commit();
-
-        $_SESSION['admin_success'] = 'La matrice des accès a été sauvegardée avec succès.';
-        header('Location: ' . APP_URL . 'modules/admin/access_matrix.php');
-        exit;
-    } catch (Throwable $e) {
-        if ($pdo->inTransaction()) {
-            $pdo->rollBack();
-        }
-        $errorMessage = 'Erreur lors de la sauvegarde : ' . $e->getMessage();
+        $successMessage = 'Matrice mise à jour.';
     }
+}
+
+$roles = $pdo->query("SELECT * FROM roles ORDER BY label ASC")->fetchAll(PDO::FETCH_ASSOC);
+$permissions = $pdo->query("SELECT * FROM permissions ORDER BY label ASC")->fetchAll(PDO::FETCH_ASSOC);
+
+$selectedRoleId = (int)($_GET['role_id'] ?? $_POST['role_id'] ?? ($roles[0]['id'] ?? 0));
+
+$assigned = [];
+if ($selectedRoleId > 0) {
+    $stmtAssigned = $pdo->prepare("SELECT permission_id FROM role_permissions WHERE role_id = ?");
+    $stmtAssigned->execute([$selectedRoleId]);
+    $assigned = array_map('intval', $stmtAssigned->fetchAll(PDO::FETCH_COLUMN));
 }
 ?>
 
 <div class="layout">
-    <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
+<?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
+<div class="main">
+    <?php render_app_header_bar(
+        'Matrice d’accès',
+        'Liste des accès possibles à cocher et affecter à chaque rôle.'
+    ); ?>
 
-    <div class="main">
-        <?php render_app_header_bar('Matrice des accès', 'Pilotage complet des permissions de l’application.'); ?>
+    <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
 
-        <?php if ($successMessage): ?>
-            <div class="success auto-hide"><?= e($successMessage) ?></div>
-        <?php endif; ?>
-
-        <?php if ($errorMessage): ?>
-            <div class="error"><?= e($errorMessage) ?></div>
-        <?php endif; ?>
-
+    <div class="form-card">
         <form method="POST">
-            <div class="table-card">
+            <div>
+                <label>Rôle</label>
+                <select name="role_id" onchange="this.form.submit()">
+                    <?php foreach ($roles as $role): ?>
+                        <option value="<?= (int)$role['id'] ?>" <?= $selectedRoleId === (int)$role['id'] ? 'selected' : '' ?>>
+                            <?= e($role['label'] ?? '') ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div class="table-card" style="margin-top:20px;padding:0;box-shadow:none;border:none;">
                 <table>
                     <thead>
                         <tr>
-                            <th>Module</th>
-                            <th>Permission</th>
+                            <th>Accorder</th>
                             <th>Code</th>
-                            <?php foreach ($roles as $role): ?>
-                                <th><?= e($role['role_name']) ?></th>
-                            <?php endforeach; ?>
+                            <th>Libellé</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($permissionsByModule as $moduleName => $modulePermissions): ?>
-                            <?php foreach ($modulePermissions as $index => $permission): ?>
-                                <tr>
-                                    <?php if ($index === 0): ?>
-                                        <td rowspan="<?= count($modulePermissions) ?>">
-                                            <span class="status-pill status-info"><?= e($moduleName) ?></span>
-                                        </td>
-                                    <?php endif; ?>
-
-                                    <td><?= e($permission['permission_name']) ?></td>
-                                    <td><code><?= e($permission['permission_code']) ?></code></td>
-
-                                    <?php foreach ($roles as $role): ?>
-                                        <?php
-                                            $roleId = (int)$role['id'];
-                                            $permissionId = (int)$permission['id'];
-                                            $isChecked = !empty($currentMatrix[$roleId][$permissionId]);
-                                        ?>
-                                        <td style="text-align:center;">
-                                            <input
-                                                type="checkbox"
-                                                name="matrix[<?= $roleId ?>][<?= $permissionId ?>]"
-                                                value="1"
-                                                <?= $isChecked ? 'checked' : '' ?>
-                                                style="width:auto;margin:0;transform:scale(1.15);"
-                                            >
-                                        </td>
-                                    <?php endforeach; ?>
-                                </tr>
-                            <?php endforeach; ?>
+                        <?php foreach ($permissions as $permission): ?>
+                            <tr>
+                                <td>
+                                    <input type="checkbox" name="permission_ids[]" value="<?= (int)$permission['id'] ?>" <?= in_array((int)$permission['id'], $assigned, true) ? 'checked' : '' ?>>
+                                </td>
+                                <td><?= e($permission['code'] ?? '') ?></td>
+                                <td><?= e($permission['label'] ?? '') ?></td>
+                            </tr>
                         <?php endforeach; ?>
+                        <?php if (!$permissions): ?>
+                            <tr><td colspan="3">Aucune permission.</td></tr>
+                        <?php endif; ?>
                     </tbody>
                 </table>
+            </div>
 
-                <div class="btn-group" style="margin-top:18px;">
-                    <button type="submit" class="btn btn-success">Sauvegarder les droits</button>
-                </div>
+            <div class="btn-group" style="margin-top:20px;">
+                <button type="submit" class="btn btn-success">Enregistrer la matrice</button>
             </div>
         </form>
-
-        <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
+
+    <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
+</div>
 </div>
