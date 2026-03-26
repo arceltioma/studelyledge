@@ -1,0 +1,4 @@
+account_label;account_code;subsidiary_name;zone_code;country_label;country_type;payment_place;currency_code
+Fr_LCL_C;5120101;Studely;EU;France;Siege;France;EUR
+CM_BAC;5120401;Studely;AC;Cameroun;Filiale;Local;XAF
+SN_ECOBQ;5120502;Studely;AO;Sénégal;Filiale;Local;XOF

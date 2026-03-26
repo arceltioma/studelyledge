@@ -1,0 +1,4 @@
+client_code;first_name;last_name;email;phone;origin_country;destination_country;commercial_country;client_type;client_status;main_service;currency_code;treasury_account_code
+000000001;Arnaud;Meka;arnaud.meka@studelyledger.com;0600000001;Cameroun;France;Cameroun;Nouveau Client;Etudiant Actif;FRAIS DE SERVICES AVI;EUR;5120401
+000000002;Sonia;Diallo;sonia.diallo@studelyledger.com;0600000002;Sénégal;France;Sénégal;Actualisation AVI;Etudiant Actif;FRAIS DE SERVICES AVI;EUR;5120502
+000000003;Yanis;Benali;yanis.benali@studelyledger.com;0600000003;Algérie;Belgique;France;Renouvellement AVI;Etudiant en attente;COMMISSION DE TRANSFERT;EUR;5121701
