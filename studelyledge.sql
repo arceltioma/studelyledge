@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Hôte : 127.0.0.1
--- Généré le : jeu. 26 mars 2026 à 23:58
+-- Généré le : sam. 28 mars 2026 à 01:16
 -- Version du serveur : 10.4.32-MariaDB
 -- Version de PHP : 8.2.12
 
@@ -395,6 +395,40 @@ CREATE TABLE `role_permissions` (
   `permission_id` int(11) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+--
+-- Déchargement des données de la table `role_permissions`
+--
+
+INSERT INTO `role_permissions` (`role_id`, `permission_id`) VALUES
+(1, 1),
+(1, 2),
+(1, 3),
+(1, 4),
+(1, 5),
+(1, 6),
+(1, 7),
+(1, 8),
+(1, 9),
+(1, 10),
+(1, 11),
+(1, 12),
+(1, 13),
+(1, 14),
+(2, 1),
+(2, 2),
+(2, 3),
+(2, 4),
+(2, 5),
+(2, 6),
+(2, 7),
+(2, 8),
+(2, 9),
+(2, 10),
+(3, 1),
+(3, 2),
+(3, 4),
+(3, 10);
+
 -- --------------------------------------------------------
 
 --
@@ -436,6 +470,23 @@ INSERT INTO `service_accounts` (`id`, `account_code`, `account_label`, `operatio
 (13, '7061313', 'FRAIS DE SERVICE AVI FRANCE-Mali', 'FRAIS DE SERVICES AVI', 'France', 'Mali', 4, 1, 0.00, 1, '2026-03-26 01:59:08', NULL),
 (14, '7061314', 'FRAIS DE SERVICE AVI FRANCE-Togo', 'FRAIS DE SERVICES AVI', 'France', 'Togo', 4, 1, 0.00, 1, '2026-03-26 01:59:08', NULL),
 (15, '706206', 'FRAIS DE GESTION-Côte d\'Ivoire', 'FRAIS DE GESTION', NULL, 'Côte d\'Ivoire', 3, 1, 0.00, 1, '2026-03-26 01:59:08', NULL);
+
+-- --------------------------------------------------------
+
+--
+-- Structure de la table `support_requests`
+--
+
+CREATE TABLE `support_requests` (
+  `id` int(11) NOT NULL,
+  `user_id` int(11) DEFAULT NULL,
+  `username` varchar(100) DEFAULT NULL,
+  `request_type` varchar(50) NOT NULL,
+  `subject` varchar(255) NOT NULL,
+  `message` text NOT NULL,
+  `status` varchar(50) NOT NULL DEFAULT 'open',
+  `created_at` datetime NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -514,6 +565,7 @@ CREATE TABLE `users` (
   `password` varchar(255) NOT NULL,
   `role` varchar(50) NOT NULL DEFAULT 'user',
   `role_id` int(11) DEFAULT NULL,
+  `last_login_at` datetime DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
@@ -521,8 +573,8 @@ CREATE TABLE `users` (
 -- Déchargement des données de la table `users`
 --
 
-INSERT INTO `users` (`id`, `username`, `password`, `role`, `role_id`, `created_at`) VALUES
-(1, 'admin', '$2y$10$TLhKOHu6WQmUROqhcksMpuKGeS5VBykyuo3cMb1abDm6l8psZOV/6', 'admin', NULL, '2026-03-26 00:47:07');
+INSERT INTO `users` (`id`, `username`, `password`, `role`, `role_id`, `last_login_at`, `created_at`) VALUES
+(1, 'admin', '$2y$10$TLhKOHu6WQmUROqhcksMpuKGeS5VBykyuo3cMb1abDm6l8psZOV/6', 'admin', 1, NULL, '2026-03-26 00:47:07');
 
 -- --------------------------------------------------------
 
@@ -637,6 +689,13 @@ ALTER TABLE `service_accounts`
   ADD UNIQUE KEY `account_code` (`account_code`);
 
 --
+-- Index pour la table `support_requests`
+--
+ALTER TABLE `support_requests`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `fk_support_requests_user` (`user_id`);
+
+--
 -- Index pour la table `treasury_accounts`
 --
 ALTER TABLE `treasury_accounts`
@@ -710,7 +769,7 @@ ALTER TABLE `operations`
 -- AUTO_INCREMENT pour la table `permissions`
 --
 ALTER TABLE `permissions`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=15;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=29;
 
 --
 -- AUTO_INCREMENT pour la table `ref_operation_types`
@@ -728,13 +787,19 @@ ALTER TABLE `ref_services`
 -- AUTO_INCREMENT pour la table `roles`
 --
 ALTER TABLE `roles`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT pour la table `service_accounts`
 --
 ALTER TABLE `service_accounts`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=22;
+
+--
+-- AUTO_INCREMENT pour la table `support_requests`
+--
+ALTER TABLE `support_requests`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT pour la table `treasury_accounts`
@@ -804,6 +869,12 @@ ALTER TABLE `ref_services`
 ALTER TABLE `role_permissions`
   ADD CONSTRAINT `fk_role_permissions_permission` FOREIGN KEY (`permission_id`) REFERENCES `permissions` (`id`) ON DELETE CASCADE,
   ADD CONSTRAINT `fk_role_permissions_role` FOREIGN KEY (`role_id`) REFERENCES `roles` (`id`) ON DELETE CASCADE;
+
+--
+-- Contraintes pour la table `support_requests`
+--
+ALTER TABLE `support_requests`
+  ADD CONSTRAINT `fk_support_requests_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL;
 
 --
 -- Contraintes pour la table `treasury_movements`

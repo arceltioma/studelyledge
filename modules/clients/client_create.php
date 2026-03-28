@@ -5,10 +5,9 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
 enforcePagePermission($pdo, 'clients_create');
-
-require_once __DIR__ . '/../../includes/header.php';
 
 function clientOld(string $key, mixed $default = ''): string
 {
@@ -29,6 +28,10 @@ $errorMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
+        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+            throw new RuntimeException('Jeton CSRF invalide.');
+        }
+
         $clientCode = trim((string)($_POST['client_code'] ?? ''));
         $firstName = trim((string)($_POST['first_name'] ?? ''));
         $lastName = trim((string)($_POST['last_name'] ?? ''));
@@ -87,8 +90,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 currency,
                 generated_client_account,
                 initial_treasury_account_id,
+                is_active,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW())
         ");
         $stmtClient->execute([
             $clientCode,
@@ -116,8 +120,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 country,
                 initial_balance,
                 balance,
+                is_active,
                 created_at
-            ) VALUES (?, ?, ?, ?, ?, NOW())
+            ) VALUES (?, ?, ?, ?, ?, 1, NOW())
         ");
         $stmtBank->execute([
             $generatedClientAccount,
@@ -132,15 +137,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmtLink = $pdo->prepare("
             INSERT INTO client_bank_accounts (
                 client_id,
-                bank_account_id
-            ) VALUES (?, ?)
+                bank_account_id,
+                created_at
+            ) VALUES (?, ?, NOW())
         ");
         $stmtLink->execute([$clientId, $bankAccountId]);
 
+        if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+            logUserAction(
+                $pdo,
+                (int)$_SESSION['user_id'],
+                'create_client',
+                'clients',
+                'client',
+                $clientId,
+                'Création du client ' . $clientCode . ' - ' . $fullName
+            );
+        }
+
         $pdo->commit();
 
-        $successMessage = 'Client créé avec succès.';
-        $_POST = [];
+        header('Location: ' . APP_URL . 'modules/clients/client_view.php?id=' . $clientId);
+        exit;
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
@@ -148,16 +166,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errorMessage = $e->getMessage();
     }
 }
+
+$pageTitle = 'Créer un client';
+$pageSubtitle = 'Création complète : identité, périmètre pays, rattachement financier, compte client généré.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
     <div class="main">
-        <?php render_app_header_bar(
-            'Créer un client',
-            'Création complète : identité, périmètre pays, rattachement financier, compte client généré.'
-        ); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
         <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
@@ -165,6 +184,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="dashboard-grid-2">
             <div class="form-card">
                 <form method="POST">
+                    <?= csrf_input() ?>
                     <h3 class="section-title">Fiche client</h3>
 
                     <div class="dashboard-grid-2">
@@ -176,9 +196,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <div>
                             <label>Devise</label>
                             <select name="currency">
-                                <?php foreach (['EUR', 'XAF', 'XOF', 'USD'] as $currency): ?>
-                                    <option value="<?= e($currency) ?>" <?= clientOld('currency', 'EUR') === $currency ? 'selected' : '' ?>>
-                                        <?= e($currency) ?>
+                                <?php foreach (['EUR', 'XAF', 'XOF', 'USD'] as $curr): ?>
+                                    <option value="<?= e($curr) ?>" <?= clientOld('currency', 'EUR') === $curr ? 'selected' : '' ?>>
+                                        <?= e($curr) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -247,9 +267,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                     </div>
 
-                    <div class="btn-group" style="margin-top:20px;">
+                    <div class="btn-group">
                         <button type="submit" class="btn btn-success">Créer le client</button>
-                        <a href="<?= APP_URL ?>modules/clients/clients_list.php" class="btn btn-outline">Retour</a>
+                        <a href="<?= e(APP_URL) ?>modules/clients/clients_list.php" class="btn btn-outline">Retour</a>
                     </div>
                 </form>
             </div>
@@ -257,11 +277,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <div class="dashboard-panel">
                 <h3 class="section-title">Ce que la création fait</h3>
                 <div class="dashboard-note">
-                    À la création, le client reçoit automatiquement :
-                    <br>• un compte client généré en 411 + code client
-                    <br>• un compte bancaire lié
-                    <br>• un solde initial de 15 000
-                    <br>• un rattachement possible à un compte interne 512
+                    Le client reçoit automatiquement un compte 411 généré, un compte bancaire lié, et un solde initial de 15 000.
                 </div>
             </div>
         </div>
@@ -269,3 +285,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

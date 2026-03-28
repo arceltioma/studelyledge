@@ -631,3 +631,8 @@ pre{
     gap:18px;
     flex-wrap:wrap;
 }
+
+.header-user-badge{
+    cursor:default;
+    pointer-events:none;
+}

@@ -1,44 +1,39 @@
 <?php
-if (!defined('APP_URL')) {
-    require_once __DIR__ . '/../config/app.php';
-}
-
-if (!function_exists('e')) {
-    function e(?string $value): string
-    {
-        return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8');
-    }
-}
-
-$appName = defined('APP_NAME') ? APP_NAME : 'StudelyLedger';
-$currentTitle = $pageTitle ?? $appName;
+require_once __DIR__ . '/../config/app.php';
+require_once __DIR__ . '/../config/security.php';
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+$pageTitleValue = $pageTitle ?? APP_NAME;
+$pageSubtitleValue = $pageSubtitle ?? 'Pilotage financier, audit et gouvernance';
 $username = $_SESSION['username'] ?? 'Utilisateur';
-$role = $_SESSION['role'] ?? 'user';
 ?>
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= e($currentTitle) ?></title>
-    <link rel="stylesheet" href="<?= e(APP_URL) ?>assets/css/style.css">
-</head>
-<body>
-<div class="app-shell">
-    <div class="topbar">
-        <div class="topbar-left">
-            <span class="topbar-badge">StudelyLedger</span>
-        </div>
 
-        <div class="topbar-right">
-            <div class="topbar-user">
-                <span class="topbar-user-name"><?= e($username) ?></span>
-                <span class="topbar-user-role"><?= e($role) ?></span>
-            </div>
+<header class="studely-header">
+
+    <div class="header-left">
+        <div class="header-titles">
+            <div class="header-overline">Studely Ledger</div>
+            <h1 class="header-title"><?= e($pageTitleValue) ?></h1>
+            <div class="header-subtitle"><?= e($pageSubtitleValue) ?></div>
         </div>
     </div>
+
+    <div class="header-right">
+
+        <div class="header-user">
+            <span class="header-user-label">Connecté</span>
+            <strong><?= e($username) ?></strong>
+        </div>
+
+        <div class="header-actions">
+            <a href="<?= e(APP_URL) ?>modules/support/request_access.php" class="btn btn-secondary">Accès</a>
+            <a href="<?= e(APP_URL) ?>modules/support/report_bug.php" class="btn btn-danger">Bug</a>
+            <a href="<?= e(APP_URL) ?>modules/support/ask_question.php" class="btn btn-outline">Question</a>
+        </div>
+
+    </div>
+
+</header>

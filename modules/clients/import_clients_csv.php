@@ -5,10 +5,9 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
 enforcePagePermission($pdo, 'clients_create');
-
-require_once __DIR__ . '/../../includes/header.php';
 
 $successMessage = '';
 $errorMessage = '';
@@ -29,11 +28,27 @@ if (tableExists($pdo, 'treasury_accounts')) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
     try {
+        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+            throw new RuntimeException('Jeton CSRF invalide.');
+        }
+
         if (!is_uploaded_file($_FILES['csv_file']['tmp_name'])) {
             throw new RuntimeException('Aucun fichier CSV valide.');
         }
 
-        $handle = fopen($_FILES['csv_file']['tmp_name'], 'r');
+        $importDir = storage_path('imports');
+        if (!is_dir($importDir)) {
+            @mkdir($importDir, 0775, true);
+        }
+
+        $originalName = basename((string)($_FILES['csv_file']['name'] ?? 'clients_import.csv'));
+        $savedPath = $importDir . DIRECTORY_SEPARATOR . date('Ymd_His') . '_' . preg_replace('/[^A-Za-z0-9_\.\-]/', '_', $originalName);
+
+        if (!move_uploaded_file($_FILES['csv_file']['tmp_name'], $savedPath)) {
+            throw new RuntimeException('Impossible d’enregistrer le fichier importé.');
+        }
+
+        $handle = fopen($savedPath, 'r');
         if (!$handle) {
             throw new RuntimeException('Impossible de lire le fichier.');
         }
@@ -53,7 +68,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
 
         while (($data = fgetcsv($handle, 0, ';')) !== false) {
             $lineNo++;
-
             $row = [];
             foreach ($headers as $i => $header) {
                 $row[$header] = $data[$i] ?? null;
@@ -213,21 +227,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
 
         fclose($handle);
 
+        if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+            logUserAction(
+                $pdo,
+                (int)$_SESSION['user_id'],
+                'import_clients_csv',
+                'clients',
+                'import',
+                null,
+                "Import clients terminé. Créés : {$created}, mis à jour : {$updated}, rejetés : {$rejected}."
+            );
+        }
+
         $successMessage = "Import terminé. Créés : {$created}, mis à jour : {$updated}, rejetés : {$rejected}.";
     } catch (Throwable $e) {
         $errorMessage = $e->getMessage();
     }
 }
+
+$pageTitle = 'Import CSV clients';
+$pageSubtitle = 'Création ou mise à jour en masse des clients, avec génération automatique des comptes liés.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
     <div class="main">
-        <?php render_app_header_bar(
-            'Import CSV clients',
-            'Création ou mise à jour en masse des clients, avec génération automatique des comptes liés.'
-        ); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
         <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
@@ -237,11 +264,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                 <h3 class="section-title">Importer</h3>
 
                 <form method="POST" enctype="multipart/form-data">
+                    <?= csrf_input() ?>
+
                     <label>Fichier CSV</label>
                     <input type="file" name="csv_file" accept=".csv" required>
 
-                    <div class="btn-group" style="margin-top:20px;">
+                    <div class="btn-group">
                         <button type="submit" class="btn btn-success">Importer les clients</button>
+                        <a href="<?= e(APP_URL) ?>modules/clients/clients_list.php" class="btn btn-outline">Retour</a>
                     </div>
                 </form>
             </div>
@@ -255,7 +285,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         </div>
 
         <?php if ($report): ?>
-            <div class="table-card" style="margin-top:20px;">
+            <div class="table-card">
                 <h3 class="section-title">Rejets</h3>
                 <ul>
                     <?php foreach ($report as $line): ?>
@@ -268,3 +298,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

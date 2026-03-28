@@ -1,12 +1,4 @@
 <?php
-/*
-|--------------------------------------------------------------------------
-| StudelyLedger Footer
-|--------------------------------------------------------------------------
-| À inclure avant la fermeture globale de l’application.
-|--------------------------------------------------------------------------
-*/
-
 $dbStatus = 'Inconnu';
 $connectedUsersCount = '—';
 $openSupportCount = '—';
@@ -16,14 +8,6 @@ try {
     if (isset($pdo) && $pdo instanceof PDO) {
         $dbStatus = 'Connectée';
 
-        /*
-        |--------------------------------------------------------------------------
-        | Utilisateurs "connectés"
-        |--------------------------------------------------------------------------
-        | Si la colonne last_login_at existe, on compte les connexions récentes.
-        | Sinon on prend simplement le nombre d’utilisateurs actifs ou total.
-        |--------------------------------------------------------------------------
-        */
         if (
             function_exists('tableExists') &&
             function_exists('columnExists') &&
@@ -51,11 +35,6 @@ try {
             }
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Requêtes support en attente
-        |--------------------------------------------------------------------------
-        */
         if (function_exists('tableExists') && tableExists($pdo, 'support_requests')) {
             if (function_exists('columnExists') && columnExists($pdo, 'support_requests', 'status')) {
                 $stmtSupport = $pdo->query("
@@ -72,15 +51,6 @@ try {
             $openSupportCount = 0;
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Imports en cours
-        |--------------------------------------------------------------------------
-        | Compatibilité :
-        | - import_batches si présent
-        | - sinon imports
-        |--------------------------------------------------------------------------
-        */
         if (function_exists('tableExists') && tableExists($pdo, 'import_batches')) {
             $stmtImports = $pdo->query("
                 SELECT COUNT(*)
@@ -151,9 +121,9 @@ try {
     </div>
 
     <div class="footer-links">
-        <a href="<?= APP_URL ?>pages/sitemap.php" class="btn btn-outline">Sitemap</a>
-        <a href="<?= APP_URL ?>pages/copyright.php" class="btn btn-secondary">Copyright</a>
-        <a href="<?= APP_URL ?>pages/contact.php" class="btn btn-primary">Contacts</a>
+        <a href="<?= e(APP_URL) ?>pages/sitemap.php" class="btn btn-outline">Sitemap</a>
+        <a href="<?= e(APP_URL) ?>pages/copyright.php" class="btn btn-secondary">Copyright</a>
+        <a href="<?= e(APP_URL) ?>pages/contact.php" class="btn btn-primary">Contacts</a>
     </div>
 
 </footer>
@@ -169,7 +139,7 @@ try {
         <div class="btn-group" style="margin-top:0;">
             <button id="acceptCookies" class="btn btn-success" type="button">Accepter</button>
             <button id="rejectCookies" class="btn btn-danger" type="button">Refuser</button>
-            <a href="<?= APP_URL ?>pages/cookies_policy.php" class="btn btn-outline">En savoir plus</a>
+            <a href="<?= e(APP_URL) ?>pages/cookies_policy.php" class="btn btn-outline">En savoir plus</a>
         </div>
     </div>
 </div>
@@ -203,7 +173,3 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 });
 </script>
-
-</div> <!-- fermeture .app-shell -->
-</body>
-</html>

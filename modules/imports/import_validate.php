@@ -5,6 +5,7 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
 enforcePagePermission($pdo, 'imports_validate');
 
@@ -13,6 +14,17 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 if (empty($_SESSION['statement_import_preview']['rows'])) {
+    header('Location: ' . APP_URL . 'modules/imports/import_preview.php');
+    exit;
+}
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    header('Location: ' . APP_URL . 'modules/imports/import_preview.php');
+    exit;
+}
+
+if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+    $_SESSION['flash_error'] = 'Jeton CSRF invalide.';
     header('Location: ' . APP_URL . 'modules/imports/import_preview.php');
     exit;
 }
@@ -34,12 +46,12 @@ try {
     $importId = null;
     if (tableExists($pdo, 'imports')) {
         $stmtImport = $pdo->prepare("
-            INSERT INTO imports (file_name, status, created_at)
-            VALUES (?, ?, NOW())
+            INSERT INTO imports (file_name, status, created_at, updated_at)
+            VALUES (?, ?, NOW(), NOW())
         ");
         $stmtImport->execute([
             $_SESSION['statement_import_preview']['file_name'] ?? 'statement.csv',
-            'validated'
+            'processing'
         ]);
         $importId = (int)$pdo->lastInsertId();
     }
@@ -119,8 +131,8 @@ try {
 
             if ($importId && tableExists($pdo, 'import_rows')) {
                 $stmtRow = $pdo->prepare("
-                    INSERT INTO import_rows (import_id, raw_data, status)
-                    VALUES (?, ?, ?)
+                    INSERT INTO import_rows (import_id, raw_data, status, created_at)
+                    VALUES (?, ?, ?, NOW())
                 ");
                 $stmtRow->execute([
                     $importId,
@@ -132,12 +144,12 @@ try {
             $imported++;
         } catch (Throwable $rowError) {
             $rejected++;
-            $messages[] = 'Ligne ' . (int)$row['row_no'] . ' rejetée : ' . $rowError->getMessage();
+            $messages[] = 'Ligne ' . (int)($row['row_no'] ?? 0) . ' rejetée : ' . $rowError->getMessage();
 
             if ($importId && tableExists($pdo, 'import_rows')) {
                 $stmtRow = $pdo->prepare("
-                    INSERT INTO import_rows (import_id, raw_data, status, error_message)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO import_rows (import_id, raw_data, status, error_message, created_at)
+                    VALUES (?, ?, ?, ?, NOW())
                 ");
                 $stmtRow->execute([
                     $importId,
@@ -152,13 +164,25 @@ try {
     if ($importId) {
         $stmtUpdateImport = $pdo->prepare("
             UPDATE imports
-            SET status = ?
+            SET status = ?, updated_at = NOW()
             WHERE id = ?
         ");
         $stmtUpdateImport->execute([
             $rejected > 0 ? 'validated_with_rejections' : 'validated',
             $importId
         ]);
+    }
+
+    if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+        logUserAction(
+            $pdo,
+            (int)$_SESSION['user_id'],
+            'validate_import',
+            'imports',
+            'import',
+            $importId,
+            "Import validé. Lignes importées : {$imported}, rejetées : {$rejected}."
+        );
     }
 
     $pdo->commit();

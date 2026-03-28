@@ -8,14 +8,13 @@ require_once __DIR__ . '/../../includes/permission_middleware.php';
 
 enforcePagePermission($pdo, 'imports_journal');
 
-require_once __DIR__ . '/../../includes/header.php';
-
 function importBadgeClass(string $status): string
 {
     return match ($status) {
         'validated' => 'status-success',
         'validated_with_rejections' => 'status-warning',
         'rejected', 'failed', 'error' => 'status-danger',
+        'processing', 'pending' => 'status-info',
         default => 'status-info',
     };
 }
@@ -46,23 +45,25 @@ if (tableExists($pdo, 'import_rows')) {
     $stmtRejected = $pdo->query("SELECT COUNT(*) FROM import_rows WHERE status = 'rejected'");
     $totals['rejected'] = (int)$stmtRejected->fetchColumn();
 }
+
+$pageTitle = 'Journal des imports';
+$pageSubtitle = 'Le tableau de bord des batchs, de leurs statuts et des lignes à reprendre.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
+
     <div class="main">
-        <?php render_app_header_bar(
-            'Journal des imports',
-            'Le tableau de bord des batchs, de leurs statuts et des lignes à reprendre.'
-        ); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <?php if ($flashSuccess !== ''): ?><div class="success"><?= e($flashSuccess) ?></div><?php endif; ?>
         <?php if ($flashError !== ''): ?><div class="error"><?= e($flashError) ?></div><?php endif; ?>
 
         <?php if ($flashDetails): ?>
-            <div class="warning" style="margin-bottom:20px;">
+            <div class="warning">
                 <strong>Détails :</strong>
-                <ul style="margin-top:8px;">
+                <ul>
                     <?php foreach ($flashDetails as $detail): ?>
                         <li><?= e($detail) ?></li>
                     <?php endforeach; ?>
@@ -76,13 +77,17 @@ if (tableExists($pdo, 'import_rows')) {
             <div class="card"><h3>Rejets</h3><div class="kpi"><?= (int)$totals['rejected'] ?></div></div>
         </div>
 
-        <div class="table-card" style="margin-top:20px;">
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;">
-                <h3 class="section-title">Historique</h3>
+        <div class="table-card">
+            <div class="page-title page-title-inline">
+                <div>
+                    <h3 class="section-title">Historique</h3>
+                    <p class="muted">Suivi des imports réalisés et accès aux rejets.</p>
+                </div>
+
                 <div class="btn-group">
-                    <a class="btn btn-primary" href="<?= APP_URL ?>modules/imports/import_preview.php">Nouveau relevé</a>
-                    <a class="btn btn-outline" href="<?= APP_URL ?>modules/clients/import_clients_csv.php">Import clients</a>
-                    <a class="btn btn-outline" href="<?= APP_URL ?>modules/treasury/import_treasury_csv.php">Import comptes internes</a>
+                    <a class="btn btn-primary" href="<?= e(APP_URL) ?>modules/imports/import_preview.php">Nouveau relevé</a>
+                    <a class="btn btn-outline" href="<?= e(APP_URL) ?>modules/clients/import_clients_csv.php">Import clients</a>
+                    <a class="btn btn-outline" href="<?= e(APP_URL) ?>modules/treasury/import_treasury_csv.php">Import comptes internes</a>
                 </div>
             </div>
 
@@ -95,6 +100,7 @@ if (tableExists($pdo, 'import_rows')) {
                         <th>Date</th>
                         <th>Lignes</th>
                         <th>Rejets</th>
+                        <th>Action</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -117,15 +123,26 @@ if (tableExists($pdo, 'import_rows')) {
                         <tr>
                             <td><?= $importId ?></td>
                             <td><?= e($row['file_name'] ?? '—') ?></td>
-                            <td><span class="status-pill <?= importBadgeClass((string)($row['status'] ?? 'unknown')) ?>"><?= e($row['status'] ?? 'unknown') ?></span></td>
+                            <td>
+                                <span class="status-pill <?= importBadgeClass((string)($row['status'] ?? 'unknown')) ?>">
+                                    <?= e($row['status'] ?? 'unknown') ?>
+                                </span>
+                            </td>
                             <td><?= e($row['created_at'] ?? '') ?></td>
                             <td><?= $rowCount ?></td>
                             <td><?= $rejectCount ?></td>
+                            <td>
+                                <?php if ($rejectCount > 0): ?>
+                                    <a class="btn btn-secondary" href="<?= e(APP_URL) ?>modules/imports/rejected_rows.php?import_id=<?= $importId ?>">Voir rejets</a>
+                                <?php else: ?>
+                                    <span class="muted">—</span>
+                                <?php endif; ?>
+                            </td>
                         </tr>
                     <?php endforeach; ?>
 
                     <?php if (!$rows): ?>
-                        <tr><td colspan="6">Aucun import enregistré.</td></tr>
+                        <tr><td colspan="7">Aucun import enregistré.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
@@ -134,3 +151,5 @@ if (tableExists($pdo, 'import_rows')) {
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

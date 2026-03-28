@@ -8,8 +8,6 @@ require_once __DIR__ . '/../../includes/permission_middleware.php';
 
 enforcePagePermission($pdo, 'clients_view');
 
-require_once __DIR__ . '/../../includes/header.php';
-
 $id = (int)($_GET['id'] ?? 0);
 if ($id <= 0) {
     exit('Client invalide.');
@@ -43,27 +41,30 @@ $stmtOps = $pdo->prepare("
 ");
 $stmtOps->execute([$id]);
 $operations = $stmtOps->fetchAll(PDO::FETCH_ASSOC);
+
+$pageTitle = 'Fiche client';
+$pageSubtitle = 'Vue complète du client, de son compte, de son rattachement financier et de son activité.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
     <div class="main">
-        <?php render_app_header_bar(
-            'Fiche client',
-            'Vue complète du client, de son compte, de son rattachement financier et de son activité.'
-        ); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <div class="page-title">
             <div>
-                <h1><?= e($client['full_name'] ?? '') ?></h1>
+                <h2><?= e($client['full_name'] ?? '') ?></h2>
                 <p class="muted">Code client : <?= e($client['client_code'] ?? '') ?></p>
             </div>
 
             <div class="btn-group">
-                <a class="btn btn-secondary" href="<?= APP_URL ?>modules/clients/client_edit.php?id=<?= (int)$id ?>">Modifier</a>
-                <a class="btn btn-outline" href="<?= APP_URL ?>modules/statements/client_profiles.php">Exporter fiche</a>
-                <a class="btn btn-outline" href="<?= APP_URL ?>modules/statements/account_statements.php">Exporter relevé</a>
+                <a class="btn btn-secondary" href="<?= e(APP_URL) ?>modules/clients/client_edit.php?id=<?= (int)$id ?>">Modifier</a>
+                <a class="btn btn-outline" href="<?= e(APP_URL) ?>modules/clients/archive_client.php?id=<?= (int)$id ?>">
+                    <?= ((int)($client['is_active'] ?? 1) === 1) ? 'Archiver' : 'Réactiver' ?>
+                </a>
+                <a class="btn btn-outline" href="<?= e(APP_URL) ?>modules/statements/account_statements.php">Exporter relevé</a>
             </div>
         </div>
 
@@ -88,7 +89,7 @@ $operations = $stmtOps->fetchAll(PDO::FETCH_ASSOC);
             </div>
         </div>
 
-        <div class="dashboard-grid-2" style="margin-top:20px;">
+        <div class="dashboard-grid-2">
             <div class="card">
                 <h3>Rattachement financier</h3>
                 <div class="stat-row">
@@ -99,30 +100,22 @@ $operations = $stmtOps->fetchAll(PDO::FETCH_ASSOC);
                     <span class="metric-label">Compte client généré</span>
                     <span class="metric-value"><?= e($client['generated_client_account'] ?? '') ?></span>
                 </div>
+                <div class="stat-row">
+                    <span class="metric-label">État</span>
+                    <span class="metric-value"><?= ((int)($client['is_active'] ?? 1) === 1) ? 'Actif' : 'Archivé' ?></span>
+                </div>
             </div>
 
             <div class="card">
                 <h3>Compte du client</h3>
-                <div class="stat-row">
-                    <span class="metric-label">Numéro de compte</span>
-                    <span class="metric-value"><?= e($bankAccount['account_number'] ?? '') ?></span>
-                </div>
-                <div class="stat-row">
-                    <span class="metric-label">Banque</span>
-                    <span class="metric-value"><?= e($bankAccount['bank_name'] ?? '') ?></span>
-                </div>
-                <div class="stat-row">
-                    <span class="metric-label">Solde initial</span>
-                    <span class="metric-value"><?= number_format((float)($bankAccount['initial_balance'] ?? 0), 2, ',', ' ') ?></span>
-                </div>
-                <div class="stat-row">
-                    <span class="metric-label">Solde courant</span>
-                    <span class="metric-value"><?= number_format((float)($bankAccount['balance'] ?? 0), 2, ',', ' ') ?></span>
-                </div>
+                <div class="stat-row"><span class="metric-label">Numéro de compte</span><span class="metric-value"><?= e($bankAccount['account_number'] ?? '') ?></span></div>
+                <div class="stat-row"><span class="metric-label">Banque</span><span class="metric-value"><?= e($bankAccount['bank_name'] ?? '') ?></span></div>
+                <div class="stat-row"><span class="metric-label">Solde initial</span><span class="metric-value"><?= number_format((float)($bankAccount['initial_balance'] ?? 0), 2, ',', ' ') ?></span></div>
+                <div class="stat-row"><span class="metric-label">Solde courant</span><span class="metric-value"><?= number_format((float)($bankAccount['balance'] ?? 0), 2, ',', ' ') ?></span></div>
             </div>
         </div>
 
-        <div class="table-card" style="margin-top:20px;">
+        <div class="table-card">
             <h3 class="section-title">Dernières opérations</h3>
             <table>
                 <thead>
@@ -146,7 +139,6 @@ $operations = $stmtOps->fetchAll(PDO::FETCH_ASSOC);
                             <td><?= e($op['reference'] ?? '') ?></td>
                         </tr>
                     <?php endforeach; ?>
-
                     <?php if (!$operations): ?>
                         <tr><td colspan="6">Aucune opération trouvée pour ce client.</td></tr>
                     <?php endif; ?>
@@ -157,3 +149,5 @@ $operations = $stmtOps->fetchAll(PDO::FETCH_ASSOC);
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

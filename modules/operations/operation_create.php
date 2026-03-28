@@ -5,10 +5,9 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
 enforcePagePermission($pdo, 'operations_create');
-
-require_once __DIR__ . '/../../includes/header.php';
 
 function opOld(string $key, mixed $default = ''): string
 {
@@ -16,7 +15,12 @@ function opOld(string $key, mixed $default = ''): string
 }
 
 $operationTypes = tableExists($pdo, 'ref_operation_types')
-    ? $pdo->query("SELECT id, code, label FROM ref_operation_types ORDER BY label ASC")->fetchAll(PDO::FETCH_ASSOC)
+    ? $pdo->query("
+        SELECT id, code, label
+        FROM ref_operation_types
+        WHERE COALESCE(is_active,1)=1
+        ORDER BY label ASC
+    ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
 
 $services = tableExists($pdo, 'ref_services')
@@ -33,6 +37,7 @@ $services = tableExists($pdo, 'ref_services')
         FROM ref_services rs
         LEFT JOIN service_accounts sa ON sa.id = rs.service_account_id
         LEFT JOIN treasury_accounts ta ON ta.id = rs.treasury_account_id
+        WHERE COALESCE(rs.is_active,1)=1
         ORDER BY rs.label ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
@@ -49,12 +54,18 @@ $clients = tableExists($pdo, 'clients')
             ta.account_label AS treasury_account_label
         FROM clients c
         LEFT JOIN treasury_accounts ta ON ta.id = c.initial_treasury_account_id
+        WHERE COALESCE(c.is_active,1)=1
         ORDER BY c.client_code ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
 
 $treasuryAccounts = tableExists($pdo, 'treasury_accounts')
-    ? $pdo->query("SELECT id, account_code, account_label FROM treasury_accounts ORDER BY account_code ASC")->fetchAll(PDO::FETCH_ASSOC)
+    ? $pdo->query("
+        SELECT id, account_code, account_label
+        FROM treasury_accounts
+        WHERE COALESCE(is_active,1)=1
+        ORDER BY account_code ASC
+    ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
 
 $successMessage = '';
@@ -63,6 +74,10 @@ $preview = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
+        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+            throw new RuntimeException('Jeton CSRF invalide.');
+        }
+
         $operationDate = trim((string)($_POST['operation_date'] ?? date('Y-m-d')));
         $operationTypeId = (int)($_POST['operation_type_id'] ?? 0);
         $serviceId = ($_POST['service_id'] ?? '') !== '' ? (int)$_POST['service_id'] : null;
@@ -90,6 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 break;
             }
         }
+
         if (!$selectedType) {
             throw new RuntimeException('Type d’opération introuvable.');
         }
@@ -104,9 +120,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             if (!$selectedService) {
                 throw new RuntimeException('Service introuvable.');
-            }
-            if (!empty($selectedService['operation_type_id']) && (int)$selectedService['operation_type_id'] !== $operationTypeId) {
-                throw new RuntimeException('Le service n’est pas lié à ce type d’opération.');
             }
         }
 
@@ -153,7 +166,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'reference' => $reference,
             'label' => $label !== '' ? $label : $selectedType['label'],
             'notes' => $notes,
-            'source_treasury_code' => $selectedSourceTreasury['account_code'] ?? ($selectedService['treasury_account_code'] ?? ($selectedClient['treasury_account_code'] ?? null)),
+            'source_treasury_code' => $selectedSourceTreasury['account_code']
+                ?? ($selectedService['treasury_account_code']
+                ?? ($selectedClient['treasury_account_code'] ?? null)),
             'target_treasury_code' => $selectedTargetTreasury['account_code'] ?? null,
         ];
 
@@ -171,7 +186,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($actionMode === 'save') {
                 $pdo->beginTransaction();
 
-                createInternalTreasuryMovement($pdo, [
+                $movementId = createInternalTreasuryMovement($pdo, [
                     'source_treasury_account_id' => $selectedSourceTreasury['id'],
                     'target_treasury_account_id' => $selectedTargetTreasury['id'],
                     'amount' => $amount,
@@ -180,21 +195,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'label' => $payload['label'],
                 ]);
 
+                if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+                    logUserAction(
+                        $pdo,
+                        (int)$_SESSION['user_id'],
+                        'create_internal_treasury_movement',
+                        'operations',
+                        'treasury_movement',
+                        $movementId,
+                        'Création d’un virement interne'
+                    );
+                }
+
                 $pdo->commit();
-                $successMessage = 'Virement interne enregistré.';
-                $_POST = [];
-                $preview = null;
+                header('Location: ' . APP_URL . 'modules/operations/operations_list.php');
+                exit;
             }
         } else {
             $preview = resolveAccountingOperation($pdo, $payload);
 
             if ($actionMode === 'save') {
                 $pdo->beginTransaction();
-                createOperationWithAccounting($pdo, $payload);
+
+                $operationId = createOperationWithAccounting($pdo, $payload);
+
+                if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+                    logUserAction(
+                        $pdo,
+                        (int)$_SESSION['user_id'],
+                        'create_operation',
+                        'operations',
+                        'operation',
+                        $operationId,
+                        'Création d’une opération comptable'
+                    );
+                }
+
                 $pdo->commit();
-                $successMessage = 'Opération enregistrée.';
-                $_POST = [];
-                $preview = null;
+                header('Location: ' . APP_URL . 'modules/operations/operations_list.php');
+                exit;
             }
         }
     } catch (Throwable $e) {
@@ -204,15 +243,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errorMessage = $e->getMessage();
     }
 }
+
+$pageTitle = 'Créer une opération';
+$pageSubtitle = 'Le moteur comptable résout les comptes avant validation.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
+
     <div class="main">
-        <?php render_app_header_bar(
-            'Créer une opération',
-            'Le moteur comptable résout les comptes avant validation.'
-        ); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
         <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
@@ -220,9 +261,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="dashboard-grid-2">
             <div class="form-card">
                 <form method="POST">
+                    <?= csrf_input() ?>
+
                     <div class="dashboard-grid-2">
-                        <div><label>Date</label><input type="date" name="operation_date" value="<?= opOld('operation_date', date('Y-m-d')) ?>"></div>
-                        <div><label>Montant</label><input type="number" step="0.01" name="amount" value="<?= opOld('amount') ?>"></div>
+                        <div>
+                            <label>Date</label>
+                            <input type="date" name="operation_date" value="<?= opOld('operation_date', date('Y-m-d')) ?>">
+                        </div>
+
+                        <div>
+                            <label>Montant</label>
+                            <input type="number" step="0.01" name="amount" value="<?= opOld('amount') ?>">
+                        </div>
 
                         <div>
                             <label>Type d’opération</label>
@@ -260,7 +310,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             </select>
                         </div>
 
-                        <div><label>Référence</label><input type="text" name="reference" value="<?= opOld('reference') ?>"></div>
+                        <div>
+                            <label>Référence</label>
+                            <input type="text" name="reference" value="<?= opOld('reference') ?>">
+                        </div>
 
                         <div>
                             <label>Compte interne source</label>
@@ -287,31 +340,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                     </div>
 
-                    <div style="margin-top:16px;">
+                    <div>
                         <label>Libellé</label>
                         <input type="text" name="label" value="<?= opOld('label') ?>">
                     </div>
 
-                    <div style="margin-top:16px;">
+                    <div>
                         <label>Notes</label>
                         <textarea name="notes" rows="4"><?= opOld('notes') ?></textarea>
                     </div>
 
-                    <div class="btn-group" style="margin-top:20px;">
+                    <div class="btn-group">
                         <button type="submit" name="action_mode" value="preview" class="btn btn-secondary">Prévisualiser</button>
                         <button type="submit" name="action_mode" value="save" class="btn btn-success">Créer</button>
+                        <a href="<?= e(APP_URL) ?>modules/operations/operations_list.php" class="btn btn-outline">Retour</a>
                     </div>
                 </form>
             </div>
 
             <div class="card">
                 <h3>Aperçu comptable</h3>
+
                 <?php if ($preview): ?>
-                    <div class="stat-row"><span class="metric-label">Débit</span><span class="metric-value"><?= e($preview['debit_account_code'] ?? '—') ?></span></div>
-                    <div class="stat-row"><span class="metric-label">Crédit</span><span class="metric-value"><?= e($preview['credit_account_code'] ?? '—') ?></span></div>
-                    <div class="stat-row"><span class="metric-label">Analytique</span><span class="metric-value"><?= e($preview['analytic_account']['account_code'] ?? '—') ?></span></div>
+                    <div class="stat-row">
+                        <span class="metric-label">Débit</span>
+                        <span class="metric-value"><?= e($preview['debit_account_code'] ?? '—') ?></span>
+                    </div>
+
+                    <div class="stat-row">
+                        <span class="metric-label">Crédit</span>
+                        <span class="metric-value"><?= e($preview['credit_account_code'] ?? '—') ?></span>
+                    </div>
+
+                    <div class="stat-row">
+                        <span class="metric-label">Analytique</span>
+                        <span class="metric-value"><?= e($preview['analytic_account']['account_code'] ?? '—') ?></span>
+                    </div>
                 <?php else: ?>
-                    <div class="dashboard-note">Le moteur affichera ici le débit, le crédit et l’analytique avant écriture.</div>
+                    <div class="dashboard-note">
+                        Le moteur affichera ici le débit, le crédit et l’analytique avant écriture.
+                    </div>
                 <?php endif; ?>
             </div>
         </div>
@@ -319,3 +387,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

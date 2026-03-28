@@ -5,10 +5,9 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
 enforcePagePermission($pdo, 'clients_create');
-
-require_once __DIR__ . '/../../includes/header.php';
 
 $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
 if ($id <= 0) {
@@ -44,6 +43,10 @@ $errorMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
+        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+            throw new RuntimeException('Jeton CSRF invalide.');
+        }
+
         $firstName = trim((string)($_POST['first_name'] ?? ''));
         $lastName = trim((string)($_POST['last_name'] ?? ''));
         $fullName = trim((string)($_POST['full_name'] ?? ''));
@@ -81,7 +84,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 client_type = ?,
                 client_status = ?,
                 currency = ?,
-                initial_treasury_account_id = ?
+                initial_treasury_account_id = ?,
+                updated_at = NOW()
             WHERE id = ?
         ");
         $stmtUpdateClient->execute([
@@ -115,6 +119,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
         }
 
+        if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+            logUserAction(
+                $pdo,
+                (int)$_SESSION['user_id'],
+                'edit_client',
+                'clients',
+                'client',
+                $id,
+                'Mise à jour du client ' . ($client['client_code'] ?? '') . ' - ' . $fullName
+            );
+        }
+
         $pdo->commit();
 
         $successMessage = 'Client mis à jour.';
@@ -128,16 +144,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errorMessage = $e->getMessage();
     }
 }
+
+$pageTitle = 'Modifier un client';
+$pageSubtitle = 'La fiche reste éditable, mais les mécanismes bancaires restent cohérents.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
     <div class="main">
-        <?php render_app_header_bar(
-            'Modifier un client',
-            'La fiche reste éditable, mais les mécanismes bancaires restent cohérents.'
-        ); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
         <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
@@ -145,6 +162,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="dashboard-grid-2">
             <div class="form-card">
                 <form method="POST">
+                    <?= csrf_input() ?>
                     <input type="hidden" name="id" value="<?= (int)$id ?>">
 
                     <h3 class="section-title">Fiche client</h3>
@@ -239,9 +257,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                     </div>
 
-                    <div class="btn-group" style="margin-top:20px;">
+                    <div class="btn-group">
                         <button type="submit" class="btn btn-success">Enregistrer</button>
-                        <a href="<?= APP_URL ?>modules/clients/client_view.php?id=<?= (int)$id ?>" class="btn btn-outline">Voir la fiche</a>
+                        <a href="<?= e(APP_URL) ?>modules/clients/client_view.php?id=<?= (int)$id ?>" class="btn btn-outline">Voir la fiche</a>
                     </div>
                 </form>
             </div>
@@ -257,3 +275,5 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

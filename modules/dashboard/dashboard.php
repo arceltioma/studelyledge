@@ -8,10 +8,12 @@ require_once __DIR__ . '/../../includes/permission_middleware.php';
 
 enforcePagePermission($pdo, 'dashboard_view');
 
-require_once __DIR__ . '/../../includes/header.php';
-
 $totalClients = tableExists($pdo, 'clients')
-    ? (int)$pdo->query("SELECT COUNT(*) FROM clients WHERE COALESCE(is_active,1) = 1")->fetchColumn()
+    ? (int)$pdo->query("
+        SELECT COUNT(*)
+        FROM clients
+        WHERE COALESCE(is_active, 1) = 1
+    ")->fetchColumn()
     : 0;
 
 $totalOperations = tableExists($pdo, 'operations')
@@ -19,15 +21,27 @@ $totalOperations = tableExists($pdo, 'operations')
     : 0;
 
 $totalTreasury = tableExists($pdo, 'treasury_accounts')
-    ? (float)$pdo->query("SELECT COALESCE(SUM(current_balance),0) FROM treasury_accounts WHERE COALESCE(is_active,1) = 1")->fetchColumn()
+    ? (float)$pdo->query("
+        SELECT COALESCE(SUM(current_balance), 0)
+        FROM treasury_accounts
+        WHERE COALESCE(is_active, 1) = 1
+    ")->fetchColumn()
     : 0.0;
 
 $totalService = tableExists($pdo, 'service_accounts')
-    ? (float)$pdo->query("SELECT COALESCE(SUM(current_balance),0) FROM service_accounts WHERE COALESCE(is_active,1) = 1")->fetchColumn()
+    ? (float)$pdo->query("
+        SELECT COALESCE(SUM(current_balance), 0)
+        FROM service_accounts
+        WHERE COALESCE(is_active, 1) = 1
+    ")->fetchColumn()
     : 0.0;
 
 $rejectedImports = tableExists($pdo, 'import_rows')
-    ? (int)$pdo->query("SELECT COUNT(*) FROM import_rows WHERE status = 'rejected'")->fetchColumn()
+    ? (int)$pdo->query("
+        SELECT COUNT(*)
+        FROM import_rows
+        WHERE status = 'rejected'
+    ")->fetchColumn()
     : 0;
 
 $recentOperations = tableExists($pdo, 'operations')
@@ -51,47 +65,63 @@ $recentImports = tableExists($pdo, 'imports')
         LIMIT 10
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
+
+$pageTitle = 'Dashboard';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
     <div class="main">
-        <?php render_app_header_bar(
-            'Dashboard',
-            'Vue consolidée des clients, des flux, des comptes internes et des imports.'
-        ); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <div class="card-grid">
             <div class="card">
                 <h3>Clients actifs</h3>
                 <div class="kpi"><?= $totalClients ?></div>
+                <p class="muted">Base active exploitable</p>
             </div>
 
             <div class="card">
                 <h3>Opérations</h3>
                 <div class="kpi"><?= $totalOperations ?></div>
+                <p class="muted">Écritures enregistrées</p>
             </div>
 
             <div class="card">
                 <h3>Soldes 512</h3>
                 <div class="kpi"><?= number_format($totalTreasury, 2, ',', ' ') ?></div>
+                <p class="muted">Trésorerie cumulée</p>
             </div>
 
             <div class="card">
                 <h3>Soldes 706</h3>
                 <div class="kpi"><?= number_format($totalService, 2, ',', ' ') ?></div>
+                <p class="muted">Produits / services cumulés</p>
             </div>
 
             <div class="card">
                 <h3>Rejets ouverts</h3>
                 <div class="kpi"><?= $rejectedImports ?></div>
+                <p class="muted">Lignes à corriger</p>
             </div>
         </div>
 
-        <div class="dashboard-grid-2" style="margin-top:20px;">
+        <div class="dashboard-grid-2 dashboard-section-spacing">
             <div class="table-card">
-                <h3 class="section-title">Dernières opérations</h3>
+                <div class="page-title page-title-inline">
+                    <div>
+                        <h3 class="section-title">Dernières opérations</h3>
+                        <p class="muted">Lecture rapide des flux récents.</p>
+                    </div>
+
+                    <div class="btn-group">
+                        <a href="<?= e(APP_URL) ?>modules/operations/operations_list.php" class="btn btn-outline">Voir tout</a>
+                        <a href="<?= e(APP_URL) ?>modules/operations/operation_create.php" class="btn btn-secondary">Nouvelle opération</a>
+                    </div>
+                </div>
+
                 <table>
                     <thead>
                         <tr>
@@ -114,15 +144,29 @@ $recentImports = tableExists($pdo, 'imports')
                                 <td><?= number_format((float)($op['amount'] ?? 0), 2, ',', ' ') ?></td>
                             </tr>
                         <?php endforeach; ?>
+
                         <?php if (!$recentOperations): ?>
-                            <tr><td colspan="6">Aucune opération récente.</td></tr>
+                            <tr>
+                                <td colspan="6">Aucune opération récente.</td>
+                            </tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
             </div>
 
             <div class="table-card">
-                <h3 class="section-title">Derniers imports</h3>
+                <div class="page-title page-title-inline">
+                    <div>
+                        <h3 class="section-title">Derniers imports</h3>
+                        <p class="muted">Vue synthétique des derniers traitements.</p>
+                    </div>
+
+                    <div class="btn-group">
+                        <a href="<?= e(APP_URL) ?>modules/imports/import_preview.php" class="btn btn-secondary">Nouvel import</a>
+                        <a href="<?= e(APP_URL) ?>modules/imports/import_journal.php" class="btn btn-outline">Journal</a>
+                    </div>
+                </div>
+
                 <table>
                     <thead>
                         <tr>
@@ -135,20 +179,45 @@ $recentImports = tableExists($pdo, 'imports')
                     <tbody>
                         <?php foreach ($recentImports as $import): ?>
                             <tr>
-                                <td><?= (int)$import['id'] ?></td>
+                                <td><?= (int)($import['id'] ?? 0) ?></td>
                                 <td><?= e($import['file_name'] ?? '') ?></td>
                                 <td><?= e($import['status'] ?? '') ?></td>
                                 <td><?= e($import['created_at'] ?? '') ?></td>
                             </tr>
                         <?php endforeach; ?>
+
                         <?php if (!$recentImports): ?>
-                            <tr><td colspan="4">Aucun import récent.</td></tr>
+                            <tr>
+                                <td colspan="4">Aucun import récent.</td>
+                            </tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
             </div>
         </div>
 
+        <div class="dashboard-grid-2 dashboard-section-spacing">
+            <div class="card">
+                <h3>Accès rapides</h3>
+                <div class="btn-group btn-group-vertical">
+                    <a href="<?= e(APP_URL) ?>modules/clients/clients_list.php" class="btn btn-outline">Gérer les clients</a>
+                    <a href="<?= e(APP_URL) ?>modules/treasury/index.php" class="btn btn-outline">Voir la trésorerie</a>
+                    <a href="<?= e(APP_URL) ?>modules/statements/index.php" class="btn btn-outline">Exports & relevés</a>
+                    <a href="<?= e(APP_URL) ?>modules/analytics/revenue_analysis.php" class="btn btn-outline">Analytics</a>
+                </div>
+            </div>
+
+            <div class="dashboard-panel">
+                <h3 class="section-title">Lecture globale</h3>
+                <div class="dashboard-note">
+                    Ce dashboard rassemble les briques essentielles du pilotage :
+                    base client, activité opérationnelle, équilibres 512/706 et suivi des imports.
+                </div>
+            </div>
+        </div>
+
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

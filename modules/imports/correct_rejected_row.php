@@ -5,10 +5,9 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
 enforcePagePermission($pdo, 'imports_validate');
-
-require_once __DIR__ . '/../../includes/header.php';
 
 $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
 if ($id <= 0) {
@@ -37,6 +36,7 @@ $clients = tableExists($pdo, 'clients')
     ? $pdo->query("
         SELECT id, client_code, full_name
         FROM clients
+        WHERE COALESCE(is_active,1)=1
         ORDER BY client_code ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
@@ -45,7 +45,7 @@ $operationTypes = tableExists($pdo, 'ref_operation_types')
     ? $pdo->query("
         SELECT id, code, label
         FROM ref_operation_types
-        WHERE COALESCE(is_active,1) = 1
+        WHERE COALESCE(is_active,1)=1
         ORDER BY label ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
@@ -54,7 +54,7 @@ $services = tableExists($pdo, 'ref_services')
     ? $pdo->query("
         SELECT id, code, label
         FROM ref_services
-        WHERE COALESCE(is_active,1) = 1
+        WHERE COALESCE(is_active,1)=1
         ORDER BY label ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
@@ -63,7 +63,7 @@ $treasuryAccounts = tableExists($pdo, 'treasury_accounts')
     ? $pdo->query("
         SELECT id, account_code, account_label
         FROM treasury_accounts
-        WHERE COALESCE(is_active,1) = 1
+        WHERE COALESCE(is_active,1)=1
         ORDER BY account_code ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
@@ -73,6 +73,10 @@ $errorMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
+        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+            throw new RuntimeException('Jeton CSRF invalide.');
+        }
+
         $clientId = ($_POST['client_id'] ?? '') !== '' ? (int)$_POST['client_id'] : null;
         $operationTypeCode = trim((string)($_POST['operation_type_code'] ?? ''));
         $serviceCode = trim((string)($_POST['service_code'] ?? ''));
@@ -141,16 +145,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             UPDATE import_rows
             SET
                 status = 'corrected',
-                error_message = NULL
+                error_message = NULL,
+                updated_at = NOW()
             WHERE id = ?
         ");
         $stmtUpdate->execute([$id]);
+
+        if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+            logUserAction(
+                $pdo,
+                (int)$_SESSION['user_id'],
+                'correct_rejected_import_row',
+                'imports',
+                'import_row',
+                $id,
+                'Correction manuelle d’une ligne rejetée'
+            );
+        }
 
         $pdo->commit();
 
         $successMessage = 'Ligne corrigée avec succès.';
         $stmtRow->execute([$id]);
         $row = $stmtRow->fetch(PDO::FETCH_ASSOC);
+        $raw = json_decode((string)($row['raw_data'] ?? '{}'), true);
+        if (!is_array($raw)) {
+            $raw = [];
+        }
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
@@ -158,16 +179,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $errorMessage = $e->getMessage();
     }
 }
+
+$pageTitle = 'Corriger une ligne rejetée';
+$pageSubtitle = 'Une fois corrigée, la ligne sort du bloc des rejets ouverts.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
     <div class="main">
-        <?php render_app_header_bar(
-            'Corriger une ligne rejetée',
-            'Une fois corrigée, la ligne sort du bloc des rejets ouverts.'
-        ); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
         <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
@@ -175,6 +197,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="dashboard-grid-2">
             <div class="form-card">
                 <form method="POST">
+                    <?= csrf_input() ?>
                     <input type="hidden" name="id" value="<?= (int)$id ?>">
 
                     <div class="dashboard-grid-2">
@@ -237,29 +260,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         </div>
                     </div>
 
-                    <div style="margin-top:16px;">
+                    <div>
                         <label>Libellé</label>
                         <input type="text" name="label" value="<?= e($raw['label'] ?? '') ?>">
                     </div>
 
-                    <div style="margin-top:16px;">
+                    <div>
                         <label>Référence</label>
                         <input type="text" name="reference" value="<?= e($raw['reference'] ?? '') ?>">
                     </div>
 
-                    <div class="btn-group" style="margin-top:20px;">
+                    <div class="btn-group">
                         <button type="submit" class="btn btn-success">Corriger et valider</button>
-                        <a href="<?= APP_URL ?>modules/imports/rejected_rows.php?import_id=<?= (int)($row['import_id'] ?? 0) ?>" class="btn btn-outline">Retour</a>
+                        <a href="<?= e(APP_URL) ?>modules/imports/rejected_rows.php?import_id=<?= (int)($row['import_id'] ?? 0) ?>" class="btn btn-outline">Retour</a>
                     </div>
                 </form>
             </div>
 
             <div class="card">
                 <h3>Donnée brute</h3>
-                <pre style="white-space:pre-wrap;"><?= e($row['raw_data'] ?? '') ?></pre>
+                <pre><?= e($row['raw_data'] ?? '') ?></pre>
             </div>
         </div>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

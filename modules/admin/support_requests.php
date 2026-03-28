@@ -1,21 +1,22 @@
 <?php
-require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../config/database.php';
+$pdo = getPDO();
+
+require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
+require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
 $pagePermission = 'support_admin_manage';
-require_once __DIR__ . '/../../includes/permission_middleware.php';
 enforcePagePermission($pdo, $pagePermission);
-
-require_once __DIR__ . '/../../includes/header.php';
 
 $successMessage = '';
 $errorMessage = '';
 
-$type = trim($_GET['type'] ?? '');
-$status = trim($_GET['status'] ?? '');
-$priority = trim($_GET['priority'] ?? '');
-$search = trim($_GET['search'] ?? '');
+$type = trim((string)($_GET['type'] ?? ''));
+$status = trim((string)($_GET['status'] ?? ''));
+$priority = trim((string)($_GET['priority'] ?? ''));
+$search = trim((string)($_GET['search'] ?? ''));
 
 $allowedTypes = ['access', 'bug', 'question'];
 $allowedStatuses = ['open', 'in_progress', 'closed'];
@@ -23,15 +24,35 @@ $allowedPriorities = ['low', 'normal', 'high', 'urgent'];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
+        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+            throw new RuntimeException('Jeton CSRF invalide.');
+        }
+
         $requestId = (int)($_POST['request_id'] ?? 0);
-        $newStatus = trim($_POST['new_status'] ?? '');
+        $newStatus = trim((string)($_POST['new_status'] ?? ''));
 
         if ($requestId <= 0) {
-            throw new Exception('Demande invalide.');
+            throw new RuntimeException('Demande invalide.');
         }
 
         if (!in_array($newStatus, $allowedStatuses, true)) {
-            throw new Exception('Statut invalide.');
+            throw new RuntimeException('Statut invalide.');
+        }
+
+        if (!tableExists($pdo, 'support_requests')) {
+            throw new RuntimeException('La table support_requests est absente.');
+        }
+
+        $stmtExists = $pdo->prepare("
+            SELECT id
+            FROM support_requests
+            WHERE id = ?
+            LIMIT 1
+        ");
+        $stmtExists->execute([$requestId]);
+
+        if (!$stmtExists->fetch()) {
+            throw new RuntimeException('Demande introuvable.');
         }
 
         $stmtUpdate = $pdo->prepare("
@@ -60,7 +81,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $sql = "
     SELECT
         sr.*,
-        u.username
+        u.username AS linked_username
     FROM support_requests sr
     LEFT JOIN users u ON u.id = sr.user_id
     WHERE 1=1
@@ -86,10 +107,11 @@ if ($search !== '') {
     $sql .= " AND (
         sr.subject LIKE ?
         OR sr.message LIKE ?
+        OR sr.username LIKE ?
         OR u.username LIKE ?
     )";
     $like = '%' . $search . '%';
-    array_push($params, $like, $like, $like);
+    array_push($params, $like, $like, $like, $like);
 }
 
 $sql .= " ORDER BY sr.id DESC";
@@ -107,19 +129,44 @@ function supportStatusBadge(string $status): string
         default => 'status-info',
     };
 }
+
+function supportTypeLabel(string $type): string
+{
+    return match ($type) {
+        'access' => 'Accès',
+        'bug' => 'Bug',
+        'question' => 'Question',
+        default => $type,
+    };
+}
+
+function supportPriorityLabel(string $priority): string
+{
+    return match ($priority) {
+        'low' => 'Basse',
+        'normal' => 'Normale',
+        'high' => 'Haute',
+        'urgent' => 'Urgente',
+        default => $priority,
+    };
+}
+
+$pageTitle = 'Demandes support';
+$pageSubtitle = 'Traitement centralisé des accès, bugs et questions.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
     <div class="main">
-        <?php render_app_header_bar('Demandes support', 'Traitement centralisé des accès, bugs et questions.'); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <?php if ($successMessage): ?>
+        <?php if ($successMessage !== ''): ?>
             <div class="success"><?= e($successMessage) ?></div>
         <?php endif; ?>
 
-        <?php if ($errorMessage): ?>
+        <?php if ($errorMessage !== ''): ?>
             <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
 
@@ -147,10 +194,15 @@ function supportStatusBadge(string $status): string
                     <option value="urgent" <?= $priority === 'urgent' ? 'selected' : '' ?>>Urgent</option>
                 </select>
 
-                <input type="text" name="search" placeholder="Sujet, message, utilisateur..." value="<?= e($search) ?>">
+                <input
+                    type="text"
+                    name="search"
+                    placeholder="Sujet, message, utilisateur..."
+                    value="<?= e($search) ?>"
+                >
 
                 <button type="submit" class="btn btn-secondary">Filtrer</button>
-                <a href="<?= APP_URL ?>modules/admin/support_requests.php" class="btn btn-outline">Réinitialiser</a>
+                <a href="<?= e(APP_URL) ?>modules/admin/support_requests.php" class="btn btn-outline">Réinitialiser</a>
             </form>
         </div>
 
@@ -161,18 +213,26 @@ function supportStatusBadge(string $status): string
                 <?php foreach ($requests as $request): ?>
                     <div class="timeline-item">
                         <div class="timeline-dot"></div>
+
                         <div class="timeline-content">
                             <div class="timeline-meta">
                                 <div>
                                     <strong>#<?= (int)$request['id'] ?> — <?= e($request['subject']) ?></strong><br>
                                     <span class="muted">
-                                        <?= e($request['username'] ?? 'Utilisateur inconnu') ?> — <?= e($request['created_at']) ?>
+                                        <?= e($request['username'] ?: ($request['linked_username'] ?? 'Utilisateur inconnu')) ?>
+                                        — <?= e($request['created_at']) ?>
                                     </span>
                                 </div>
 
                                 <div class="timeline-badges">
-                                    <span class="status-pill status-info"><?= e($request['request_type']) ?></span>
-                                    <span class="status-pill status-warning"><?= e($request['priority']) ?></span>
+                                    <span class="status-pill status-info">
+                                        <?= e(supportTypeLabel((string)$request['request_type'])) ?>
+                                    </span>
+
+                                    <span class="status-pill status-warning">
+                                        <?= e(supportPriorityLabel((string)$request['priority'])) ?>
+                                    </span>
+
                                     <span class="status-pill <?= e(supportStatusBadge((string)$request['status'])) ?>">
                                         <?= e($request['status']) ?>
                                     </span>
@@ -184,6 +244,7 @@ function supportStatusBadge(string $status): string
                             </div>
 
                             <form method="POST" class="inline-form" style="margin-top:12px;">
+                                <?= csrf_input() ?>
                                 <input type="hidden" name="request_id" value="<?= (int)$request['id'] ?>">
 
                                 <select name="new_status" required>
@@ -203,3 +264,5 @@ function supportStatusBadge(string $status): string
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>
