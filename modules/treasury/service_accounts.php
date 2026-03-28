@@ -5,10 +5,9 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
 enforcePagePermission($pdo, 'treasury_view');
-
-require_once __DIR__ . '/../../includes/header.php';
 
 $successMessage = '';
 $errorMessage = '';
@@ -31,6 +30,10 @@ if ($restoreId > 0) {
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_service_account'])) {
     try {
+        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+            throw new RuntimeException('Jeton CSRF invalide.');
+        }
+
         $accountCode = trim((string)($_POST['account_code'] ?? ''));
         $accountLabel = trim((string)($_POST['account_label'] ?? ''));
         $operationTypeLabel = trim((string)($_POST['operation_type_label'] ?? ''));
@@ -84,6 +87,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_service_account'
                 $isActive,
                 $editId
             ]);
+
+            if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+                logUserAction($pdo, (int)$_SESSION['user_id'], 'edit_service_account', 'treasury', 'service_account', $editId, 'Modification d’un compte 706');
+            }
+
             $successMessage = 'Compte 706 mis à jour.';
         } else {
             $stmt = $pdo->prepare("
@@ -111,6 +119,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_service_account'
                 $isPostable,
                 $isActive
             ]);
+
+            $newId = (int)$pdo->lastInsertId();
+
+            if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+                logUserAction($pdo, (int)$_SESSION['user_id'], 'create_service_account', 'treasury', 'service_account', $newId, 'Création d’un compte 706');
+            }
+
             $successMessage = 'Compte 706 créé.';
         }
     } catch (Throwable $e) {
@@ -130,16 +145,19 @@ $rows = $pdo->query("
     FROM service_accounts
     ORDER BY account_code ASC
 ")->fetchAll(PDO::FETCH_ASSOC);
+
+$pageTitle = 'Comptes internes 706';
+$pageSubtitle = 'Gestion des comptes produits et services.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
     <div class="main">
-        <?php render_app_header_bar(
-            'Comptes internes 706',
-            'Gestion des comptes produits et services.'
-        ); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
+        <?php if (isset($_GET['ok']) && $_GET['ok'] === 'archived'): ?><div class="success">Compte archivé.</div><?php endif; ?>
+        <?php if (isset($_GET['ok']) && $_GET['ok'] === 'restored'): ?><div class="success">Compte réactivé.</div><?php endif; ?>
         <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
         <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
 
@@ -148,6 +166,7 @@ $rows = $pdo->query("
                 <h3 class="section-title"><?= $editAccount ? 'Modifier un compte 706' : 'Créer un compte 706' ?></h3>
 
                 <form method="POST">
+                    <?= csrf_input() ?>
                     <?php if ($editAccount): ?>
                         <input type="hidden" name="edit_id" value="<?= (int)$editAccount['id'] ?>">
                     <?php endif; ?>
@@ -163,9 +182,9 @@ $rows = $pdo->query("
                         <div style="display:flex;align-items:end;"><label><input type="checkbox" name="is_active" <?= ((int)($editAccount['is_active'] ?? 1) === 1) ? 'checked' : '' ?>> Actif</label></div>
                     </div>
 
-                    <div class="btn-group" style="margin-top:20px;">
+                    <div class="btn-group">
                         <button type="submit" name="save_service_account" value="1" class="btn btn-success"><?= $editAccount ? 'Enregistrer' : 'Créer' ?></button>
-                        <a class="btn btn-outline" href="<?= APP_URL ?>modules/treasury/index.php">Gérer les 512</a>
+                        <a class="btn btn-outline" href="<?= e(APP_URL) ?>modules/treasury/index.php">Gérer les 512</a>
                     </div>
                 </form>
             </div>
@@ -178,7 +197,7 @@ $rows = $pdo->query("
             </div>
         </div>
 
-        <div class="table-card" style="margin-top:20px;">
+        <div class="table-card">
             <table>
                 <thead>
                     <tr>
@@ -203,15 +222,21 @@ $rows = $pdo->query("
                             <td><?= number_format((float)($row['current_balance'] ?? 0), 2, ',', ' ') ?></td>
                             <td><?= ((int)($row['is_active'] ?? 1) === 1) ? 'Actif' : 'Archivé' ?></td>
                             <td>
-                                <a class="btn btn-secondary" href="<?= APP_URL ?>modules/treasury/service_accounts.php?edit=<?= (int)$row['id'] ?>">Modifier</a>
-                                <?php if ((int)($row['is_active'] ?? 1) === 1): ?>
-                                    <a class="btn btn-danger" href="<?= APP_URL ?>modules/treasury/service_accounts.php?archive=<?= (int)$row['id'] ?>">Archiver</a>
-                                <?php else: ?>
-                                    <a class="btn btn-outline" href="<?= APP_URL ?>modules/treasury/service_accounts.php?restore=<?= (int)$row['id'] ?>">Réactiver</a>
-                                <?php endif; ?>
+                                <div class="btn-group">
+                                    <a class="btn btn-secondary" href="<?= e(APP_URL) ?>modules/treasury/service_accounts.php?edit=<?= (int)$row['id'] ?>">Modifier</a>
+                                    <?php if ((int)($row['is_active'] ?? 1) === 1): ?>
+                                        <a class="btn btn-danger" href="<?= e(APP_URL) ?>modules/treasury/service_accounts.php?archive=<?= (int)$row['id'] ?>">Archiver</a>
+                                    <?php else: ?>
+                                        <a class="btn btn-outline" href="<?= e(APP_URL) ?>modules/treasury/service_accounts.php?restore=<?= (int)$row['id'] ?>">Réactiver</a>
+                                    <?php endif; ?>
+                                </div>
                             </td>
                         </tr>
                     <?php endforeach; ?>
+
+                    <?php if (!$rows): ?>
+                        <tr><td colspan="8">Aucun compte 706.</td></tr>
+                    <?php endif; ?>
                 </tbody>
             </table>
         </div>
@@ -219,3 +244,5 @@ $rows = $pdo->query("
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

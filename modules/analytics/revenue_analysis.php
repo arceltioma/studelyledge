@@ -9,14 +9,12 @@ require_once __DIR__ . '/../../includes/permission_middleware.php';
 $pagePermission = 'analytics_view';
 enforcePagePermission($pdo, $pagePermission);
 
-require_once __DIR__ . '/../../includes/header.php';
-
 $xAxis = $_GET['x_axis'] ?? 'month';
 $chartType = $_GET['chart_type'] ?? 'line';
 $dateFrom = trim($_GET['date_from'] ?? '');
 $dateTo = trim($_GET['date_to'] ?? '');
 
-$allowedX = ['day', 'month', 'country', 'client', 'operation_kind', 'source_type'];
+$allowedX = ['day', 'month', 'country', 'client', 'operation_type', 'source_type'];
 $allowedChartTypes = ['bar', 'line'];
 
 if (!in_array($xAxis, $allowedX, true)) {
@@ -42,18 +40,18 @@ switch ($xAxis) {
         break;
 
     case 'country':
-        $groupSql = "c.country";
-        $labelSql = "c.country";
+        $groupSql = "c.country_destination";
+        $labelSql = "c.country_destination";
         break;
 
     case 'client':
         $groupSql = "c.client_code";
-        $labelSql = "CONCAT(c.client_code, ' - ', c.first_name, ' ', c.last_name)";
+        $labelSql = "CONCAT(c.client_code, ' - ', c.full_name)";
         break;
 
-    case 'operation_kind':
-        $groupSql = "o.operation_kind";
-        $labelSql = "o.operation_kind";
+    case 'operation_type':
+        $groupSql = "o.operation_type_code";
+        $labelSql = "COALESCE(rot.label, o.operation_type_code)";
         break;
 
     case 'source_type':
@@ -65,15 +63,15 @@ switch ($xAxis) {
 $sql = "
     SELECT
         {$labelSql} AS chart_label,
-        COALESCE(SUM(CASE WHEN o.operation_type = 'credit' THEN o.amount ELSE 0 END), 0) AS total_credit,
-        COALESCE(SUM(CASE WHEN o.operation_type = 'debit' THEN o.amount ELSE 0 END), 0) AS total_debit,
-        COALESCE(SUM(CASE WHEN o.operation_type = 'credit' THEN o.amount ELSE 0 END), 0)
-        - COALESCE(SUM(CASE WHEN o.operation_type = 'debit' THEN o.amount ELSE 0 END), 0) AS total_net
+        COALESCE(SUM(CASE WHEN o.credit_account_code LIKE '411%' OR o.credit_account_code LIKE '706%' THEN o.amount ELSE 0 END), 0) AS total_credit,
+        COALESCE(SUM(CASE WHEN o.debit_account_code LIKE '411%' OR o.debit_account_code LIKE '706%' THEN o.amount ELSE 0 END), 0) AS total_debit,
+        COALESCE(SUM(CASE WHEN o.credit_account_code LIKE '411%' OR o.credit_account_code LIKE '706%' THEN o.amount ELSE 0 END), 0)
+        - COALESCE(SUM(CASE WHEN o.debit_account_code LIKE '411%' OR o.debit_account_code LIKE '706%' THEN o.amount ELSE 0 END), 0) AS total_net
     FROM operations o
-    INNER JOIN clients c ON c.id = o.client_id
+    LEFT JOIN clients c ON c.id = o.client_id
+    LEFT JOIN ref_operation_types rot ON rot.code = o.operation_type_code
     WHERE 1=1
 ";
-
 $params = [];
 
 if ($dateFrom !== '') {
@@ -112,7 +110,7 @@ $xAxisLabels = [
     'month' => 'Mois',
     'country' => 'Pays',
     'client' => 'Client',
-    'operation_kind' => 'Nature d’opération',
+    'operation_type' => 'Type d’opération',
     'source_type' => 'Source',
 ];
 
@@ -125,19 +123,22 @@ $totalCredits = array_sum($creditValues);
 $totalDebits = array_sum($debitValues);
 $totalNet = array_sum($netValues);
 $totalBuckets = count($chartLabels);
+
+$pageTitle = 'Analytics';
+$pageSubtitle = 'Lecture consolidée des flux financiers et de leur respiration dans le temps.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
     <div class="main">
-        <?php render_app_header_bar('Analytics', 'Lecture consolidée des flux financiers et de leur respiration dans le temps.'); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <div class="page-title">
-
             <div class="btn-group">
                 <?php if (currentUserCan($pdo, 'dashboard_view')): ?>
-                    <a href="<?= APP_URL ?>modules/dashboard/dashboard.php" class="btn btn-outline">Retour dashboard</a>
+                    <a href="<?= e(APP_URL) ?>modules/dashboard/dashboard.php" class="btn btn-outline">Retour dashboard</a>
                 <?php endif; ?>
             </div>
         </div>
@@ -168,7 +169,7 @@ $totalBuckets = count($chartLabels);
             </div>
         </div>
 
-        <div class="form-card" style="margin-top:20px;">
+        <div class="form-card">
             <h3 class="section-title">Pilotage du graphe analytique</h3>
 
             <form method="GET" class="inline-form">
@@ -204,14 +205,14 @@ $totalBuckets = count($chartLabels);
                     <input type="date" name="date_to" id="date_to" value="<?= e($dateTo) ?>">
                 </div>
 
-                <div class="btn-group" style="margin-top:26px;">
+                <div class="btn-group">
                     <button type="submit" class="btn btn-secondary">Filtrer</button>
-                    <a href="<?= APP_URL ?>modules/analytics/revenue_analysis.php" class="btn btn-outline">Réinitialiser</a>
+                    <a href="<?= e(APP_URL) ?>modules/analytics/revenue_analysis.php" class="btn btn-outline">Réinitialiser</a>
                 </div>
             </form>
         </div>
 
-        <div class="table-card" style="margin-top:20px;">
+        <div class="table-card">
             <div class="dashboard-chart-shell">
                 <div class="dashboard-chart-header">
                     <div>
@@ -220,13 +221,6 @@ $totalBuckets = count($chartLabels);
                             Axe X : <strong><?= e($xAxisLabels[$xAxis]) ?></strong> —
                             Type : <strong><?= e($chartTypeLabels[$chartType]) ?></strong>
                         </div>
-                    </div>
-
-                    <div class="dashboard-chart-badges">
-                        <span class="dashboard-chart-badge"><?= e($xAxisLabels[$xAxis]) ?></span>
-                        <span class="dashboard-chart-badge">Crédits</span>
-                        <span class="dashboard-chart-badge">Débits</span>
-                        <span class="dashboard-chart-badge">Net</span>
                     </div>
                 </div>
 
@@ -240,22 +234,11 @@ $totalBuckets = count($chartLabels);
                     <div class="dashboard-chart-canvas-wrap">
                         <canvas id="analyticsChart"></canvas>
                     </div>
-
-                    <div class="dashboard-chart-footer">
-                        <div class="dashboard-chart-help">
-                            Ce graphe juxtapose crédits, débits et net pour donner une lecture plus franche du relief financier.
-                        </div>
-
-                        <div class="dashboard-chart-legend-note">
-                            <span class="dashboard-chart-legend-dot"></span>
-                            Séries analytiques
-                        </div>
-                    </div>
                 <?php endif; ?>
             </div>
         </div>
 
-        <div class="table-card" style="margin-top:20px;">
+        <div class="table-card">
             <h3 class="section-title">Synthèse tabulaire</h3>
 
             <table>
@@ -302,3 +285,5 @@ window.analyticsChartData = {
 };
 </script>
 <?php endif; ?>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

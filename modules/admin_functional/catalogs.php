@@ -6,115 +6,99 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-$pagePermission = 'operations_create';
-enforcePagePermission($pdo, $pagePermission);
+enforcePagePermission($pdo, 'operations_create');
 
-require_once __DIR__ . '/../../includes/header.php';
+$operationTypes = tableExists($pdo, 'ref_operation_types')
+    ? $pdo->query("
+        SELECT *
+        FROM ref_operation_types
+        ORDER BY label ASC
+    ")->fetchAll(PDO::FETCH_ASSOC)
+    : [];
 
-function functionalCount(PDO $pdo, string $table): int
-{
-    $stmt = $pdo->prepare("
-        SELECT COUNT(*)
-        FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = ?
-    ");
-    $stmt->execute([$table]);
+$services = tableExists($pdo, 'ref_services')
+    ? $pdo->query("
+        SELECT rs.*, rot.label AS operation_type_label, sa.account_code AS service_account_code, ta.account_code AS treasury_account_code
+        FROM ref_services rs
+        LEFT JOIN ref_operation_types rot ON rot.id = rs.operation_type_id
+        LEFT JOIN service_accounts sa ON sa.id = rs.service_account_id
+        LEFT JOIN treasury_accounts ta ON ta.id = rs.treasury_account_id
+        ORDER BY rs.label ASC
+    ")->fetchAll(PDO::FETCH_ASSOC)
+    : [];
 
-    if ((int)$stmt->fetchColumn() === 0) {
-        return 0;
-    }
-
-    return (int)$pdo->query("SELECT COUNT(*) FROM {$table}")->fetchColumn();
-}
-
-$totalOperationTypes = functionalCount($pdo, 'ref_operation_types');
-$totalServices = functionalCount($pdo, 'ref_services');
-$totalClients = functionalCount($pdo, 'clients');
-$totalTreasuryAccounts = functionalCount($pdo, 'treasury_accounts');
+$pageTitle = 'Catalogue fonctionnel';
+$pageSubtitle = 'Lecture consolidée des types d’opérations et services.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
-
     <div class="main">
-        <?php render_app_header_bar(
-            'Administration Fonctionnelle',
-            'Les réglages métier : types d’opération, services, clients et comptes bancaires internes.'
-        ); ?>
-
-        <div class="card-grid">
-            <div class="card">
-                <h3>Types d’opération</h3>
-                <div class="kpi"><?= $totalOperationTypes ?></div>
-                <p class="muted">Référentiel disponible</p>
-                <div class="btn-group" style="margin-top:12px;">
-                    <a class="btn btn-primary" href="<?= APP_URL ?>modules/admin_functional/manage_operation_types.php">Gérer</a>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>Types de service</h3>
-                <div class="kpi"><?= $totalServices ?></div>
-                <p class="muted">Services métier actifs</p>
-                <div class="btn-group" style="margin-top:12px;">
-                    <a class="btn btn-primary" href="<?= APP_URL ?>modules/admin_functional/manage_services.php">Gérer</a>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>Clients</h3>
-                <div class="kpi"><?= $totalClients ?></div>
-                <p class="muted">Fiches existantes</p>
-                <div class="btn-group" style="margin-top:12px;">
-                    <a class="btn btn-success" href="<?= APP_URL ?>modules/clients/client_create.php">Créer</a>
-                    <a class="btn btn-outline" href="<?= APP_URL ?>modules/clients/clients_list.php">Voir</a>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>Comptes internes</h3>
-                <div class="kpi"><?= $totalTreasuryAccounts ?></div>
-                <p class="muted">Trésorerie disponible</p>
-                <div class="btn-group" style="margin-top:12px;">
-                    <a class="btn btn-secondary" href="<?= APP_URL ?>modules/treasury/index.php">Gérer</a>
-                </div>
-            </div>
-        </div>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <div class="dashboard-grid-2">
-            <div class="dashboard-panel">
-                <h3 class="section-title">Ce que tu peux faire ici</h3>
-
-                <div class="stat-row">
-                    <span class="metric-label">Types d’opération</span>
-                    <span class="metric-value">Créer / modifier / supprimer</span>
-                </div>
-
-                <div class="stat-row">
-                    <span class="metric-label">Types de service</span>
-                    <span class="metric-value">Créer / modifier / supprimer</span>
-                </div>
-
-                <div class="stat-row">
-                    <span class="metric-label">Clients</span>
-                    <span class="metric-value">Créer / modifier / archiver</span>
-                </div>
-
-                <div class="stat-row">
-                    <span class="metric-label">Comptes bancaires internes</span>
-                    <span class="metric-value">Créer / modifier / archiver</span>
-                </div>
+            <div class="table-card">
+                <h3 class="section-title">Types d’opérations</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Code</th>
+                            <th>Libellé</th>
+                            <th>Direction</th>
+                            <th>Actif</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($operationTypes as $row): ?>
+                            <tr>
+                                <td><?= e($row['code'] ?? '') ?></td>
+                                <td><?= e($row['label'] ?? '') ?></td>
+                                <td><?= e($row['direction'] ?? '') ?></td>
+                                <td><?= ((int)($row['is_active'] ?? 1) === 1) ? 'Oui' : 'Non' ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <?php if (!$operationTypes): ?>
+                            <tr><td colspan="4">Aucun type d’opération.</td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
             </div>
 
-            <div class="dashboard-panel">
-                <h3 class="section-title">Vision métier</h3>
-                <div class="dashboard-note">
-                    L’administration fonctionnelle règle la musique. Les types d’opération s’attachent aux services, les clients aux comptes internes, et la comptabilité suit ensuite la piste sans improviser n’importe quoi.
-                </div>
+            <div class="table-card">
+                <h3 class="section-title">Services</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Code</th>
+                            <th>Libellé</th>
+                            <th>Type</th>
+                            <th>706</th>
+                            <th>512</th>
+                            <th>Actif</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($services as $row): ?>
+                            <tr>
+                                <td><?= e($row['code'] ?? '') ?></td>
+                                <td><?= e($row['label'] ?? '') ?></td>
+                                <td><?= e($row['operation_type_label'] ?? '') ?></td>
+                                <td><?= e($row['service_account_code'] ?? '') ?></td>
+                                <td><?= e($row['treasury_account_code'] ?? '') ?></td>
+                                <td><?= ((int)($row['is_active'] ?? 1) === 1) ? 'Oui' : 'Non' ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                        <?php if (!$services): ?>
+                            <tr><td colspan="6">Aucun service.</td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
             </div>
         </div>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

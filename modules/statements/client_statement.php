@@ -9,16 +9,14 @@ require_once __DIR__ . '/../../includes/permission_middleware.php';
 $pagePermission = 'statements_view';
 enforcePagePermission($pdo, $pagePermission);
 
-require_once __DIR__ . '/../../includes/header.php';
-
 $clientId = (int)($_GET['client_id'] ?? 0);
-$dateFrom = trim($_GET['date_from'] ?? '');
-$dateTo = trim($_GET['date_to'] ?? '');
+$dateFrom = trim((string)($_GET['date_from'] ?? ''));
+$dateTo = trim((string)($_GET['date_to'] ?? ''));
 
 $clients = $pdo->query("
-    SELECT id, client_code, first_name, last_name
+    SELECT id, client_code, full_name
     FROM clients
-    WHERE is_active = 1
+    WHERE COALESCE(is_active,1) = 1
     ORDER BY client_code ASC
 ")->fetchAll(PDO::FETCH_ASSOC);
 
@@ -31,14 +29,9 @@ $pdfUrl = '';
 
 if ($clientId > 0) {
     $stmtClient = $pdo->prepare("
-        SELECT
-            c.*,
-            s.name AS status_name,
-            cat.name AS category_name
-        FROM clients c
-        LEFT JOIN statuses s ON s.id = c.status_id
-        LEFT JOIN categories cat ON cat.id = c.category_id
-        WHERE c.id = ?
+        SELECT *
+        FROM clients
+        WHERE id = ?
         LIMIT 1
     ");
     $stmtClient->execute([$clientId]);
@@ -73,9 +66,11 @@ if ($clientId > 0) {
         $operations = $stmtOps->fetchAll(PDO::FETCH_ASSOC);
 
         foreach ($operations as $operation) {
-            if ($operation['operation_type'] === 'credit') {
+            $clientAccount = $selectedClient['generated_client_account'] ?? '';
+            if (($operation['credit_account_code'] ?? '') === $clientAccount) {
                 $totalCredit += (float)$operation['amount'];
-            } else {
+            }
+            if (($operation['debit_account_code'] ?? '') === $clientAccount) {
                 $totalDebit += (float)$operation['amount'];
             }
         }
@@ -88,23 +83,26 @@ if ($clientId > 0) {
                 'date_from' => $dateFrom,
                 'date_to' => $dateTo,
             ]);
-            $pdfUrl = APP_URL . 'modules/statements/generate_bulk_pdf.php?single=1&' . $query;
+            $pdfUrl = APP_URL . 'modules/statements/generate_statement_pdf.php?' . $query;
         }
     }
 }
+
+$pageTitle = 'Relevé client';
+$pageSubtitle = 'Lecture détaillée des opérations d’un client sur une période donnée.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
     <div class="main">
-        <?php render_app_header_bar('Relevé client', 'Lecture détaillée des opérations d’un client sur une période donnée.'); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <div class="page-title">
-
             <div class="btn-group">
                 <?php if (currentUserCan($pdo, 'statements_export_bulk')): ?>
-                    <a href="<?= APP_URL ?>modules/statements/bulk_statement_export.php" class="btn btn-secondary">Export en masse</a>
+                    <a href="<?= e(APP_URL) ?>modules/statements/bulk_statement_export.php" class="btn btn-secondary">Export en masse</a>
                 <?php endif; ?>
             </div>
         </div>
@@ -115,7 +113,7 @@ if ($clientId > 0) {
                     <option value="0">Choisir un client</option>
                     <?php foreach ($clients as $client): ?>
                         <option value="<?= (int)$client['id'] ?>" <?= $clientId === (int)$client['id'] ? 'selected' : '' ?>>
-                            <?= e($client['client_code'] . ' — ' . $client['first_name'] . ' ' . $client['last_name']) ?>
+                            <?= e(($client['client_code'] ?? '') . ' — ' . ($client['full_name'] ?? '')) ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
@@ -124,7 +122,7 @@ if ($clientId > 0) {
                 <input type="date" name="date_to" value="<?= e($dateTo) ?>">
 
                 <button type="submit" class="btn btn-secondary">Afficher</button>
-                <a href="<?= APP_URL ?>modules/statements/client_statement.php" class="btn btn-outline">Réinitialiser</a>
+                <a href="<?= e(APP_URL) ?>modules/statements/client_statement.php" class="btn btn-outline">Réinitialiser</a>
             </form>
         </div>
 
@@ -132,8 +130,8 @@ if ($clientId > 0) {
             <div class="card-grid">
                 <div class="card">
                     <h3>Client</h3>
-                    <div class="kpi" style="font-size:20px;"><?= e($selectedClient['client_code']) ?></div>
-                    <p class="muted"><?= e($selectedClient['first_name'] . ' ' . $selectedClient['last_name']) ?></p>
+                    <div class="kpi"><?= e($selectedClient['client_code'] ?? '') ?></div>
+                    <p class="muted"><?= e($selectedClient['full_name'] ?? '') ?></p>
                 </div>
 
                 <div class="card">
@@ -147,57 +145,43 @@ if ($clientId > 0) {
                 </div>
 
                 <div class="card">
-                    <h3>Solde Net</h3>
+                    <h3>Net</h3>
                     <div class="kpi"><?= number_format($netTotal, 2, ',', ' ') ?> €</div>
                 </div>
             </div>
 
-            <div class="btn-group">
-                <?php if ($pdfUrl !== ''): ?>
-                    <a href="<?= e($pdfUrl) ?>" class="btn btn-danger" target="_blank">Télécharger le PDF</a>
-                <?php endif; ?>
-            </div>
+            <?php if ($pdfUrl !== ''): ?>
+                <div class="btn-group">
+                    <a href="<?= e($pdfUrl) ?>" class="btn btn-primary">Exporter le PDF</a>
+                </div>
+            <?php endif; ?>
 
             <div class="table-card">
-                <h3 class="section-title">Détail des opérations</h3>
-
                 <table>
                     <thead>
                         <tr>
                             <th>Date</th>
-                            <th>Compte</th>
-                            <th>Type</th>
-                            <th>Nature</th>
                             <th>Libellé</th>
                             <th>Référence</th>
-                            <th>Source</th>
+                            <th>Débit</th>
+                            <th>Crédit</th>
                             <th>Montant</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php if (!$operations): ?>
+                        <?php foreach ($operations as $operation): ?>
                             <tr>
-                                <td colspan="8">Aucune opération trouvée pour cette période.</td>
+                                <td><?= e($operation['operation_date'] ?? '') ?></td>
+                                <td><?= e($operation['label'] ?? '') ?></td>
+                                <td><?= e($operation['reference'] ?? '') ?></td>
+                                <td><?= e($operation['debit_account_code'] ?? '') ?></td>
+                                <td><?= e($operation['credit_account_code'] ?? '') ?></td>
+                                <td><?= number_format((float)($operation['amount'] ?? 0), 2, ',', ' ') ?> €</td>
                             </tr>
-                        <?php else: ?>
-                            <?php foreach ($operations as $operation): ?>
-                                <tr>
-                                    <td><?= e($operation['operation_date']) ?></td>
-                                    <td><?= e(($operation['account_name'] ?? '—') . (!empty($operation['account_number']) ? ' — ' . $operation['account_number'] : '')) ?></td>
-                                    <td>
-                                        <?php if ($operation['operation_type'] === 'credit'): ?>
-                                            <span class="status-pill status-success">Crédit</span>
-                                        <?php else: ?>
-                                            <span class="status-pill status-danger">Débit</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td><?= e($operation['operation_kind'] ?? '—') ?></td>
-                                    <td><?= e($operation['label']) ?></td>
-                                    <td><?= e($operation['reference'] ?? '—') ?></td>
-                                    <td><?= e($operation['source_type']) ?></td>
-                                    <td><?= number_format((float)$operation['amount'], 2, ',', ' ') ?> €</td>
-                                </tr>
-                            <?php endforeach; ?>
+                        <?php endforeach; ?>
+
+                        <?php if (!$operations): ?>
+                            <tr><td colspan="6">Aucune opération sur cette période.</td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
@@ -207,3 +191,5 @@ if ($clientId > 0) {
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

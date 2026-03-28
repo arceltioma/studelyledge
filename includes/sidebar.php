@@ -22,17 +22,20 @@ if (!function_exists('sidebarGroupOpen')) {
 
 $canAdminFunctional = true;
 $canAdminTechnical = true;
+$canAnalytics = true;
 
 if (isset($pdo) && $pdo instanceof PDO && function_exists('currentUserCan')) {
     $canAdminFunctional = currentUserCan($pdo, 'operations_create') || currentUserCan($pdo, 'treasury_view');
-    $canAdminTechnical = currentUserCan($pdo, 'admin_dashboard_view') || currentUserCan($pdo, 'admin_users_manage');
+    $canAdminTechnical = currentUserCan($pdo, 'admin_dashboard_view') || currentUserCan($pdo, 'admin_users_manage') || currentUserCan($pdo, 'support_admin_manage');
+    $canAnalytics = currentUserCan($pdo, 'analytics_view');
 }
 
 $groupMainOpen = sidebarGroupOpen([
     '/modules/dashboard/',
     '/modules/clients/',
     '/modules/operations/',
-    '/modules/treasury/'
+    '/modules/treasury/',
+    '/modules/analytics/'
 ], $currentUri);
 
 $groupImportsOpen = sidebarGroupOpen([
@@ -96,6 +99,12 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
                     <a class="sidebar-link <?= sidebarActive('/modules/treasury/', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/treasury/index.php">
                         <span>🏦</span><span>Comptes internes</span>
                     </a>
+
+                    <?php if ($canAnalytics): ?>
+                        <a class="sidebar-link <?= sidebarActive('/modules/analytics/', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/analytics/revenue_analysis.php">
+                            <span>📈</span><span>Analytics</span>
+                        </a>
+                    <?php endif; ?>
                 </div>
             </details>
 
@@ -134,6 +143,14 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
                     <a class="sidebar-link <?= sidebarActive('/modules/statements/client_profiles.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/statements/client_profiles.php">
                         <span>🗂️</span><span>Fiches clients</span>
                     </a>
+
+                    <a class="sidebar-link <?= sidebarActive('/modules/statements/client_statement.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/statements/client_statement.php">
+                        <span>📘</span><span>Consultation relevé</span>
+                    </a>
+
+                    <a class="sidebar-link <?= sidebarActive('/modules/statements/bulk_statement_export.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/statements/bulk_statement_export.php">
+                        <span>📚</span><span>Export masse</span>
+                    </a>
                 </div>
             </details>
 
@@ -155,6 +172,10 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
 
                         <a class="sidebar-link <?= sidebarActive('/modules/admin_functional/manage_accounts.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin_functional/manage_accounts.php">
                             <span>📚</span><span>Comptes</span>
+                        </a>
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/admin_functional/catalogs.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin_functional/catalogs.php">
+                            <span>🗃️</span><span>Catalogue</span>
                         </a>
                     </div>
                 </details>
@@ -183,6 +204,14 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
                         <a class="sidebar-link <?= sidebarActive('/modules/admin/access_matrix.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/access_matrix.php">
                             <span>🧮</span><span>Matrice d’accès</span>
                         </a>
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/admin/support_requests.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/support_requests.php">
+                            <span>🆘</span><span>Demandes support</span>
+                        </a>
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/admin/settings.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/settings.php">
+                            <span>🛠</span><span>Paramètres</span>
+                        </a>
                     </div>
                 </details>
             <?php endif; ?>
@@ -193,259 +222,6 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
         </div>
     </div>
 </aside>
-
-<style>
-    .studely-sidebar{
-        width:320px;
-        min-width:320px;
-        background:linear-gradient(180deg,#182042 0%,#1d2549 100%);
-        color:#fff;
-        position:relative;
-        transition:width .25s ease,min-width .25s ease;
-        box-shadow:8px 0 30px rgba(7,14,38,0.18);
-        z-index:5;
-    }
-
-    .studely-sidebar-inner{
-        min-height:100vh;
-        display:flex;
-        flex-direction:column;
-        padding:18px 16px;
-        gap:16px;
-        overflow:hidden;
-    }
-
-    .sidebar-top{
-        flex:0 0 auto;
-    }
-
-    .sidebar-brand-card{
-        display:grid;
-        grid-template-columns:44px 1fr;
-        gap:12px;
-        align-items:center;
-        background:rgba(255,255,255,0.06);
-        border:1px solid rgba(255,255,255,0.08);
-        border-radius:22px;
-        padding:14px;
-        position:relative;
-    }
-
-    .sidebar-collapse-btn{
-        grid-column:1;
-        grid-row:1 / span 2;
-        width:44px;
-        height:44px;
-        border:none;
-        border-radius:14px;
-        background:#fff;
-        color:#1d2549;
-        font-size:20px;
-        cursor:pointer;
-        box-shadow:0 8px 18px rgba(0,0,0,0.18);
-    }
-
-    .sidebar-brand-visual{
-        grid-column:2;
-        display:flex;
-        align-items:center;
-        justify-content:flex-start;
-    }
-
-    .sidebar-logo{
-        max-width:150px;
-        width:100%;
-        height:auto;
-        display:block;
-    }
-
-    .sidebar-brand-text{
-        grid-column:2;
-        display:flex;
-        flex-direction:column;
-        gap:2px;
-    }
-
-    .sidebar-brand-text strong{
-        font-size:15px;
-        color:#fff;
-    }
-
-    .sidebar-brand-text span{
-        font-size:12px;
-        color:rgba(255,255,255,0.72);
-    }
-
-    .sidebar-nav{
-        flex:1 1 auto;
-        overflow:auto;
-        padding-right:4px;
-        display:flex;
-        flex-direction:column;
-        gap:12px;
-    }
-
-    .sidebar-nav::-webkit-scrollbar{
-        width:6px;
-    }
-
-    .sidebar-nav::-webkit-scrollbar-thumb{
-        background:rgba(255,255,255,0.18);
-        border-radius:999px;
-    }
-
-    .sidebar-group{
-        background:rgba(255,255,255,0.05);
-        border:1px solid rgba(255,255,255,0.08);
-        border-radius:18px;
-        overflow:hidden;
-    }
-
-    .sidebar-group summary{
-        list-style:none;
-        cursor:pointer;
-        padding:14px 16px;
-        font-weight:700;
-        font-size:14px;
-        color:#fff;
-        position:relative;
-        user-select:none;
-    }
-
-    .sidebar-group summary::-webkit-details-marker{
-        display:none;
-    }
-
-    .sidebar-group summary::after{
-        content:'▾';
-        position:absolute;
-        right:16px;
-        top:50%;
-        transform:translateY(-50%);
-        font-size:14px;
-        color:rgba(255,255,255,0.8);
-        transition:transform .2s ease;
-    }
-
-    .sidebar-group:not([open]) summary::after{
-        transform:translateY(-50%) rotate(-90deg);
-    }
-
-    .sidebar-group-links{
-        display:flex;
-        flex-direction:column;
-        gap:8px;
-        padding:0 10px 12px 10px;
-    }
-
-    .sidebar-link{
-        display:flex;
-        align-items:center;
-        gap:10px;
-        text-decoration:none;
-        color:#eef2ff;
-        padding:11px 12px;
-        border-radius:14px;
-        transition:all .2s ease;
-        font-size:14px;
-        line-height:1.35;
-    }
-
-    .sidebar-link:hover{
-        background:rgba(255,255,255,0.12);
-        transform:translateX(2px);
-    }
-
-    .sidebar-link.active{
-        background:#ffffff;
-        color:#1d2549;
-        font-weight:700;
-        box-shadow:0 8px 20px rgba(0,0,0,0.18);
-    }
-
-    .sidebar-bottom{
-        flex:0 0 auto;
-        padding-top:4px;
-    }
-
-    .sidebar-logout-btn{
-        width:100%;
-        text-align:center;
-    }
-
-    body.sidebar-collapsed .studely-sidebar{
-        width:96px;
-        min-width:96px;
-    }
-
-    body.sidebar-collapsed .sidebar-brand-card{
-        grid-template-columns:1fr;
-        justify-items:center;
-        padding:12px 10px;
-    }
-
-    body.sidebar-collapsed .sidebar-collapse-btn{
-        grid-column:1;
-        grid-row:auto;
-    }
-
-    body.sidebar-collapsed .sidebar-brand-visual{
-        grid-column:1;
-        justify-content:center;
-    }
-
-    body.sidebar-collapsed .sidebar-logo{
-        max-width:48px;
-    }
-
-    body.sidebar-collapsed .sidebar-brand-text,
-    body.sidebar-collapsed .sidebar-group summary,
-    body.sidebar-collapsed .sidebar-link span:last-child{
-        display:none;
-    }
-
-    body.sidebar-collapsed .sidebar-group{
-        background:transparent;
-        border:none;
-    }
-
-    body.sidebar-collapsed .sidebar-group[open] .sidebar-group-links{
-        padding-top:0;
-    }
-
-    body.sidebar-collapsed .sidebar-link{
-        justify-content:center;
-        padding:12px;
-        border-radius:16px;
-    }
-
-    body.sidebar-collapsed .sidebar-nav{
-        overflow:visible;
-    }
-
-    @media (max-width: 1100px){
-        .studely-sidebar{
-            width:270px;
-            min-width:270px;
-        }
-    }
-
-    @media (max-width: 860px){
-        .studely-sidebar{
-            width:100%;
-            min-width:100%;
-            min-height:auto;
-        }
-
-        .studely-sidebar-inner{
-            min-height:auto;
-        }
-
-        .sidebar-nav{
-            max-height:420px;
-        }
-    }
-</style>
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {

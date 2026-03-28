@@ -5,11 +5,9 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
-$pagePermission = 'admin_users_manage';
-enforcePagePermission($pdo, $pagePermission);
-
-require_once __DIR__ . '/../../includes/header.php';
+enforcePagePermission($pdo, 'admin_users_manage');
 
 $userId = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
 if ($userId <= 0) {
@@ -29,88 +27,97 @@ if (!$user) {
     die('Utilisateur introuvable.');
 }
 
-$successMessage = '';
 $errorMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
-        $pdo->beginTransaction();
-
-        if (array_key_exists('is_active', $user)) {
-            $stmt = $pdo->prepare("
-                UPDATE users
-                SET is_active = 0
-                WHERE id = ?
-            ");
-            $stmt->execute([$userId]);
-        } else {
-            $stmt = $pdo->prepare("
-                DELETE FROM users
-                WHERE id = ?
-            ");
-            $stmt->execute([$userId]);
+        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+            throw new RuntimeException('Jeton CSRF invalide.');
         }
+
+        $stmt = $pdo->prepare("
+            UPDATE users
+            SET
+                is_active = 0,
+                updated_at = NOW()
+            WHERE id = ?
+        ");
+        $stmt->execute([$userId]);
 
         if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
             logUserAction(
                 $pdo,
                 (int)$_SESSION['user_id'],
-                'delete_user',
+                'archive_user',
                 'admin',
                 'user',
                 $userId,
-                "Archivage ou suppression d'un utilisateur : " . ($user['username'] ?? '—')
+                "Archivage d'un utilisateur : " . ($user['username'] ?? '—')
             );
         }
 
-        $pdo->commit();
-        header('Location: ' . APP_URL . 'modules/admin/users.php?success=1');
+        header('Location: ' . APP_URL . 'modules/admin/users.php');
         exit;
     } catch (Throwable $e) {
-        if ($pdo->inTransaction()) {
-            $pdo->rollBack();
-        }
         $errorMessage = $e->getMessage();
     }
 }
+
+$pageTitle = 'Archiver un utilisateur';
+$pageSubtitle = 'Désactiver un compte sans supprimer son historique.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
     <div class="main">
-        <?php render_app_header_bar(
-            'Supprimer ou archiver un utilisateur',
-            'Une opération simple, mais qui mérite d’être faite sans faux pas de syntaxe.'
-        ); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <?php if ($errorMessage !== ''): ?>
             <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
 
-        <div class="form-card">
-            <h3 class="section-title">Utilisateur concerné</h3>
+        <div class="dashboard-grid-2">
+            <div class="card">
+                <h3>Confirmation</h3>
+                <p>
+                    Tu es sur le point d’archiver cet utilisateur.
+                    Le compte ne pourra plus se connecter, mais son historique restera intact.
+                </p>
 
-            <div class="stat-row">
-                <span class="metric-label">Nom utilisateur</span>
-                <span class="metric-value"><?= e($user['username'] ?? '—') ?></span>
+                <form method="POST">
+                    <?= csrf_input() ?>
+                    <input type="hidden" name="id" value="<?= (int)$userId ?>">
+
+                    <div class="btn-group">
+                        <button type="submit" class="btn btn-danger">Confirmer</button>
+                        <a href="<?= e(APP_URL) ?>modules/admin/users.php" class="btn btn-outline">Annuler</a>
+                    </div>
+                </form>
             </div>
 
-            <div class="stat-row">
-                <span class="metric-label">État</span>
-                <span class="metric-value"><?= (int)($user['is_active'] ?? 0) === 1 ? 'Actif' : 'Inactif' ?></span>
-            </div>
+            <div class="card">
+                <h3>Utilisateur concerné</h3>
 
-            <form method="POST" style="margin-top:24px;">
-                <input type="hidden" name="id" value="<?= (int)$userId ?>">
-
-                <div class="btn-group">
-                    <button type="submit" class="btn btn-danger">Confirmer</button>
-                    <a href="<?= APP_URL ?>modules/admin/users.php" class="btn btn-outline">Annuler</a>
+                <div class="stat-row">
+                    <span class="metric-label">Nom utilisateur</span>
+                    <span class="metric-value"><?= e($user['username'] ?? '—') ?></span>
                 </div>
-            </form>
+
+                <div class="stat-row">
+                    <span class="metric-label">État actuel</span>
+                    <span class="metric-value"><?= (int)($user['is_active'] ?? 0) === 1 ? 'Actif' : 'Inactif' ?></span>
+                </div>
+
+                <div class="dashboard-note">
+                    Cette action est réversible via une réactivation ultérieure si tu ajoutes ensuite ce workflow.
+                </div>
+            </div>
         </div>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

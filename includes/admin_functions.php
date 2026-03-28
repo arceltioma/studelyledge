@@ -36,34 +36,63 @@ if (!function_exists('columnExists')) {
     }
 }
 
-if (!function_exists('render_app_header_bar')) {
-    function render_app_header_bar(string $title, string $subtitle = ''): void
+if (!function_exists('fetchSelectOptions')) {
+    function fetchSelectOptions(PDO $pdo, string $tableName, string $labelColumn = 'label', string $where = '1=1'): array
     {
-        echo '<div class="page-hero">';
-        echo '<div>';
-        echo '<h1>' . e($title) . '</h1>';
-        if ($subtitle !== '') {
-            echo '<p class="muted">' . e($subtitle) . '</p>';
+        if (!tableExists($pdo, $tableName) || !columnExists($pdo, $tableName, 'id')) {
+            return [];
         }
-        echo '</div>';
-        echo '</div>';
+
+        if (!columnExists($pdo, $tableName, $labelColumn)) {
+            if (columnExists($pdo, $tableName, 'name')) {
+                $labelColumn = 'name';
+            } elseif (columnExists($pdo, $tableName, 'account_label')) {
+                $labelColumn = 'account_label';
+            } elseif (columnExists($pdo, $tableName, 'full_name')) {
+                $labelColumn = 'full_name';
+            } else {
+                return [];
+            }
+        }
+
+        $stmt = $pdo->query("
+            SELECT id, {$labelColumn} AS text
+            FROM {$tableName}
+            WHERE {$where}
+            ORDER BY {$labelColumn} ASC
+        ");
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 }
 
-if (!function_exists('currentUserCan')) {
-    function currentUserCan(PDO $pdo, string $permissionCode): bool
+if (!function_exists('getRoleOptions')) {
+    function getRoleOptions(PDO $pdo): array
     {
-        return true;
+        if (!tableExists($pdo, 'roles')) {
+            return [];
+        }
+
+        return $pdo->query("
+            SELECT id, code, label
+            FROM roles
+            ORDER BY label ASC
+        ")->fetchAll(PDO::FETCH_ASSOC);
     }
 }
 
-if (!function_exists('requirePermission')) {
-    function requirePermission(PDO $pdo, string $permissionCode): void
+if (!function_exists('getPermissionOptions')) {
+    function getPermissionOptions(PDO $pdo): array
     {
-        if (!currentUserCan($pdo, $permissionCode)) {
-            http_response_code(403);
-            exit('Accès refusé.');
+        if (!tableExists($pdo, 'permissions')) {
+            return [];
         }
+
+        return $pdo->query("
+            SELECT id, code, label
+            FROM permissions
+            ORDER BY label ASC
+        ")->fetchAll(PDO::FETCH_ASSOC);
     }
 }
 
@@ -116,36 +145,6 @@ if (!function_exists('logUserAction')) {
             VALUES (" . implode(', ', $values) . ")
         ");
         $stmt->execute($params);
-    }
-}
-
-if (!function_exists('fetchSelectOptions')) {
-    function fetchSelectOptions(PDO $pdo, string $tableName, string $labelColumn = 'label', string $where = '1=1'): array
-    {
-        if (!tableExists($pdo, $tableName) || !columnExists($pdo, $tableName, 'id')) {
-            return [];
-        }
-
-        if (!columnExists($pdo, $tableName, $labelColumn)) {
-            if (columnExists($pdo, $tableName, 'name')) {
-                $labelColumn = 'name';
-            } elseif (columnExists($pdo, $tableName, 'account_label')) {
-                $labelColumn = 'account_label';
-            } elseif (columnExists($pdo, $tableName, 'full_name')) {
-                $labelColumn = 'full_name';
-            } else {
-                return [];
-            }
-        }
-
-        $stmt = $pdo->query("
-            SELECT id, {$labelColumn} AS text
-            FROM {$tableName}
-            WHERE {$where}
-            ORDER BY {$labelColumn} ASC
-        ");
-
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 }
 
@@ -292,6 +291,7 @@ if (!function_exists('resolveAccountingOperation')) {
         switch ($operationTypeCode) {
             case 'VERSEMENT':
             case 'REGULARISATION_POSITIVE':
+            case 'CREDIT_CLIENT':
                 if (!$clientContext) {
                     throw new RuntimeException('Client obligatoire.');
                 }
@@ -304,6 +304,7 @@ if (!function_exists('resolveAccountingOperation')) {
             case 'VIREMENT_REGULIER':
             case 'REGULARISATION_NEGATIVE':
             case 'FRAIS_BANCAIRES':
+            case 'DEBIT_CLIENT':
                 if (!$clientContext) {
                     throw new RuntimeException('Client obligatoire.');
                 }
@@ -312,6 +313,7 @@ if (!function_exists('resolveAccountingOperation')) {
                 break;
 
             case 'FRAIS_DE_SERVICE':
+            case 'FRAIS_SERVICE':
                 if (!$clientContext) {
                     throw new RuntimeException('Client obligatoire.');
                 }
@@ -332,6 +334,16 @@ if (!function_exists('resolveAccountingOperation')) {
                 }
                 $debit = $sourceTreasuryCode;
                 $credit = $targetTreasuryCode;
+                break;
+
+            case 'MANUAL':
+            case 'IMPORT_RELEVE':
+            case 'REGULARISATION':
+                if (!$clientContext) {
+                    throw new RuntimeException('Client obligatoire.');
+                }
+                $debit = $clientContext['generated_client_account'] ?? null;
+                $credit = $sourceTreasuryCode ?: ($clientContext['treasury_account_code'] ?? null);
                 break;
 
             default:
@@ -391,14 +403,12 @@ if (!function_exists('updateTreasuryBalanceDelta')) {
             return;
         }
 
-        $params = [$delta, $treasuryId];
-
         $stmt = $pdo->prepare("
             UPDATE treasury_accounts
             SET " . implode(', ', $sets) . "
             WHERE id = ?
         ");
-        $stmt->execute($params);
+        $stmt->execute([$delta, $treasuryId]);
     }
 }
 
@@ -431,15 +441,20 @@ if (!function_exists('applyAccountingBalanceEffects')) {
         }
 
         if ($bankAccountId > 0) {
-            if (in_array($operationTypeCode, ['VERSEMENT', 'REGULARISATION_POSITIVE'], true)) {
+            if (in_array($operationTypeCode, ['VERSEMENT', 'REGULARISATION_POSITIVE', 'CREDIT_CLIENT'], true)) {
                 updateBankAccountBalanceDelta($pdo, $bankAccountId, +$amount);
             } elseif (in_array($operationTypeCode, [
                 'FRAIS_DE_SERVICE',
+                'FRAIS_SERVICE',
                 'VIREMENT_MENSUEL',
                 'VIREMENT_EXCEPTIONEL',
                 'VIREMENT_REGULIER',
                 'REGULARISATION_NEGATIVE',
-                'FRAIS_BANCAIRES'
+                'FRAIS_BANCAIRES',
+                'DEBIT_CLIENT',
+                'MANUAL',
+                'IMPORT_RELEVE',
+                'REGULARISATION'
             ], true)) {
                 updateBankAccountBalanceDelta($pdo, $bankAccountId, -$amount);
             }
@@ -493,12 +508,15 @@ if (!function_exists('createOperationWithAccounting')) {
             'operation_date' => $payload['operation_date'] ?? date('Y-m-d'),
             'amount' => (float)($payload['amount'] ?? 0),
             'operation_type_code' => $payload['operation_type_code'] ?? null,
+            'operation_kind' => $payload['operation_kind'] ?? null,
             'label' => $payload['label'] ?? null,
             'reference' => $payload['reference'] ?? null,
             'notes' => $payload['notes'] ?? null,
+            'source_type' => $payload['source_type'] ?? null,
             'debit_account_code' => $resolved['debit_account_code'],
             'credit_account_code' => $resolved['credit_account_code'],
             'service_account_code' => $resolved['analytic_account']['account_code'] ?? null,
+            'created_by' => isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null,
         ];
 
         foreach ($map as $column => $value) {
@@ -591,5 +609,135 @@ if (!function_exists('createInternalTreasuryMovement')) {
         updateTreasuryBalanceDelta($pdo, $targetId, +$amount);
 
         return (int)$pdo->lastInsertId();
+    }
+}
+
+if (!function_exists('recomputeAllBalances')) {
+    function recomputeAllBalances(PDO $pdo): array
+    {
+        $report = [
+            'bank_accounts' => 0,
+            'treasury_accounts' => 0,
+            'service_accounts' => 0,
+        ];
+
+        if (tableExists($pdo, 'bank_accounts') && tableExists($pdo, 'operations')) {
+            $bankAccounts = $pdo->query("
+                SELECT id, account_number, COALESCE(initial_balance, 0) AS initial_balance
+                FROM bank_accounts
+            ")->fetchAll(PDO::FETCH_ASSOC);
+
+            $stmtBank = $pdo->prepare("
+                SELECT
+                    COALESCE(SUM(CASE WHEN debit_account_code = ? THEN amount ELSE 0 END), 0) AS total_debit,
+                    COALESCE(SUM(CASE WHEN credit_account_code = ? THEN amount ELSE 0 END), 0) AS total_credit
+                FROM operations
+            ");
+
+            $stmtUpdateBank = $pdo->prepare("
+                UPDATE bank_accounts
+                SET balance = ?, updated_at = NOW()
+                WHERE id = ?
+            ");
+
+            foreach ($bankAccounts as $account) {
+                $stmtBank->execute([$account['account_number'], $account['account_number']]);
+                $totals = $stmtBank->fetch(PDO::FETCH_ASSOC) ?: [];
+
+                $newBalance = (float)$account['initial_balance']
+                    + (float)($totals['total_debit'] ?? 0)
+                    - (float)($totals['total_credit'] ?? 0);
+
+                $stmtUpdateBank->execute([$newBalance, (int)$account['id']]);
+                $report['bank_accounts']++;
+            }
+        }
+
+        if (tableExists($pdo, 'treasury_accounts')) {
+            $treasuryAccounts = $pdo->query("
+                SELECT id, account_code, COALESCE(opening_balance,0) AS opening_balance
+                FROM treasury_accounts
+            ")->fetchAll(PDO::FETCH_ASSOC);
+
+            $stmtTreasuryOps = tableExists($pdo, 'operations')
+                ? $pdo->prepare("
+                    SELECT
+                        COALESCE(SUM(CASE WHEN debit_account_code = ? THEN amount ELSE 0 END), 0) AS total_debit,
+                        COALESCE(SUM(CASE WHEN credit_account_code = ? THEN amount ELSE 0 END), 0) AS total_credit
+                    FROM operations
+                ")
+                : null;
+
+            $stmtTreasuryMov = tableExists($pdo, 'treasury_movements')
+                ? $pdo->prepare("
+                    SELECT
+                        COALESCE(SUM(CASE WHEN target_treasury_account_id = ? THEN amount ELSE 0 END), 0) AS total_in,
+                        COALESCE(SUM(CASE WHEN source_treasury_account_id = ? THEN amount ELSE 0 END), 0) AS total_out
+                    FROM treasury_movements
+                ")
+                : null;
+
+            $stmtUpdateTreasury = $pdo->prepare("
+                UPDATE treasury_accounts
+                SET current_balance = ?, updated_at = NOW()
+                WHERE id = ?
+            ");
+
+            foreach ($treasuryAccounts as $account) {
+                $opsDebit = 0.0;
+                $opsCredit = 0.0;
+                $movIn = 0.0;
+                $movOut = 0.0;
+
+                if ($stmtTreasuryOps) {
+                    $stmtTreasuryOps->execute([$account['account_code'], $account['account_code']]);
+                    $ops = $stmtTreasuryOps->fetch(PDO::FETCH_ASSOC) ?: [];
+                    $opsDebit = (float)($ops['total_debit'] ?? 0);
+                    $opsCredit = (float)($ops['total_credit'] ?? 0);
+                }
+
+                if ($stmtTreasuryMov) {
+                    $stmtTreasuryMov->execute([(int)$account['id'], (int)$account['id']]);
+                    $mov = $stmtTreasuryMov->fetch(PDO::FETCH_ASSOC) ?: [];
+                    $movIn = (float)($mov['total_in'] ?? 0);
+                    $movOut = (float)($mov['total_out'] ?? 0);
+                }
+
+                $newBalance = (float)$account['opening_balance'] + $opsDebit - $opsCredit + $movIn - $movOut;
+                $stmtUpdateTreasury->execute([$newBalance, (int)$account['id']]);
+                $report['treasury_accounts']++;
+            }
+        }
+
+        if (tableExists($pdo, 'service_accounts') && tableExists($pdo, 'operations')) {
+            $serviceAccounts = $pdo->query("
+                SELECT id, account_code
+                FROM service_accounts
+            ")->fetchAll(PDO::FETCH_ASSOC);
+
+            $stmtService = $pdo->prepare("
+                SELECT
+                    COALESCE(SUM(CASE WHEN credit_account_code = ? THEN amount ELSE 0 END), 0) AS total_credit,
+                    COALESCE(SUM(CASE WHEN debit_account_code = ? THEN amount ELSE 0 END), 0) AS total_debit
+                FROM operations
+            ");
+
+            $stmtUpdateService = $pdo->prepare("
+                UPDATE service_accounts
+                SET current_balance = ?, updated_at = NOW()
+                WHERE id = ?
+            ");
+
+            foreach ($serviceAccounts as $account) {
+                $stmtService->execute([$account['account_code'], $account['account_code']]);
+                $totals = $stmtService->fetch(PDO::FETCH_ASSOC) ?: [];
+
+                $newBalance = (float)($totals['total_credit'] ?? 0) - (float)($totals['total_debit'] ?? 0);
+                $stmtUpdateService->execute([$newBalance, (int)$account['id']]);
+                $report['service_accounts']++;
+            }
+        }
+
+        return $report;
     }
 }

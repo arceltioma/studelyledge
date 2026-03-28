@@ -1,175 +1,156 @@
 <?php
-$dbStatus = 'Inconnu';
-$connectedUsersCount = '—';
-$openSupportCount = '—';
-$importsInProgressCount = '—';
+if (!defined('APP_NAME')) {
+    require_once __DIR__ . '/../config/app.php';
+}
+
+if (!isset($pdo) || !($pdo instanceof PDO)) {
+    require_once __DIR__ . '/../config/database.php';
+    $pdo = getPDO();
+}
+
+require_once __DIR__ . '/admin_functions.php';
+
+$footerYear = date('Y');
+
+$totalActiveClients = 0;
+$totalOperations = 0;
+$totalRejectedImports = 0;
+$totalOpenSupport = 0;
+$totalTreasuryBalance = 0.0;
 
 try {
-    if (isset($pdo) && $pdo instanceof PDO) {
-        $dbStatus = 'Connectée';
+    if (tableExists($pdo, 'clients')) {
+        $totalActiveClients = (int)$pdo->query("
+            SELECT COUNT(*)
+            FROM clients
+            WHERE COALESCE(is_active, 1) = 1
+        ")->fetchColumn();
+    }
 
-        if (
-            function_exists('tableExists') &&
-            function_exists('columnExists') &&
-            tableExists($pdo, 'users')
-        ) {
-            if (columnExists($pdo, 'users', 'last_login_at') && columnExists($pdo, 'users', 'is_active')) {
-                $stmtConnected = $pdo->query("
-                    SELECT COUNT(*)
-                    FROM users
-                    WHERE is_active = 1
-                      AND last_login_at IS NOT NULL
-                      AND last_login_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
-                ");
-                $connectedUsersCount = (int)$stmtConnected->fetchColumn();
-            } elseif (columnExists($pdo, 'users', 'is_active')) {
-                $stmtConnected = $pdo->query("
-                    SELECT COUNT(*)
-                    FROM users
-                    WHERE is_active = 1
-                ");
-                $connectedUsersCount = (int)$stmtConnected->fetchColumn();
-            } else {
-                $stmtConnected = $pdo->query("SELECT COUNT(*) FROM users");
-                $connectedUsersCount = (int)$stmtConnected->fetchColumn();
-            }
-        }
+    if (tableExists($pdo, 'operations')) {
+        $totalOperations = (int)$pdo->query("
+            SELECT COUNT(*)
+            FROM operations
+        ")->fetchColumn();
+    }
 
-        if (function_exists('tableExists') && tableExists($pdo, 'support_requests')) {
-            if (function_exists('columnExists') && columnExists($pdo, 'support_requests', 'status')) {
-                $stmtSupport = $pdo->query("
-                    SELECT COUNT(*)
-                    FROM support_requests
-                    WHERE status IN ('open', 'in_progress')
-                ");
-                $openSupportCount = (int)$stmtSupport->fetchColumn();
-            } else {
-                $stmtSupport = $pdo->query("SELECT COUNT(*) FROM support_requests");
-                $openSupportCount = (int)$stmtSupport->fetchColumn();
-            }
-        } else {
-            $openSupportCount = 0;
-        }
+    if (tableExists($pdo, 'import_rows')) {
+        $totalRejectedImports = (int)$pdo->query("
+            SELECT COUNT(*)
+            FROM import_rows
+            WHERE status = 'rejected'
+        ")->fetchColumn();
+    }
 
-        if (function_exists('tableExists') && tableExists($pdo, 'import_batches')) {
-            $stmtImports = $pdo->query("
-                SELECT COUNT(*)
-                FROM import_batches
-                WHERE status IN ('processing', 'pending')
-            ");
-            $importsInProgressCount = (int)$stmtImports->fetchColumn();
-        } elseif (function_exists('tableExists') && tableExists($pdo, 'imports')) {
-            $stmtImports = $pdo->query("
-                SELECT COUNT(*)
-                FROM imports
-                WHERE status IN ('processing', 'pending')
-            ");
-            $importsInProgressCount = (int)$stmtImports->fetchColumn();
-        } else {
-            $importsInProgressCount = 0;
-        }
+    if (tableExists($pdo, 'support_requests')) {
+        $totalOpenSupport = (int)$pdo->query("
+            SELECT COUNT(*)
+            FROM support_requests
+            WHERE status IN ('open', 'in_progress')
+        ")->fetchColumn();
+    }
+
+    if (tableExists($pdo, 'treasury_accounts')) {
+        $totalTreasuryBalance = (float)$pdo->query("
+            SELECT COALESCE(SUM(current_balance), 0)
+            FROM treasury_accounts
+            WHERE COALESCE(is_active, 1) = 1
+        ")->fetchColumn();
     }
 } catch (Throwable $e) {
-    $dbStatus = 'Erreur';
+    // On garde un footer silencieux même si une requête de métrique échoue.
 }
+
+$footerSystemStatus = 'Système opérationnel';
+$footerDataStatus = $totalRejectedImports > 0
+    ? 'Imports à corriger'
+    : 'Imports synchronisés';
+
+$footerSupportStatus = $totalOpenSupport > 0
+    ? $totalOpenSupport . ' ticket(s) ouvert(s)'
+    : 'Aucun ticket ouvert';
+
+$showAdminLinks = function_exists('currentUserCan')
+    && (
+        currentUserCan($pdo, 'admin_dashboard_view')
+        || currentUserCan($pdo, 'admin_logs_view')
+        || currentUserCan($pdo, 'support_admin_manage')
+    );
 ?>
 
-<footer class="app-footer rich-footer">
+<footer class="app-footer">
+    <div class="rich-footer">
 
-    <div class="footer-top">
-        <div class="footer-left">
-            <strong><?= e(APP_NAME) ?></strong>
-            <span class="footer-separator">•</span>
-            <span>Plateforme de pilotage financier</span>
+        <div class="footer-top">
+            <div class="footer-left">
+                <strong><?= e(APP_NAME) ?></strong>
+                <span class="footer-separator">•</span>
+                <span class="muted">Pilotage financier & suivi des engagements</span>
+            </div>
+
+            <div class="footer-right">
+                <span class="muted">© <?= e((string)$footerYear) ?></span>
+            </div>
         </div>
 
-        <div class="footer-center">
-            <span>© <?= date('Y') ?></span>
-            <span class="footer-separator">•</span>
-            <span>Version <?= defined('APP_VERSION') ? e(APP_VERSION) : '1.0' ?></span>
+        <div class="system-status-bar">
+            <div class="status-item">
+                <span class="status-label">État application</span>
+                <span class="status-value"><?= e($footerSystemStatus) ?></span>
+            </div>
+
+            <div class="status-item">
+                <span class="status-label">Clients actifs</span>
+                <span class="status-value"><?= number_format($totalActiveClients, 0, ',', ' ') ?></span>
+            </div>
+
+            <div class="status-item">
+                <span class="status-label">Opérations</span>
+                <span class="status-value"><?= number_format($totalOperations, 0, ',', ' ') ?></span>
+            </div>
+
+            <div class="status-item">
+                <span class="status-label">Trésorerie 512</span>
+                <span class="status-value"><?= number_format($totalTreasuryBalance, 2, ',', ' ') ?> €</span>
+            </div>
+
+            <div class="status-item">
+                <span class="status-label">Qualité imports</span>
+                <span class="status-value"><?= e($footerDataStatus) ?></span>
+            </div>
+
+            <div class="status-item">
+                <span class="status-label">Support</span>
+                <span class="status-value"><?= e($footerSupportStatus) ?></span>
+            </div>
         </div>
 
-        <div class="footer-right">
-            <span class="footer-user">
-                Connecté : <strong><?= e($_SESSION['username'] ?? 'Utilisateur') ?></strong>
-            </span>
+        <div class="footer-links">
+            <div class="footer-left">
+                <a href="<?= e(APP_URL) ?>modules/dashboard/dashboard.php" class="muted">Dashboard</a>
+                <span class="footer-separator">•</span>
+                <a href="<?= e(APP_URL) ?>modules/statements/index.php" class="muted">Exports</a>
+                <span class="footer-separator">•</span>
+                <a href="<?= e(APP_URL) ?>modules/imports/import_journal.php" class="muted">Journal imports</a>
+                <span class="footer-separator">•</span>
+                <a href="<?= e(APP_URL) ?>modules/support/ask_question.php" class="muted">Support</a>
+            </div>
+
+            <div class="footer-center">
+                <?php if ($showAdminLinks): ?>
+                    <a href="<?= e(APP_URL) ?>modules/admin/dashboard_admin.php" class="muted">Admin</a>
+                    <span class="footer-separator">•</span>
+                    <a href="<?= e(APP_URL) ?>modules/admin/user_logs.php" class="muted">Logs</a>
+                    <span class="footer-separator">•</span>
+                    <a href="<?= e(APP_URL) ?>modules/admin/support_requests.php" class="muted">Tickets</a>
+                <?php else: ?>
+                    <span class="muted">Accès gouverné par rôle</span>
+                <?php endif; ?>
+            </div>
+
+            <div class="footer-right">
+                <span class="muted">Base centralisée connectée</span>
+            </div>
         </div>
     </div>
-
-    <div class="system-status-bar">
-        <div class="status-item">
-            <span class="status-label">Utilisateurs connectés</span>
-            <span class="status-value"><?= e((string)$connectedUsersCount) ?></span>
-        </div>
-
-        <div class="status-item">
-            <span class="status-label">Support en attente</span>
-            <span class="status-value"><?= e((string)$openSupportCount) ?></span>
-        </div>
-
-        <div class="status-item">
-            <span class="status-label">Imports en cours</span>
-            <span class="status-value"><?= e((string)$importsInProgressCount) ?></span>
-        </div>
-
-        <div class="status-item">
-            <span class="status-label">Base de données</span>
-            <span class="status-value <?= $dbStatus === 'Connectée' ? 'status-ok' : ($dbStatus === 'Erreur' ? 'status-ko' : '') ?>">
-                <?= e($dbStatus) ?>
-            </span>
-        </div>
-    </div>
-
-    <div class="footer-links">
-        <a href="<?= e(APP_URL) ?>pages/sitemap.php" class="btn btn-outline">Sitemap</a>
-        <a href="<?= e(APP_URL) ?>pages/copyright.php" class="btn btn-secondary">Copyright</a>
-        <a href="<?= e(APP_URL) ?>pages/contact.php" class="btn btn-primary">Contacts</a>
-    </div>
-
 </footer>
-
-<div id="cookieBanner" class="cookie-banner" style="display:none;">
-    <div class="cookie-banner-content">
-        <div>
-            <strong>Cookies</strong>
-            <p class="muted" style="margin:6px 0 0;">
-                Ce site utilise des cookies essentiels et, si tu l’acceptes, des cookies de confort pour améliorer l’expérience.
-            </p>
-        </div>
-        <div class="btn-group" style="margin-top:0;">
-            <button id="acceptCookies" class="btn btn-success" type="button">Accepter</button>
-            <button id="rejectCookies" class="btn btn-danger" type="button">Refuser</button>
-            <a href="<?= e(APP_URL) ?>pages/cookies_policy.php" class="btn btn-outline">En savoir plus</a>
-        </div>
-    </div>
-</div>
-
-<script>
-document.addEventListener('DOMContentLoaded', function () {
-    const banner = document.getElementById('cookieBanner');
-    const acceptBtn = document.getElementById('acceptCookies');
-    const rejectBtn = document.getElementById('rejectCookies');
-
-    const consent = localStorage.getItem('studelyledger_cookie_consent');
-
-    if (!consent && banner) {
-        banner.style.display = 'block';
-    }
-
-    if (acceptBtn) {
-        acceptBtn.addEventListener('click', function () {
-            localStorage.setItem('studelyledger_cookie_consent', 'accepted');
-            document.cookie = "studelyledger_cookie_consent=accepted; path=/; max-age=" + (60 * 60 * 24 * 180);
-            if (banner) banner.style.display = 'none';
-        });
-    }
-
-    if (rejectBtn) {
-        rejectBtn.addEventListener('click', function () {
-            localStorage.setItem('studelyledger_cookie_consent', 'rejected');
-            document.cookie = "studelyledger_cookie_consent=rejected; path=/; max-age=" + (60 * 60 * 24 * 180);
-            if (banner) banner.style.display = 'none';
-        });
-    }
-});
-</script>

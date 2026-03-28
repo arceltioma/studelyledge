@@ -44,14 +44,27 @@ $rejectedImports = tableExists($pdo, 'import_rows')
     ")->fetchColumn()
     : 0;
 
+$activeClientsPositive = tableExists($pdo, 'clients') && tableExists($pdo, 'bank_accounts') && tableExists($pdo, 'client_bank_accounts')
+    ? (int)$pdo->query("
+        SELECT COUNT(DISTINCT c.id)
+        FROM clients c
+        INNER JOIN client_bank_accounts cba ON cba.client_id = c.id
+        INNER JOIN bank_accounts ba ON ba.id = cba.bank_account_id
+        WHERE COALESCE(c.is_active,1) = 1
+          AND COALESCE(ba.balance,0) > 0
+    ")->fetchColumn()
+    : 0;
+
 $recentOperations = tableExists($pdo, 'operations')
     ? $pdo->query("
         SELECT
             o.*,
             c.client_code,
-            c.full_name
+            c.full_name,
+            rot.label AS operation_type_label
         FROM operations o
         LEFT JOIN clients c ON c.id = o.client_id
+        LEFT JOIN ref_operation_types rot ON rot.code = o.operation_type_code
         ORDER BY o.id DESC
         LIMIT 10
     ")->fetchAll(PDO::FETCH_ASSOC)
@@ -67,6 +80,7 @@ $recentImports = tableExists($pdo, 'imports')
     : [];
 
 $pageTitle = 'Dashboard';
+$pageSubtitle = 'Vue consolidée des clients, flux, comptes internes et imports.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -81,6 +95,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <h3>Clients actifs</h3>
                 <div class="kpi"><?= $totalClients ?></div>
                 <p class="muted">Base active exploitable</p>
+            </div>
+
+            <div class="card">
+                <h3>Clients avec solde > 0</h3>
+                <div class="kpi"><?= $activeClientsPositive ?></div>
+                <p class="muted">Engagements positifs</p>
             </div>
 
             <div class="card">
@@ -102,7 +122,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </div>
 
             <div class="card">
-                <h3>Rejets ouverts</h3>
+                <h3>Rejets imports</h3>
                 <div class="kpi"><?= $rejectedImports ?></div>
                 <p class="muted">Lignes à corriger</p>
             </div>
@@ -126,6 +146,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <thead>
                         <tr>
                             <th>Date</th>
+                            <th>Type</th>
                             <th>Client</th>
                             <th>Libellé</th>
                             <th>Débit</th>
@@ -137,6 +158,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <?php foreach ($recentOperations as $op): ?>
                             <tr>
                                 <td><?= e($op['operation_date'] ?? '') ?></td>
+                                <td><?= e($op['operation_type_label'] ?? $op['operation_type_code'] ?? '') ?></td>
                                 <td><?= e(trim((string)($op['client_code'] ?? '') . ' - ' . (string)($op['full_name'] ?? ''))) ?></td>
                                 <td><?= e($op['label'] ?? '') ?></td>
                                 <td><?= e($op['debit_account_code'] ?? '') ?></td>
@@ -147,7 +169,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <?php if (!$recentOperations): ?>
                             <tr>
-                                <td colspan="6">Aucune opération récente.</td>
+                                <td colspan="7">Aucune opération récente.</td>
                             </tr>
                         <?php endif; ?>
                     </tbody>
@@ -204,6 +226,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <a href="<?= e(APP_URL) ?>modules/treasury/index.php" class="btn btn-outline">Voir la trésorerie</a>
                     <a href="<?= e(APP_URL) ?>modules/statements/index.php" class="btn btn-outline">Exports & relevés</a>
                     <a href="<?= e(APP_URL) ?>modules/analytics/revenue_analysis.php" class="btn btn-outline">Analytics</a>
+                    <a href="<?= e(APP_URL) ?>modules/dashboard/rebuild_balances.php" class="btn btn-outline">Recalculer les soldes</a>
                 </div>
             </div>
 

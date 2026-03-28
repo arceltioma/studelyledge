@@ -1,0 +1,5 @@
+account_code;account_label;bank_name;subsidiary_name;zone_code;country_label;country_type;payment_place;currency_code
+512001;BNP France Principal;BNP Paribas;Studely France;EU-OUEST;France;Filiale;Paris;EUR
+512002;SG France Secondaire;Société Générale;Studely France;EU-OUEST;France;Filiale;Lyon;EUR
+512003;RBC Canada;RBC;Studely Canada;NA-EST;Canada;Filiale;Montréal;CAD
+512004;Ecobank Sénégal;Ecobank;Studely Sénégal;AF-OUEST;Sénégal;Partenaire;Dakar;XOF

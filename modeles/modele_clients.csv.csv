@@ -1,0 +1,5 @@
+client_code;first_name;last_name;full_name;email;phone;country_origin;country_destination;country_commercial;client_type;client_status;currency;treasury_account_code
+100000001;Aminata;Diallo;Aminata Diallo;aminata.diallo@exemple.com;+221700000001;Sénégal;France;France;AVI;Etudiant actif;EUR;512001
+100000002;Moussa;Traoré;Moussa Traoré;moussa.traore@exemple.com;+223700000002;Mali;France;France;Transfert;Etudiant en attente AVI;EUR;512001
+100000003;Sarah;Nguessan;Sarah Nguessan;sarah.nguessan@exemple.com;+225700000003;Côte d'Ivoire;Canada;Canada;Compte de paiement;Etudiant actif;CAD;512003
+100000004;Kevin;Mba;Kevin Mba;kevin.mba@exemple.com;+241700000004;Gabon;France;France;AVI;Etudiant dormant;EUR;512002

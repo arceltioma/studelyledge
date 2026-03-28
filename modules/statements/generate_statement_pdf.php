@@ -4,11 +4,20 @@ $pdo = getPDO();
 
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
+require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
+
+enforcePagePermission($pdo, 'statements_export_single');
 
 require_once __DIR__ . '/../../vendor/autoload.php';
 
 use Dompdf\Dompdf;
 use Dompdf\Options;
+
+$isPost = ($_SERVER['REQUEST_METHOD'] === 'POST');
+if ($isPost && !verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+    exit('Jeton CSRF invalide.');
+}
 
 $clientId = (int)($_POST['client_id'] ?? $_GET['client_id'] ?? 0);
 $dateFrom = trim((string)($_POST['date_from'] ?? $_GET['date_from'] ?? ''));
@@ -56,6 +65,21 @@ $clientBank = findPrimaryBankAccountForClient($pdo, $clientId);
 $initialBalance = (float)($clientBank['initial_balance'] ?? 0);
 $currentBalance = (float)($clientBank['balance'] ?? 0);
 
+$totalCredit = 0.0;
+$totalDebit = 0.0;
+$clientAccountCode = (string)($client['generated_client_account'] ?? '');
+
+foreach ($operations as $op) {
+    if (($op['credit_account_code'] ?? '') === $clientAccountCode) {
+        $totalCredit += (float)($op['amount'] ?? 0);
+    }
+    if (($op['debit_account_code'] ?? '') === $clientAccountCode) {
+        $totalDebit += (float)($op['amount'] ?? 0);
+    }
+}
+
+$finalBalance = $initialBalance + $totalCredit - $totalDebit;
+
 $options = new Options();
 $options->set('defaultFont', 'DejaVu Sans');
 $dompdf = new Dompdf($options);
@@ -84,7 +108,10 @@ ob_start();
         <tr><td>Compte client</td><td><?= e($client['generated_client_account'] ?? '') ?></td></tr>
         <tr><td>Période</td><td><?= e(($dateFrom ?: 'origine') . ' → ' . ($dateTo ?: 'aujourd’hui')) ?></td></tr>
         <tr><td>Solde initial</td><td><?= number_format($initialBalance, 2, ',', ' ') ?></td></tr>
-        <tr><td>Solde courant</td><td><?= number_format($currentBalance, 2, ',', ' ') ?></td></tr>
+        <tr><td>Total crédits</td><td><?= number_format($totalCredit, 2, ',', ' ') ?></td></tr>
+        <tr><td>Total débits</td><td><?= number_format($totalDebit, 2, ',', ' ') ?></td></tr>
+        <tr><td>Solde final recalculé</td><td><?= number_format($finalBalance, 2, ',', ' ') ?></td></tr>
+        <tr><td>Solde courant compte</td><td><?= number_format($currentBalance, 2, ',', ' ') ?></td></tr>
     </table>
 
     <h2>Opérations</h2>

@@ -5,30 +5,33 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
 enforcePagePermission($pdo, 'statements_export');
-
-require_once __DIR__ . '/../../includes/header.php';
 
 $clients = tableExists($pdo, 'clients')
     ? $pdo->query("
         SELECT id, client_code, full_name
         FROM clients
+        WHERE COALESCE(is_active,1)=1
         ORDER BY client_code ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
+
+$pageTitle = 'Relevés de comptes';
+$pageSubtitle = 'Exports orientés flux : débits, crédits, soldes, historique.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
     <div class="main">
-        <?php render_app_header_bar(
-            'Relevés de comptes',
-            'Exports orientés flux : débits, crédits, soldes, historique.'
-        ); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <div class="form-card">
-            <form method="POST" action="<?= APP_URL ?>modules/statements/generate_statement_pdf.php">
+            <form method="POST" action="<?= e(APP_URL) ?>modules/statements/generate_statement_pdf.php">
+                <?= csrf_input() ?>
+
                 <div>
                     <label>Client</label>
                     <select name="client_id" required>
@@ -41,7 +44,7 @@ $clients = tableExists($pdo, 'clients')
                     </select>
                 </div>
 
-                <div class="dashboard-grid-2" style="margin-top:16px;">
+                <div class="dashboard-grid-2">
                     <div>
                         <label>Du</label>
                         <input type="date" name="date_from">
@@ -52,13 +55,15 @@ $clients = tableExists($pdo, 'clients')
                     </div>
                 </div>
 
-                <div class="btn-group" style="margin-top:20px;">
-                    <button class="btn btn-primary">Exporter PDF unitaire</button>
+                <div class="btn-group">
+                    <button class="btn btn-primary" type="submit">Exporter PDF unitaire</button>
                 </div>
             </form>
         </div>
 
-        <form method="POST" action="<?= APP_URL ?>modules/statements/generate_bulk_pdf.php" class="table-card" style="margin-top:20px;">
+        <form method="POST" action="<?= e(APP_URL) ?>modules/statements/generate_bulk_pdf.php" class="table-card">
+            <?= csrf_input() ?>
+
             <h3 class="section-title">Export masse</h3>
 
             <div class="dashboard-grid-2">
@@ -72,7 +77,7 @@ $clients = tableExists($pdo, 'clients')
                 </div>
             </div>
 
-            <table style="margin-top:20px;">
+            <table>
                 <thead>
                     <tr>
                         <th><input type="checkbox" id="check_all_statements"></th>
@@ -96,8 +101,8 @@ $clients = tableExists($pdo, 'clients')
 
             <input type="hidden" name="document_kind" value="statement">
 
-            <div class="btn-group" style="margin-top:20px;">
-                <button class="btn btn-success">Exporter la sélection</button>
+            <div class="btn-group">
+                <button class="btn btn-success" type="submit">Exporter la sélection</button>
             </div>
         </form>
 
@@ -116,3 +121,5 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 });
 </script>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

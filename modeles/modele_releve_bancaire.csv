@@ -1,0 +1,5 @@
+operation_date;label;reference;debit;credit;balance;client_code;operation_type_code;service_code;treasury_account_code
+2026-03-01;Versement initial;REF-0001;;15000.00;15000.00;100000001;CREDIT_CLIENT;;512001
+2026-03-03;Frais de service dossier;REF-0002;250.00;;14750.00;100000001;FRAIS_SERVICE;SRV_DOSSIER;512001
+2026-03-05;Régularisation positive;REF-0003;;500.00;15250.00;100000002;REGULARISATION;;512001
+2026-03-06;Débit client exceptionnel;REF-0004;300.00;;14950.00;100000003;DEBIT_CLIENT;;512003

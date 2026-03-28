@@ -1,13 +1,11 @@
 <?php
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../config/database.php';
+$pdo = getPDO();
 require_once __DIR__ . '/../../includes/admin_functions.php';
-
-$pagePermission = 'treasury_view';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
-enforcePagePermission($pdo, $pagePermission);
 
-require_once __DIR__ . '/../../includes/header.php';
+enforcePagePermission($pdo, 'treasury_view');
 
 $search = trim($_GET['search'] ?? '');
 $country = trim($_GET['country'] ?? '');
@@ -50,9 +48,10 @@ if ($search !== '') {
     $sql .= " AND (
         ba.account_name LIKE ?
         OR ba.account_number LIKE ?
+        OR ba.bank_name LIKE ?
     )";
     $like = '%' . $search . '%';
-    array_push($params, $like, $like);
+    array_push($params, $like, $like, $like);
 }
 
 if ($country !== '') {
@@ -86,13 +85,17 @@ $totalBalance = 0.0;
 foreach ($accounts as $account) {
     $totalBalance += (float)$account['balance'];
 }
+
+$pageTitle = 'Comptes bancaires';
+$pageSubtitle = 'Lecture structurée des comptes bancaires rattachés aux clients.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
     <div class="main">
-        <?php render_app_header_bar('Trésorerie', 'Lecture structurée des comptes et des équilibres disponibles.'); ?>
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <div class="card-grid">
             <div class="card">
@@ -112,7 +115,7 @@ foreach ($accounts as $account) {
             <h3 class="section-title">Filtres</h3>
 
             <form method="GET" class="inline-form">
-                <input type="text" name="search" placeholder="Nom ou numéro de compte..." value="<?= e($search) ?>">
+                <input type="text" name="search" placeholder="Nom, numéro, banque..." value="<?= e($search) ?>">
 
                 <select name="country">
                     <option value="">Tous les pays</option>
@@ -148,7 +151,7 @@ foreach ($accounts as $account) {
                 </select>
 
                 <button type="submit" class="btn btn-secondary">Filtrer</button>
-                <a href="<?= APP_URL ?>modules/treasury/bank_accounts.php" class="btn btn-outline">Réinitialiser</a>
+                <a href="<?= e(APP_URL) ?>modules/treasury/bank_accounts.php" class="btn btn-outline">Réinitialiser</a>
             </form>
         </div>
 
@@ -163,6 +166,7 @@ foreach ($accounts as $account) {
                         <th>Pays</th>
                         <th>Type</th>
                         <th>Catégorie</th>
+                        <th>Banque</th>
                         <th>Solde</th>
                         <th>État</th>
                     </tr>
@@ -170,7 +174,7 @@ foreach ($accounts as $account) {
                 <tbody>
                     <?php if (!$accounts): ?>
                         <tr>
-                            <td colspan="7">Aucun compte trouvé.</td>
+                            <td colspan="8">Aucun compte trouvé.</td>
                         </tr>
                     <?php else: ?>
                         <?php foreach ($accounts as $account): ?>
@@ -180,6 +184,7 @@ foreach ($accounts as $account) {
                                 <td><?= e($account['country'] ?? '—') ?></td>
                                 <td><?= e($account['type_name'] ?? '—') ?></td>
                                 <td><?= e($account['category_name'] ?? '—') ?></td>
+                                <td><?= e($account['bank_name'] ?? '—') ?></td>
                                 <td><?= number_format((float)$account['balance'], 2, ',', ' ') ?> €</td>
                                 <td>
                                     <?php if ((int)$account['is_active'] === 1): ?>
@@ -198,3 +203,5 @@ foreach ($accounts as $account) {
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
+
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>
