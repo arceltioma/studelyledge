@@ -159,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 <body class="login-page">
     <div class="login-box">
-        <img src="<?= e(app_asset('assets/img/logo-sidebar.png')) ?>" alt="StudelyLedger" class="login-logo">
+        <img src="<?= e(app_asset('assets/img/logo.png')) ?>" alt="StudelyLedger" class="login-logo">
         <h2>Connexion</h2>
 
         <?php if ($error !== ''): ?>

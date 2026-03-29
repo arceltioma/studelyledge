@@ -9,22 +9,32 @@ require_once __DIR__ . '/../../config/security.php';
 
 enforcePagePermission($pdo, 'clients_create');
 
+function csv_normalize_header(string $value): string
+{
+    $value = trim($value);
+    $value = mb_strtolower($value, 'UTF-8');
+    $value = str_replace([' ', '-', '/'], '_', $value);
+    return $value;
+}
+
+function csv_value(array $row, array $keys): string
+{
+    foreach ($keys as $key) {
+        if (isset($row[$key]) && trim((string)$row[$key]) !== '') {
+            return trim((string)$row[$key]);
+        }
+    }
+    return '';
+}
+
 $successMessage = '';
 $errorMessage = '';
 $report = [];
 
-$treasuryLookup = [];
-if (tableExists($pdo, 'treasury_accounts')) {
-    $rows = $pdo->query("
-        SELECT id, account_code
-        FROM treasury_accounts
-        WHERE COALESCE(is_active,1) = 1
-    ")->fetchAll(PDO::FETCH_ASSOC);
-
-    foreach ($rows as $row) {
-        $treasuryLookup[(string)$row['account_code']] = (int)$row['id'];
-    }
-}
+$originCountries = studely_origin_countries();
+$destinationCountries = studely_destination_countries();
+$commercialCountries = studely_commercial_countries();
+$clientTypes = studely_client_types();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
     try {
@@ -36,19 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
             throw new RuntimeException('Aucun fichier CSV valide.');
         }
 
-        $importDir = storage_path('imports');
-        if (!is_dir($importDir)) {
-            @mkdir($importDir, 0775, true);
-        }
-
-        $originalName = basename((string)($_FILES['csv_file']['name'] ?? 'clients_import.csv'));
-        $savedPath = $importDir . DIRECTORY_SEPARATOR . date('Ymd_His') . '_' . preg_replace('/[^A-Za-z0-9_\.\-]/', '_', $originalName);
-
-        if (!move_uploaded_file($_FILES['csv_file']['tmp_name'], $savedPath)) {
-            throw new RuntimeException('Impossible d’enregistrer le fichier importé.');
-        }
-
-        $handle = fopen($savedPath, 'r');
+        $handle = fopen($_FILES['csv_file']['tmp_name'], 'r');
         if (!$handle) {
             throw new RuntimeException('Impossible de lire le fichier.');
         }
@@ -59,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
             throw new RuntimeException('CSV vide.');
         }
 
-        $headers = array_map(fn($h) => trim((string)$h), $headers);
+        $headers = array_map(fn($h) => csv_normalize_header((string)$h), $headers);
 
         $created = 0;
         $updated = 0;
@@ -68,29 +66,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
 
         while (($data = fgetcsv($handle, 0, ';')) !== false) {
             $lineNo++;
+
             $row = [];
             foreach ($headers as $i => $header) {
-                $row[$header] = $data[$i] ?? null;
+                $row[$header] = trim((string)($data[$i] ?? ''));
             }
 
             try {
-                $clientCode = trim((string)($row['client_code'] ?? ''));
-                $firstName = trim((string)($row['first_name'] ?? ''));
-                $lastName = trim((string)($row['last_name'] ?? ''));
-                $fullName = trim((string)($row['full_name'] ?? ''));
-                $email = trim((string)($row['email'] ?? ''));
-                $phone = trim((string)($row['phone'] ?? ''));
-                $countryOrigin = trim((string)($row['country_origin'] ?? ''));
-                $countryDestination = trim((string)($row['country_destination'] ?? ''));
-                $countryCommercial = trim((string)($row['country_commercial'] ?? ''));
-                $clientType = trim((string)($row['client_type'] ?? ''));
-                $clientStatus = trim((string)($row['client_status'] ?? ''));
-                $currency = trim((string)($row['currency'] ?? 'EUR'));
-                $treasuryCode = trim((string)($row['treasury_account_code'] ?? ''));
-
-                if (!preg_match('/^[0-9]{9}$/', $clientCode)) {
-                    throw new RuntimeException('Code client invalide (9 chiffres requis).');
-                }
+                $providedClientCode = csv_value($row, ['client_code', 'code_client']);
+                $firstName = csv_value($row, ['first_name', 'prenom']);
+                $lastName = csv_value($row, ['last_name', 'nom']);
+                $fullName = csv_value($row, ['full_name', 'nom_complet']);
+                $email = csv_value($row, ['email']);
+                $phone = csv_value($row, ['phone', 'telephone']);
+                $countryOrigin = csv_value($row, ['country_origin', 'pays_origine']);
+                $countryDestination = csv_value($row, ['country_destination', 'pays_destination']);
+                $countryCommercial = csv_value($row, ['country_commercial', 'pays_commercial']);
+                $clientType = csv_value($row, ['client_type', 'type_client']);
+                $clientStatus = csv_value($row, ['client_status', 'statut_client']);
+                $currency = csv_value($row, ['currency', 'devise']);
+                $providedTreasuryCode = csv_value($row, ['treasury_account_code', 'compte_512']);
 
                 if ($firstName === '' || $lastName === '') {
                     throw new RuntimeException('Prénom ou nom manquant.');
@@ -100,31 +95,65 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                     $fullName = trim($firstName . ' ' . $lastName);
                 }
 
+                if ($clientType === '' || !in_array($clientType, $clientTypes, true)) {
+                    throw new RuntimeException('Type client invalide.');
+                }
+
+                if ($countryOrigin === '' || !in_array($countryOrigin, $originCountries, true)) {
+                    throw new RuntimeException('Pays d’origine invalide.');
+                }
+
+                if ($countryDestination === '' || !in_array($countryDestination, $destinationCountries, true)) {
+                    throw new RuntimeException('Pays de destination invalide.');
+                }
+
+                if ($countryCommercial === '' || !in_array($countryCommercial, $commercialCountries, true)) {
+                    throw new RuntimeException('Pays commercial invalide.');
+                }
+
+                if ($currency === '') {
+                    $currency = 'EUR';
+                }
+
                 if ($email === '') {
                     $email = strtolower(
                         preg_replace('/\s+/', '', $firstName) . '.' . preg_replace('/\s+/', '', $lastName) . '@studelyledger.com'
                     );
                 }
 
-                $treasuryId = null;
-                if ($treasuryCode !== '') {
-                    $treasuryId = $treasuryLookup[$treasuryCode] ?? null;
+                $treasury = studely_resolve_default_treasury_account($pdo, $countryCommercial, $providedTreasuryCode !== '' ? $providedTreasuryCode : null);
+                if (!$treasury) {
+                    throw new RuntimeException('Impossible de résoudre un compte 512 actif pour ce pays commercial.');
                 }
 
-                $generatedClientAccount = '411' . $clientCode;
+                if ($providedTreasuryCode !== '' && ($treasury['account_code'] ?? '') !== $providedTreasuryCode) {
+                    throw new RuntimeException('Le compte 512 fourni ne correspond pas au compte autorisé pour ce pays commercial.');
+                }
 
-                $stmtCheck = $pdo->prepare("
-                    SELECT id
-                    FROM clients
-                    WHERE client_code = ?
-                    LIMIT 1
-                ");
-                $stmtCheck->execute([$clientCode]);
-                $existingId = $stmtCheck->fetchColumn();
+                $clientCode = $providedClientCode;
+                if ($clientCode !== '') {
+                    if (!preg_match('/^[0-9]{9}$/', $clientCode)) {
+                        throw new RuntimeException('Code client invalide (9 chiffres requis).');
+                    }
+                }
 
                 $pdo->beginTransaction();
 
+                $existingId = null;
+                if ($clientCode !== '') {
+                    $stmtCheck = $pdo->prepare("
+                        SELECT id
+                        FROM clients
+                        WHERE client_code = ?
+                        LIMIT 1
+                    ");
+                    $stmtCheck->execute([$clientCode]);
+                    $existingId = $stmtCheck->fetchColumn();
+                }
+
                 if ($existingId) {
+                    $generatedClientAccount = '411' . $clientCode;
+
                     $stmtUpdate = $pdo->prepare("
                         UPDATE clients
                         SET
@@ -139,6 +168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                             client_type = ?,
                             client_status = ?,
                             currency = ?,
+                            generated_client_account = ?,
                             initial_treasury_account_id = ?,
                             updated_at = NOW()
                         WHERE id = ?
@@ -149,26 +179,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                         $fullName,
                         $email !== '' ? $email : null,
                         $phone !== '' ? $phone : null,
-                        $countryOrigin !== '' ? $countryOrigin : null,
-                        $countryDestination !== '' ? $countryDestination : null,
-                        $countryCommercial !== '' ? $countryCommercial : null,
-                        $clientType !== '' ? $clientType : null,
+                        $countryOrigin,
+                        $countryDestination,
+                        $countryCommercial,
+                        $clientType,
                         $clientStatus !== '' ? $clientStatus : null,
-                        $currency !== '' ? $currency : 'EUR',
-                        $treasuryId,
-                        $existingId
+                        $currency,
+                        $generatedClientAccount,
+                        (int)$treasury['id'],
+                        (int)$existingId,
                     ]);
-                    $clientId = (int)$existingId;
+
+                    studely_create_or_link_client_bank_account(
+                        $pdo,
+                        (int)$existingId,
+                        $generatedClientAccount,
+                        $countryCommercial,
+                        'Compte client ' . $generatedClientAccount
+                    );
+
                     $updated++;
                 } else {
+                    if ($clientCode === '') {
+                        $clientCode = studely_generate_next_client_code($pdo);
+                    }
+
+                    $generatedClientAccount = '411' . $clientCode;
+
                     $stmtInsert = $pdo->prepare("
                         INSERT INTO clients (
-                            client_code, first_name, last_name, full_name, email, phone,
-                            country_origin, country_destination, country_commercial,
-                            client_type, client_status, currency,
-                            generated_client_account, initial_treasury_account_id,
-                            is_active, created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW())
+                            client_code,
+                            first_name,
+                            last_name,
+                            full_name,
+                            email,
+                            phone,
+                            country_origin,
+                            country_destination,
+                            country_commercial,
+                            client_type,
+                            client_status,
+                            currency,
+                            generated_client_account,
+                            initial_treasury_account_id,
+                            is_active,
+                            created_at,
+                            updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())
                     ");
                     $stmtInsert->execute([
                         $clientCode,
@@ -177,42 +234,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
                         $fullName,
                         $email !== '' ? $email : null,
                         $phone !== '' ? $phone : null,
-                        $countryOrigin !== '' ? $countryOrigin : null,
-                        $countryDestination !== '' ? $countryDestination : null,
-                        $countryCommercial !== '' ? $countryCommercial : null,
-                        $clientType !== '' ? $clientType : null,
+                        $countryOrigin,
+                        $countryDestination,
+                        $countryCommercial,
+                        $clientType,
                         $clientStatus !== '' ? $clientStatus : null,
-                        $currency !== '' ? $currency : 'EUR',
+                        $currency,
                         $generatedClientAccount,
-                        $treasuryId
+                        (int)$treasury['id'],
                     ]);
+
                     $clientId = (int)$pdo->lastInsertId();
-                    $created++;
-                }
 
-                $bank = findPrimaryBankAccountForClient($pdo, $clientId);
-
-                if (!$bank) {
-                    $stmtBank = $pdo->prepare("
-                        INSERT INTO bank_accounts (
-                            account_number, bank_name, country, initial_balance, balance, is_active, created_at
-                        ) VALUES (?, ?, ?, ?, ?, 1, NOW())
-                    ");
-                    $stmtBank->execute([
+                    studely_create_or_link_client_bank_account(
+                        $pdo,
+                        $clientId,
                         $generatedClientAccount,
-                        'Compte Client Interne',
-                        'France',
-                        15000.00,
-                        15000.00
-                    ]);
+                        $countryCommercial,
+                        'Compte client ' . $generatedClientAccount
+                    );
 
-                    $bankAccountId = (int)$pdo->lastInsertId();
-
-                    $stmtLink = $pdo->prepare("
-                        INSERT INTO client_bank_accounts (client_id, bank_account_id, created_at)
-                        VALUES (?, ?, NOW())
-                    ");
-                    $stmtLink->execute([$clientId, $bankAccountId]);
+                    $created++;
                 }
 
                 $pdo->commit();
@@ -246,7 +288,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['csv_file'])) {
 }
 
 $pageTitle = 'Import CSV clients';
-$pageSubtitle = 'Création ou mise à jour en masse des clients, avec génération automatique des comptes liés.';
+$pageSubtitle = 'Le code client, le compte 411 et le compte 512 sont alignés sur les règles métier.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -269,7 +311,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <label>Fichier CSV</label>
                     <input type="file" name="csv_file" accept=".csv" required>
 
-                    <div class="btn-group">
+                    <div class="btn-group" style="margin-top:20px;">
                         <button type="submit" class="btn btn-success">Importer les clients</button>
                         <a href="<?= e(APP_URL) ?>modules/clients/clients_list.php" class="btn btn-outline">Retour</a>
                     </div>
@@ -277,15 +319,16 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </div>
 
             <div class="dashboard-panel">
-                <h3 class="section-title">Colonnes attendues</h3>
+                <h3 class="section-title">Colonnes acceptées</h3>
                 <div class="dashboard-note">
-                    client_code ; first_name ; last_name ; full_name ; email ; phone ; country_origin ; country_destination ; country_commercial ; client_type ; client_status ; currency ; treasury_account_code
+                    client_code (optionnel pour un nouveau client) ; first_name ; last_name ; full_name ; email ; phone ;
+                    country_origin ; country_destination ; country_commercial ; client_type ; client_status ; currency ; treasury_account_code (optionnel, doit rester cohérent avec le pays commercial)
                 </div>
             </div>
         </div>
 
         <?php if ($report): ?>
-            <div class="table-card">
+            <div class="table-card" style="margin-top:20px;">
                 <h3 class="section-title">Rejets</h3>
                 <ul>
                     <?php foreach ($report as $line): ?>

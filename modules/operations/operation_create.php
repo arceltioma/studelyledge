@@ -24,28 +24,6 @@ function opFindById(array $rows, int $id): ?array
     return null;
 }
 
-function opServiceAccountDisplay(array $account): string
-{
-    $base = trim(($account['account_code'] ?? '') . ' - ' . ($account['account_label'] ?? ''));
-    $meta = [];
-
-    if (!empty($account['operation_type_label'])) {
-        $meta[] = $account['operation_type_label'];
-    }
-    if (!empty($account['destination_country_label'])) {
-        $meta[] = 'Destination: ' . $account['destination_country_label'];
-    }
-    if (!empty($account['commercial_country_label'])) {
-        $meta[] = 'Commercial: ' . $account['commercial_country_label'];
-    }
-
-    if ($meta) {
-        $base .= ' [' . implode(' | ', $meta) . ']';
-    }
-
-    return $base;
-}
-
 $operationTypes = tableExists($pdo, 'ref_operation_types')
     ? $pdo->query("
         SELECT id, code, label, direction, is_active
@@ -67,22 +45,9 @@ $services = tableExists($pdo, 'ref_services')
 
             rot.code AS operation_type_code,
             rot.label AS operation_type_label,
-            rot.is_active AS operation_type_active,
-
-            sa.account_code AS service_account_code,
-            sa.account_label AS service_account_label,
-            sa.operation_type_label AS service_account_operation_type_label,
-            sa.destination_country_label AS service_account_destination_country_label,
-            sa.commercial_country_label AS service_account_commercial_country_label,
-            sa.is_postable AS service_account_postable,
-            sa.is_active AS service_account_active,
-
-            ta.account_code AS treasury_account_code,
-            ta.account_label AS treasury_account_label
+            rot.is_active AS operation_type_active
         FROM ref_services rs
         LEFT JOIN ref_operation_types rot ON rot.id = rs.operation_type_id
-        LEFT JOIN service_accounts sa ON sa.id = rs.service_account_id
-        LEFT JOIN treasury_accounts ta ON ta.id = rs.treasury_account_id
         ORDER BY rs.label ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
@@ -96,6 +61,8 @@ $clients = tableExists($pdo, 'clients')
             c.generated_client_account,
             c.initial_treasury_account_id,
             c.client_status,
+            c.country_destination,
+            c.country_commercial,
             c.is_active,
             ta.account_code AS treasury_account_code,
             ta.account_label AS treasury_account_label
@@ -109,6 +76,7 @@ $treasuryAccounts = tableExists($pdo, 'treasury_accounts')
     ? $pdo->query("
         SELECT id, account_code, account_label, is_active
         FROM treasury_accounts
+        WHERE COALESCE(is_active,1) = 1
         ORDER BY account_code ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
@@ -134,6 +102,7 @@ $serviceAccounts = tableExists($pdo, 'service_accounts')
 $successMessage = '';
 $errorMessage = '';
 $preview = null;
+$previewService706Label = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
@@ -174,6 +143,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Le type d’opération sélectionné est archivé.');
         }
 
+        $typeCode = (string)$selectedType['code'];
         $selectedService = null;
         if ($serviceId !== null) {
             $selectedService = opFindById($services, $serviceId);
@@ -187,29 +157,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ((int)($selectedService['operation_type_active'] ?? 0) !== 1) {
                 throw new RuntimeException('Le type parent du service est archivé.');
-            }
-
-            if ((int)($selectedService['operation_type_id'] ?? 0) !== (int)$selectedType['id']) {
-                throw new RuntimeException('Le service sélectionné n’est pas rattaché au type d’opération choisi.');
-            }
-
-            if (!empty($selectedService['service_account_id'])) {
-                if ((int)($selectedService['service_account_active'] ?? 0) !== 1) {
-                    throw new RuntimeException('Le compte 706 du service est archivé.');
-                }
-
-                if ((int)($selectedService['service_account_postable'] ?? 0) !== 1) {
-                    throw new RuntimeException('Le compte 706 du service n’est pas mouvementable.');
-                }
-
-                if (!empty($selectedService['service_account_operation_type_label'])) {
-                    $normalized706Type = strtoupper(trim((string)$selectedService['service_account_operation_type_label']));
-                    $normalizedSelectedType = strtoupper(trim((string)$selectedType['code']));
-
-                    if ($normalized706Type !== $normalizedSelectedType) {
-                        throw new RuntimeException('Le compte 706 du service n’est pas cohérent avec le type d’opération.');
-                    }
-                }
             }
         }
 
@@ -231,9 +178,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$selectedSourceTreasury) {
                 throw new RuntimeException('Compte interne source introuvable.');
             }
-            if ((int)($selectedSourceTreasury['is_active'] ?? 0) !== 1) {
-                throw new RuntimeException('Le compte interne source est archivé.');
-            }
         }
 
         $selectedTargetTreasury = null;
@@ -242,23 +186,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!$selectedTargetTreasury) {
                 throw new RuntimeException('Compte interne cible introuvable.');
             }
-            if ((int)($selectedTargetTreasury['is_active'] ?? 0) !== 1) {
-                throw new RuntimeException('Le compte interne cible est archivé.');
-            }
         }
 
-        $typeCode = (string)$selectedType['code'];
-
         $isInternalTransfer = ($typeCode === 'VIREMENT_INTERNE');
-        $requiresClient = !$isInternalTransfer;
-        $requiresService = in_array($typeCode, ['FRAIS_DE_SERVICE', 'FRAIS_BANCAIRES', 'VIREMENT_EXCEPTIONEL'], true);
 
-        if ($requiresClient && !$selectedClient) {
+        $serviceBasedTypes = [
+            'REGULARISATION_POSITIVE',
+            'REGULARISATION_NEGATIVE',
+            'FRAIS_DE_SERVICE',
+            'FRAIS_SERVICE',
+            'FRAIS_BANCAIRES',
+            'AUTRES_FRAIS',
+            'CA_PLACEMENT',
+            'CA_DIVERS',
+            'CA_DEBOURS_LOGEMENT',
+            'CA_DEBOURS_ASSURANCE',
+            'CA_COURTAGE_PRET',
+            'FRAIS_DEBOURS_MICROFINANCE',
+        ];
+
+        if (!$isInternalTransfer && !$selectedClient) {
             throw new RuntimeException('Le client est obligatoire pour cette opération.');
         }
 
-        if ($requiresService && !$selectedService) {
+        if (in_array($typeCode, $serviceBasedTypes, true) && !$selectedService) {
             throw new RuntimeException('Le service est obligatoire pour ce type d’opération.');
+        }
+
+        if ($selectedService && in_array($typeCode, $serviceBasedTypes, true)) {
+            if ((int)($selectedService['operation_type_id'] ?? 0) !== (int)$selectedType['id']) {
+                throw new RuntimeException('Le service sélectionné n’est pas rattaché au type d’opération choisi.');
+            }
         }
 
         if ($isInternalTransfer) {
@@ -315,7 +273,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         } else {
             $resolvedSourceTreasuryCode = $selectedSourceTreasury['account_code']
-                ?? $selectedService['treasury_account_code']
                 ?? $selectedClient['treasury_account_code']
                 ?? null;
 
@@ -337,6 +294,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $preview = resolveAccountingOperation($pdo, $payload);
 
+            if (!empty($preview['analytic_account']['account_code'])) {
+                $previewService706Label = $preview['analytic_account']['account_code'] . ' - ' . ($preview['analytic_account']['account_label'] ?? '');
+            }
+
             if ($actionMode === 'save') {
                 $pdo->beginTransaction();
 
@@ -350,7 +311,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'operations',
                         'operation',
                         $operationId,
-                        'Création d’une opération avec hiérarchie 706'
+                        'Création d’une opération alignée sur les règles métier'
                     );
                 }
 
@@ -358,6 +319,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $successMessage = 'Opération enregistrée.';
                 $_POST = [];
                 $preview = null;
+                $previewService706Label = '';
             }
         }
     } catch (Throwable $e) {
@@ -369,7 +331,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $pageTitle = 'Créer une opération';
-$pageSubtitle = 'Le moteur contrôle type, service et hiérarchie 706 avant toute écriture.';
+$pageSubtitle = 'Le moteur applique les règles 411 / 512 / 706 et résout automatiquement le bon 706 selon destination, pays commercial et service.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -409,7 +371,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <option value="">Choisir</option>
                                 <?php foreach ($operationTypes as $type): ?>
                                     <option value="<?= (int)$type['id'] ?>" <?= opOld('operation_type_id') == $type['id'] ? 'selected' : '' ?>>
-                                        <?= e($type['label']) ?> (<?= e($type['code']) ?>)<?= (int)$type['is_active'] !== 1 ? ' [archivé]' : '' ?>
+                                        <?= e($type['label']) ?> (<?= e($type['code']) ?>)
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -422,22 +384,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <?php foreach ($services as $service): ?>
                                     <option value="<?= (int)$service['id'] ?>" <?= opOld('service_id') == $service['id'] ? 'selected' : '' ?>>
                                         <?= e(($service['label'] ?? '') . ' (' . ($service['code'] ?? '') . ')') ?>
-                                        <?php
-                                        $meta = [];
-                                        if (!empty($service['service_account_code'])) {
-                                            $meta[] = $service['service_account_code'];
-                                        }
-                                        if (!empty($service['service_account_destination_country_label'])) {
-                                            $meta[] = 'Destination: ' . $service['service_account_destination_country_label'];
-                                        }
-                                        if (!empty($service['service_account_commercial_country_label'])) {
-                                            $meta[] = 'Commercial: ' . $service['service_account_commercial_country_label'];
-                                        }
-                                        if ($meta) {
-                                            echo ' [' . e(implode(' | ', $meta)) . ']';
-                                        }
-                                        ?>
-                                        <?= ((int)($service['is_active'] ?? 0) !== 1 || (int)($service['operation_type_active'] ?? 0) !== 1) ? ' [inactif]' : '' ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -450,7 +396,9 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <?php foreach ($clients as $client): ?>
                                     <option value="<?= (int)$client['id'] ?>" <?= opOld('client_id') == $client['id'] ? 'selected' : '' ?>>
                                         <?= e(($client['client_code'] ?? '') . ' - ' . ($client['full_name'] ?? '')) ?>
-                                        <?= (int)($client['is_active'] ?? 0) !== 1 ? ' [archivé]' : '' ?>
+                                        <?php if (!empty($client['country_destination']) || !empty($client['country_commercial'])): ?>
+                                            <?= e(' [' . ($client['country_destination'] ?? '') . ' / ' . ($client['country_commercial'] ?? '') . ']') ?>
+                                        <?php endif; ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -467,7 +415,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <option value="">Auto / Aucun</option>
                                 <?php foreach ($treasuryAccounts as $acc): ?>
                                     <option value="<?= (int)$acc['id'] ?>" <?= opOld('source_treasury_account_id') == $acc['id'] ? 'selected' : '' ?>>
-                                        <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?><?= (int)$acc['is_active'] !== 1 ? ' [archivé]' : '' ?>
+                                        <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -479,7 +427,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <option value="">Aucun</option>
                                 <?php foreach ($treasuryAccounts as $acc): ?>
                                     <option value="<?= (int)$acc['id'] ?>" <?= opOld('target_treasury_account_id') == $acc['id'] ? 'selected' : '' ?>>
-                                        <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?><?= (int)$acc['is_active'] !== 1 ? ' [archivé]' : '' ?>
+                                        <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -516,12 +464,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <span class="metric-value"><?= e($preview['credit_account_code'] ?? '—') ?></span>
                     </div>
                     <div class="stat-row">
-                        <span class="metric-label">Analytique</span>
-                        <span class="metric-value"><?= e($preview['analytic_account']['account_code'] ?? '—') ?></span>
+                        <span class="metric-label">706 résolu</span>
+                        <span class="metric-value"><?= e($previewService706Label !== '' ? $previewService706Label : '—') ?></span>
                     </div>
                 <?php else: ?>
                     <div class="dashboard-note">
-                        Le moteur affichera ici le débit, le crédit et l’analytique avant écriture.
+                        Le moteur affichera ici le débit, le crédit et le 706 automatiquement résolu avant écriture.
                     </div>
                 <?php endif; ?>
             </div>
