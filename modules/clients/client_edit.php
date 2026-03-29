@@ -7,19 +7,14 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-enforcePagePermission($pdo, 'clients_create');
+enforcePagePermission($pdo, 'clients_edit');
 
 $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
 if ($id <= 0) {
     exit('Client invalide.');
 }
 
-$stmtClient = $pdo->prepare("
-    SELECT *
-    FROM clients
-    WHERE id = ?
-    LIMIT 1
-");
+$stmtClient = $pdo->prepare("SELECT * FROM clients WHERE id = ? LIMIT 1");
 $stmtClient->execute([$id]);
 $client = $stmtClient->fetch(PDO::FETCH_ASSOC);
 
@@ -27,16 +22,29 @@ if (!$client) {
     exit('Client introuvable.');
 }
 
-$bankAccount = findPrimaryBankAccountForClient($pdo, $id);
-
 $treasuryAccounts = tableExists($pdo, 'treasury_accounts')
     ? $pdo->query("
-        SELECT id, account_code, account_label, currency_code
+        SELECT id, account_code, account_label
         FROM treasury_accounts
-        WHERE COALESCE(is_active,1) = 1
+        WHERE COALESCE(is_active,1)=1
         ORDER BY account_code ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
+
+$statuses = tableExists($pdo, 'statuses')
+    ? $pdo->query("
+        SELECT id, name
+        FROM statuses
+        ORDER BY sort_order ASC, name ASC
+    ")->fetchAll(PDO::FETCH_ASSOC)
+    : [];
+
+$destinationCountries = studely_destination_countries();
+$commercialCountries = studely_commercial_countries();
+$originCountries = studely_origin_countries();
+$clientTypes = studely_client_types();
+
+$bankAccount = findPrimaryBankAccountForClient($pdo, $id);
 
 $successMessage = '';
 $errorMessage = '';
@@ -52,25 +60,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $fullName = trim((string)($_POST['full_name'] ?? ''));
         $email = trim((string)($_POST['email'] ?? ''));
         $phone = trim((string)($_POST['phone'] ?? ''));
+        $clientType = trim((string)($_POST['client_type'] ?? ''));
+        $clientStatus = trim((string)($_POST['client_status'] ?? ''));
+        $statusId = ($_POST['status_id'] ?? '') !== '' ? (int)$_POST['status_id'] : null;
+        $currency = trim((string)($_POST['currency'] ?? 'EUR'));
         $countryOrigin = trim((string)($_POST['country_origin'] ?? ''));
         $countryDestination = trim((string)($_POST['country_destination'] ?? ''));
         $countryCommercial = trim((string)($_POST['country_commercial'] ?? ''));
-        $clientType = trim((string)($_POST['client_type'] ?? ''));
-        $clientStatus = trim((string)($_POST['client_status'] ?? ''));
-        $currency = trim((string)($_POST['currency'] ?? 'EUR'));
-        $treasuryId = ($_POST['initial_treasury_account_id'] ?? '') !== '' ? (int)$_POST['initial_treasury_account_id'] : null;
+        $initialTreasuryAccountId = ($_POST['initial_treasury_account_id'] ?? '') !== '' ? (int)$_POST['initial_treasury_account_id'] : null;
 
         if ($firstName === '' || $lastName === '') {
-            throw new RuntimeException('Le prénom et le nom sont obligatoires.');
+            throw new RuntimeException('Prénom et nom sont obligatoires.');
         }
 
         if ($fullName === '') {
             $fullName = trim($firstName . ' ' . $lastName);
         }
 
-        $pdo->beginTransaction();
+        if ($clientType === '' || !in_array($clientType, $clientTypes, true)) {
+            throw new RuntimeException('Type client invalide.');
+        }
 
-        $stmtUpdateClient = $pdo->prepare("
+        if ($countryOrigin === '' || !in_array($countryOrigin, $originCountries, true)) {
+            throw new RuntimeException('Pays d’origine invalide.');
+        }
+
+        if ($countryDestination === '' || !in_array($countryDestination, $destinationCountries, true)) {
+            throw new RuntimeException('Pays de destination invalide.');
+        }
+
+        if ($countryCommercial === '' || !in_array($countryCommercial, $commercialCountries, true)) {
+            throw new RuntimeException('Pays commercial invalide.');
+        }
+
+        $stmtUpdate = $pdo->prepare("
             UPDATE clients
             SET
                 first_name = ?,
@@ -78,81 +101,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 full_name = ?,
                 email = ?,
                 phone = ?,
+                client_type = ?,
+                client_status = ?,
+                status_id = ?,
+                currency = ?,
                 country_origin = ?,
                 country_destination = ?,
                 country_commercial = ?,
-                client_type = ?,
-                client_status = ?,
-                currency = ?,
                 initial_treasury_account_id = ?,
                 updated_at = NOW()
             WHERE id = ?
         ");
-        $stmtUpdateClient->execute([
+        $stmtUpdate->execute([
             $firstName,
             $lastName,
             $fullName,
             $email !== '' ? $email : null,
             $phone !== '' ? $phone : null,
-            $countryOrigin !== '' ? $countryOrigin : null,
-            $countryDestination !== '' ? $countryDestination : null,
-            $countryCommercial !== '' ? $countryCommercial : null,
-            $clientType !== '' ? $clientType : null,
+            $clientType,
             $clientStatus !== '' ? $clientStatus : null,
-            $currency !== '' ? $currency : 'EUR',
-            $treasuryId,
+            $statusId,
+            $currency,
+            $countryOrigin,
+            $countryDestination,
+            $countryCommercial,
+            $initialTreasuryAccountId,
             $id
         ]);
 
-        if ($bankAccount) {
-            $stmtUpdateBank = $pdo->prepare("
-                UPDATE bank_accounts
-                SET
-                    bank_name = ?,
-                    country = ?
-                WHERE id = ?
-            ");
-            $stmtUpdateBank->execute([
-                'Compte Client Interne',
-                'France',
-                (int)$bankAccount['id']
-            ]);
-        }
-
-        if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
-            logUserAction(
-                $pdo,
-                (int)$_SESSION['user_id'],
-                'edit_client',
-                'clients',
-                'client',
-                $id,
-                'Mise à jour du client ' . ($client['client_code'] ?? '') . ' - ' . $fullName
-            );
-        }
-
-        $pdo->commit();
-
         $successMessage = 'Client mis à jour.';
+
         $stmtClient->execute([$id]);
         $client = $stmtClient->fetch(PDO::FETCH_ASSOC);
-        $bankAccount = findPrimaryBankAccountForClient($pdo, $id);
     } catch (Throwable $e) {
-        if ($pdo->inTransaction()) {
-            $pdo->rollBack();
-        }
         $errorMessage = $e->getMessage();
     }
 }
 
 $pageTitle = 'Modifier un client';
-$pageSubtitle = 'La fiche reste éditable, mais les mécanismes bancaires restent cohérents.';
+$pageSubtitle = 'Édition avec listes déroulantes normalisées.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
-
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
-
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
@@ -165,78 +156,82 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <?= csrf_input() ?>
                     <input type="hidden" name="id" value="<?= (int)$id ?>">
 
-                    <h3 class="section-title">Fiche client</h3>
-
                     <div class="dashboard-grid-2">
-                        <div>
-                            <label>Code client</label>
-                            <input type="text" value="<?= e($client['client_code'] ?? '') ?>" readonly>
-                        </div>
-
-                        <div>
-                            <label>Compte client généré</label>
-                            <input type="text" value="<?= e($client['generated_client_account'] ?? '') ?>" readonly>
-                        </div>
-
-                        <div>
-                            <label>Prénom</label>
-                            <input type="text" name="first_name" value="<?= e($client['first_name'] ?? '') ?>" required>
-                        </div>
-
-                        <div>
-                            <label>Nom</label>
-                            <input type="text" name="last_name" value="<?= e($client['last_name'] ?? '') ?>" required>
-                        </div>
-
-                        <div>
-                            <label>Nom complet</label>
-                            <input type="text" name="full_name" value="<?= e($client['full_name'] ?? '') ?>">
-                        </div>
-
-                        <div>
-                            <label>Email</label>
-                            <input type="email" name="email" value="<?= e($client['email'] ?? '') ?>">
-                        </div>
-
-                        <div>
-                            <label>Téléphone</label>
-                            <input type="text" name="phone" value="<?= e($client['phone'] ?? '') ?>">
-                        </div>
+                        <div><label>Prénom</label><input type="text" name="first_name" value="<?= e($client['first_name'] ?? '') ?>" required></div>
+                        <div><label>Nom</label><input type="text" name="last_name" value="<?= e($client['last_name'] ?? '') ?>" required></div>
+                        <div><label>Nom complet</label><input type="text" name="full_name" value="<?= e($client['full_name'] ?? '') ?>"></div>
+                        <div><label>Email</label><input type="email" name="email" value="<?= e($client['email'] ?? '') ?>"></div>
+                        <div><label>Téléphone</label><input type="text" name="phone" value="<?= e($client['phone'] ?? '') ?>"></div>
 
                         <div>
                             <label>Type client</label>
-                            <input type="text" name="client_type" value="<?= e($client['client_type'] ?? '') ?>">
+                            <select name="client_type" required>
+                                <option value="">Choisir</option>
+                                <?php foreach ($clientTypes as $item): ?>
+                                    <option value="<?= e($item) ?>" <?= ($client['client_type'] ?? '') === $item ? 'selected' : '' ?>>
+                                        <?= e($item) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
 
-                        <div>
-                            <label>Statut client</label>
-                            <input type="text" name="client_status" value="<?= e($client['client_status'] ?? '') ?>">
-                        </div>
+                        <div><label>Statut client</label><input type="text" name="client_status" value="<?= e($client['client_status'] ?? '') ?>"></div>
 
                         <div>
-                            <label>Devise</label>
-                            <select name="currency">
-                                <?php foreach (['EUR', 'XAF', 'XOF', 'USD'] as $currency): ?>
-                                    <option value="<?= e($currency) ?>" <?= ($client['currency'] ?? 'EUR') === $currency ? 'selected' : '' ?>>
-                                        <?= e($currency) ?>
+                            <label>Statut paramétré</label>
+                            <select name="status_id">
+                                <option value="">Choisir</option>
+                                <?php foreach ($statuses as $status): ?>
+                                    <option value="<?= (int)$status['id'] ?>" <?= (string)($client['status_id'] ?? '') === (string)$status['id'] ? 'selected' : '' ?>>
+                                        <?= e($status['name']) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
 
                         <div>
+                            <label>Devise</label>
+                            <select name="currency">
+                                <?php foreach (['EUR','XAF','XOF','USD','CAD','DZD','GNF','TND','MAD'] as $currency): ?>
+                                    <option value="<?= e($currency) ?>" <?= ($client['currency'] ?? 'EUR') === $currency ? 'selected' : '' ?>><?= e($currency) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div>
                             <label>Pays origine</label>
-                            <input type="text" name="country_origin" value="<?= e($client['country_origin'] ?? '') ?>">
+                            <select name="country_origin" required>
+                                <option value="">Choisir</option>
+                                <?php foreach ($originCountries as $item): ?>
+                                    <option value="<?= e($item) ?>" <?= ($client['country_origin'] ?? '') === $item ? 'selected' : '' ?>>
+                                        <?= e($item) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
 
                         <div>
                             <label>Pays destination</label>
-                            <input type="text" name="country_destination" value="<?= e($client['country_destination'] ?? '') ?>">
+                            <select name="country_destination" required>
+                                <option value="">Choisir</option>
+                                <?php foreach ($destinationCountries as $item): ?>
+                                    <option value="<?= e($item) ?>" <?= ($client['country_destination'] ?? '') === $item ? 'selected' : '' ?>>
+                                        <?= e($item) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
 
                         <div>
                             <label>Pays commercial</label>
-                            <input type="text" name="country_commercial" value="<?= e($client['country_commercial'] ?? '') ?>">
+                            <select name="country_commercial" required>
+                                <option value="">Choisir</option>
+                                <?php foreach ($commercialCountries as $item): ?>
+                                    <option value="<?= e($item) ?>" <?= ($client['country_commercial'] ?? '') === $item ? 'selected' : '' ?>>
+                                        <?= e($item) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
 
                         <div>
@@ -265,9 +260,9 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </div>
 
             <div class="dashboard-panel">
-                <h3 class="section-title">Note</h3>
+                <h3 class="section-title">Lecture</h3>
                 <div class="dashboard-note">
-                    Le solde du compte client est affiché ici en lecture seule. Il évolue via les opérations et le moteur comptable.
+                    Les pays et types client sont désormais normalisés en listes déroulantes pour éviter les variations de saisie.
                 </div>
             </div>
         </div>
@@ -275,5 +270,4 @@ require_once __DIR__ . '/../../includes/document_start.php';
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
-
 <?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

@@ -9,19 +9,27 @@ require_once __DIR__ . '/../../config/security.php';
 
 enforcePagePermission($pdo, 'clients_create');
 
-function clientOld(string $key, mixed $default = ''): string
-{
-    return e((string)($_POST[$key] ?? $default));
-}
-
 $treasuryAccounts = tableExists($pdo, 'treasury_accounts')
     ? $pdo->query("
-        SELECT id, account_code, account_label, currency_code
+        SELECT id, account_code, account_label
         FROM treasury_accounts
-        WHERE COALESCE(is_active,1) = 1
+        WHERE COALESCE(is_active,1)=1
         ORDER BY account_code ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
+
+$statuses = tableExists($pdo, 'statuses')
+    ? $pdo->query("
+        SELECT id, name
+        FROM statuses
+        ORDER BY sort_order ASC, name ASC
+    ")->fetchAll(PDO::FETCH_ASSOC)
+    : [];
+
+$destinationCountries = studely_destination_countries();
+$commercialCountries = studely_commercial_countries();
+$originCountries = studely_origin_countries();
+$clientTypes = studely_client_types();
 
 $successMessage = '';
 $errorMessage = '';
@@ -38,30 +46,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $fullName = trim((string)($_POST['full_name'] ?? ''));
         $email = trim((string)($_POST['email'] ?? ''));
         $phone = trim((string)($_POST['phone'] ?? ''));
+        $clientType = trim((string)($_POST['client_type'] ?? ''));
+        $clientStatus = trim((string)($_POST['client_status'] ?? ''));
+        $statusId = ($_POST['status_id'] ?? '') !== '' ? (int)$_POST['status_id'] : null;
+        $currency = trim((string)($_POST['currency'] ?? 'EUR'));
         $countryOrigin = trim((string)($_POST['country_origin'] ?? ''));
         $countryDestination = trim((string)($_POST['country_destination'] ?? ''));
         $countryCommercial = trim((string)($_POST['country_commercial'] ?? ''));
-        $clientType = trim((string)($_POST['client_type'] ?? ''));
-        $clientStatus = trim((string)($_POST['client_status'] ?? ''));
-        $currency = trim((string)($_POST['currency'] ?? 'EUR'));
-        $treasuryId = ($_POST['initial_treasury_account_id'] ?? '') !== '' ? (int)$_POST['initial_treasury_account_id'] : null;
+        $initialTreasuryAccountId = ($_POST['initial_treasury_account_id'] ?? '') !== '' ? (int)$_POST['initial_treasury_account_id'] : null;
 
-        if (!preg_match('/^[0-9]{9}$/', $clientCode)) {
-            throw new RuntimeException('Le code client doit contenir exactement 9 chiffres.');
-        }
-
-        if ($firstName === '' || $lastName === '') {
-            throw new RuntimeException('Le prénom et le nom sont obligatoires.');
+        if ($clientCode === '' || $firstName === '' || $lastName === '') {
+            throw new RuntimeException('Code client, prénom et nom sont obligatoires.');
         }
 
         if ($fullName === '') {
             $fullName = trim($firstName . ' ' . $lastName);
         }
 
-        if ($email === '') {
-            $email = strtolower(
-                preg_replace('/\s+/', '', $firstName) . '.' . preg_replace('/\s+/', '', $lastName) . '@studelyledger.com'
-            );
+        if ($clientType === '' || !in_array($clientType, $clientTypes, true)) {
+            throw new RuntimeException('Type client invalide.');
+        }
+
+        if ($countryOrigin === '' || !in_array($countryOrigin, $originCountries, true)) {
+            throw new RuntimeException('Pays d’origine invalide.');
+        }
+
+        if ($countryDestination === '' || !in_array($countryDestination, $destinationCountries, true)) {
+            throw new RuntimeException('Pays de destination invalide.');
+        }
+
+        if ($countryCommercial === '' || !in_array($countryCommercial, $commercialCountries, true)) {
+            throw new RuntimeException('Pays commercial invalide.');
         }
 
         $stmtDup = $pdo->prepare("SELECT id FROM clients WHERE client_code = ? LIMIT 1");
@@ -70,220 +85,137 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Ce code client existe déjà.');
         }
 
-        $generatedClientAccount = '411' . $clientCode;
+        $generatedClientAccount = '411' . str_pad((string)$clientCode, 6, '0', STR_PAD_LEFT);
 
-        $pdo->beginTransaction();
-
-        $stmtClient = $pdo->prepare("
+        $stmt = $pdo->prepare("
             INSERT INTO clients (
-                client_code,
-                first_name,
-                last_name,
-                full_name,
-                email,
-                phone,
-                country_origin,
-                country_destination,
-                country_commercial,
-                client_type,
-                client_status,
-                currency,
-                generated_client_account,
-                initial_treasury_account_id,
-                is_active,
-                created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW())
+                client_code, first_name, last_name, full_name, email, phone,
+                client_type, client_status, status_id, currency,
+                country_origin, country_destination, country_commercial,
+                generated_client_account, initial_treasury_account_id,
+                is_active, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())
         ");
-        $stmtClient->execute([
-            $clientCode,
-            $firstName,
-            $lastName,
-            $fullName,
-            $email !== '' ? $email : null,
-            $phone !== '' ? $phone : null,
-            $countryOrigin !== '' ? $countryOrigin : null,
-            $countryDestination !== '' ? $countryDestination : null,
-            $countryCommercial !== '' ? $countryCommercial : null,
-            $clientType !== '' ? $clientType : null,
-            $clientStatus !== '' ? $clientStatus : null,
-            $currency !== '' ? $currency : 'EUR',
-            $generatedClientAccount,
-            $treasuryId
+        $stmt->execute([
+            $clientCode, $firstName, $lastName, $fullName, $email !== '' ? $email : null, $phone !== '' ? $phone : null,
+            $clientType, $clientStatus !== '' ? $clientStatus : null, $statusId, $currency,
+            $countryOrigin, $countryDestination, $countryCommercial,
+            $generatedClientAccount, $initialTreasuryAccountId
         ]);
 
-        $clientId = (int)$pdo->lastInsertId();
-
-        $stmtBank = $pdo->prepare("
-            INSERT INTO bank_accounts (
-                account_number,
-                bank_name,
-                country,
-                initial_balance,
-                balance,
-                is_active,
-                created_at
-            ) VALUES (?, ?, ?, ?, ?, 1, NOW())
-        ");
-        $stmtBank->execute([
-            $generatedClientAccount,
-            'Compte Client Interne',
-            'France',
-            15000.00,
-            15000.00
-        ]);
-
-        $bankAccountId = (int)$pdo->lastInsertId();
-
-        $stmtLink = $pdo->prepare("
-            INSERT INTO client_bank_accounts (
-                client_id,
-                bank_account_id,
-                created_at
-            ) VALUES (?, ?, NOW())
-        ");
-        $stmtLink->execute([$clientId, $bankAccountId]);
-
-        if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
-            logUserAction(
-                $pdo,
-                (int)$_SESSION['user_id'],
-                'create_client',
-                'clients',
-                'client',
-                $clientId,
-                'Création du client ' . $clientCode . ' - ' . $fullName
-            );
-        }
-
-        $pdo->commit();
-
-        header('Location: ' . APP_URL . 'modules/clients/client_view.php?id=' . $clientId);
-        exit;
+        $successMessage = 'Client créé.';
     } catch (Throwable $e) {
-        if ($pdo->inTransaction()) {
-            $pdo->rollBack();
-        }
         $errorMessage = $e->getMessage();
     }
 }
 
 $pageTitle = 'Créer un client';
-$pageSubtitle = 'Création complète : identité, périmètre pays, rattachement financier, compte client généré.';
+$pageSubtitle = 'Création d’un compte client avec listes déroulantes normalisées.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
-
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
-
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
         <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
 
-        <div class="dashboard-grid-2">
-            <div class="form-card">
-                <form method="POST">
-                    <?= csrf_input() ?>
-                    <h3 class="section-title">Fiche client</h3>
+        <div class="form-card">
+            <form method="POST">
+                <?= csrf_input() ?>
 
-                    <div class="dashboard-grid-2">
-                        <div>
-                            <label>Code client (9 chiffres)</label>
-                            <input type="text" name="client_code" maxlength="9" value="<?= clientOld('client_code') ?>" required>
-                        </div>
+                <div class="dashboard-grid-2">
+                    <div><label>Code client</label><input type="text" name="client_code" required></div>
+                    <div><label>Prénom</label><input type="text" name="first_name" required></div>
+                    <div><label>Nom</label><input type="text" name="last_name" required></div>
+                    <div><label>Nom complet</label><input type="text" name="full_name"></div>
+                    <div><label>Email</label><input type="email" name="email"></div>
+                    <div><label>Téléphone</label><input type="text" name="phone"></div>
 
-                        <div>
-                            <label>Devise</label>
-                            <select name="currency">
-                                <?php foreach (['EUR', 'XAF', 'XOF', 'USD'] as $curr): ?>
-                                    <option value="<?= e($curr) ?>" <?= clientOld('currency', 'EUR') === $curr ? 'selected' : '' ?>>
-                                        <?= e($curr) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label>Prénom</label>
-                            <input type="text" name="first_name" value="<?= clientOld('first_name') ?>" required>
-                        </div>
-
-                        <div>
-                            <label>Nom</label>
-                            <input type="text" name="last_name" value="<?= clientOld('last_name') ?>" required>
-                        </div>
-
-                        <div>
-                            <label>Nom complet</label>
-                            <input type="text" name="full_name" value="<?= clientOld('full_name') ?>">
-                        </div>
-
-                        <div>
-                            <label>Email</label>
-                            <input type="email" name="email" value="<?= clientOld('email') ?>">
-                        </div>
-
-                        <div>
-                            <label>Téléphone</label>
-                            <input type="text" name="phone" value="<?= clientOld('phone') ?>">
-                        </div>
-
-                        <div>
-                            <label>Type client</label>
-                            <input type="text" name="client_type" value="<?= clientOld('client_type') ?>">
-                        </div>
-
-                        <div>
-                            <label>Statut client</label>
-                            <input type="text" name="client_status" value="<?= clientOld('client_status') ?>">
-                        </div>
-
-                        <div>
-                            <label>Pays origine</label>
-                            <input type="text" name="country_origin" value="<?= clientOld('country_origin') ?>">
-                        </div>
-
-                        <div>
-                            <label>Pays destination</label>
-                            <input type="text" name="country_destination" value="<?= clientOld('country_destination') ?>">
-                        </div>
-
-                        <div>
-                            <label>Pays commercial</label>
-                            <input type="text" name="country_commercial" value="<?= clientOld('country_commercial') ?>">
-                        </div>
-
-                        <div>
-                            <label>Compte interne lié</label>
-                            <select name="initial_treasury_account_id">
-                                <option value="">Choisir</option>
-                                <?php foreach ($treasuryAccounts as $account): ?>
-                                    <option value="<?= (int)$account['id'] ?>" <?= clientOld('initial_treasury_account_id') == $account['id'] ? 'selected' : '' ?>>
-                                        <?= e($account['account_code'] . ' - ' . $account['account_label']) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
+                    <div>
+                        <label>Type client</label>
+                        <select name="client_type" required>
+                            <option value="">Choisir</option>
+                            <?php foreach ($clientTypes as $item): ?>
+                                <option value="<?= e($item) ?>"><?= e($item) ?></option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
 
-                    <div class="btn-group">
-                        <button type="submit" class="btn btn-success">Créer le client</button>
-                        <a href="<?= e(APP_URL) ?>modules/clients/clients_list.php" class="btn btn-outline">Retour</a>
+                    <div>
+                        <label>Statut client</label>
+                        <input type="text" name="client_status">
                     </div>
-                </form>
-            </div>
 
-            <div class="dashboard-panel">
-                <h3 class="section-title">Ce que la création fait</h3>
-                <div class="dashboard-note">
-                    Le client reçoit automatiquement un compte 411 généré, un compte bancaire lié, et un solde initial de 15 000.
+                    <div>
+                        <label>Statut paramétré</label>
+                        <select name="status_id">
+                            <option value="">Choisir</option>
+                            <?php foreach ($statuses as $status): ?>
+                                <option value="<?= (int)$status['id'] ?>"><?= e($status['name']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Devise</label>
+                        <select name="currency">
+                            <?php foreach (['EUR','XAF','XOF','USD','CAD','DZD','GNF','TND','MAD'] as $currency): ?>
+                                <option value="<?= e($currency) ?>" <?= $currency === 'EUR' ? 'selected' : '' ?>><?= e($currency) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Pays d’origine</label>
+                        <select name="country_origin" required>
+                            <option value="">Choisir</option>
+                            <?php foreach ($originCountries as $item): ?>
+                                <option value="<?= e($item) ?>"><?= e($item) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Pays de destination</label>
+                        <select name="country_destination" required>
+                            <option value="">Choisir</option>
+                            <?php foreach ($destinationCountries as $item): ?>
+                                <option value="<?= e($item) ?>"><?= e($item) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Pays commercial</label>
+                        <select name="country_commercial" required>
+                            <option value="">Choisir</option>
+                            <?php foreach ($commercialCountries as $item): ?>
+                                <option value="<?= e($item) ?>"><?= e($item) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Compte interne lié</label>
+                        <select name="initial_treasury_account_id">
+                            <option value="">Choisir</option>
+                            <?php foreach ($treasuryAccounts as $account): ?>
+                                <option value="<?= (int)$account['id'] ?>"><?= e($account['account_code'] . ' - ' . $account['account_label']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                 </div>
-            </div>
+
+                <div class="btn-group">
+                    <button type="submit" class="btn btn-success">Créer</button>
+                    <a href="<?= e(APP_URL) ?>modules/clients/clients_list.php" class="btn btn-outline">Retour</a>
+                </div>
+            </form>
         </div>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
-
 <?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

@@ -14,6 +14,134 @@ if ($id <= 0) {
     exit('Service invalide.');
 }
 
+function es_fetch_service_accounts(PDO $pdo): array
+{
+    if (!tableExists($pdo, 'service_accounts')) {
+        return [];
+    }
+
+    $hasParent = false;
+    $hasSort = false;
+
+    try {
+        $columns = $pdo->query("SHOW COLUMNS FROM service_accounts")->fetchAll(PDO::FETCH_ASSOC);
+        $names = array_map(fn($c) => $c['Field'], $columns);
+        $hasParent = in_array('parent_account_id', $names, true);
+        $hasSort = in_array('sort_order', $names, true);
+    } catch (Throwable $e) {
+    }
+
+    $sql = "
+        SELECT
+            sa.id,
+            sa.account_code,
+            sa.account_label,
+            sa.operation_type_label,
+            sa.destination_country_label,
+            sa.commercial_country_label,
+            sa.is_postable,
+            sa.is_active
+    ";
+
+    if ($hasParent) {
+        $sql .= ",
+            sa.parent_account_id,
+            p.account_code AS parent_account_code,
+            p.account_label AS parent_account_label
+        ";
+    } else {
+        $sql .= ",
+            NULL AS parent_account_id,
+            NULL AS parent_account_code,
+            NULL AS parent_account_label
+        ";
+    }
+
+    if ($hasSort) {
+        $sql .= ", sa.sort_order";
+    } else {
+        $sql .= ", 0 AS sort_order";
+    }
+
+    $sql .= "
+        FROM service_accounts sa
+    ";
+
+    if ($hasParent) {
+        $sql .= " LEFT JOIN service_accounts p ON p.id = sa.parent_account_id ";
+    }
+
+    $sql .= "
+        WHERE COALESCE(sa.is_active,1) = 1
+          AND COALESCE(sa.is_postable,0) = 1
+        ORDER BY COALESCE(sa.sort_order,0) ASC, sa.account_code ASC
+    ";
+
+    return $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
+}
+
+function es_service_account_display(array $account): string
+{
+    $base = trim(($account['account_code'] ?? '') . ' - ' . ($account['account_label'] ?? ''));
+    $meta = [];
+
+    if (!empty($account['operation_type_label'])) {
+        $meta[] = $account['operation_type_label'];
+    }
+    if (!empty($account['destination_country_label'])) {
+        $meta[] = 'Destination: ' . $account['destination_country_label'];
+    }
+    if (!empty($account['commercial_country_label'])) {
+        $meta[] = 'Commercial: ' . $account['commercial_country_label'];
+    }
+
+    if ($meta) {
+        $base .= ' [' . implode(' | ', $meta) . ']';
+    }
+
+    return $base;
+}
+
+function es_find_operation_type(PDO $pdo, int $operationTypeId): ?array
+{
+    $stmt = $pdo->prepare("
+        SELECT id, code, label, direction, is_active
+        FROM ref_operation_types
+        WHERE id = ?
+        LIMIT 1
+    ");
+    $stmt->execute([$operationTypeId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    return $row ?: null;
+}
+
+function es_find_service_account(PDO $pdo, ?int $serviceAccountId): ?array
+{
+    if ($serviceAccountId === null || $serviceAccountId <= 0) {
+        return null;
+    }
+
+    $stmt = $pdo->prepare("
+        SELECT
+            sa.id,
+            sa.account_code,
+            sa.account_label,
+            sa.operation_type_label,
+            sa.destination_country_label,
+            sa.commercial_country_label,
+            sa.is_postable,
+            sa.is_active
+        FROM service_accounts sa
+        WHERE sa.id = ?
+        LIMIT 1
+    ");
+    $stmt->execute([$serviceAccountId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    return $row ?: null;
+}
+
 $stmt = $pdo->prepare("
     SELECT *
     FROM ref_services
@@ -35,14 +163,7 @@ $operationTypes = tableExists($pdo, 'ref_operation_types')
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
 
-$serviceAccounts = tableExists($pdo, 'service_accounts')
-    ? $pdo->query("
-        SELECT id, account_code, account_label
-        FROM service_accounts
-        WHERE COALESCE(is_active,1)=1
-        ORDER BY account_code ASC
-    ")->fetchAll(PDO::FETCH_ASSOC)
-    : [];
+$serviceAccounts = es_fetch_service_accounts($pdo);
 
 $treasuryAccounts = tableExists($pdo, 'treasury_accounts')
     ? $pdo->query("
@@ -116,23 +237,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $newOperationTypeDirection
                 ]);
                 $operationTypeId = (int)$pdo->lastInsertId();
-
-                if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
-                    logUserAction(
-                        $pdo,
-                        (int)$_SESSION['user_id'],
-                        'create_operation_type_from_edit_service',
-                        'admin_functional',
-                        'operation_type',
-                        $operationTypeId,
-                        'Création d’un type d’opération depuis la modification d’un service'
-                    );
-                }
             }
         }
 
         if ($operationTypeId === null || $operationTypeId <= 0) {
             throw new RuntimeException('Le type d’opération est obligatoire.');
+        }
+
+        $parentType = es_find_operation_type($pdo, $operationTypeId);
+        if (!$parentType) {
+            throw new RuntimeException('Le type d’opération sélectionné est introuvable.');
+        }
+
+        if ($isActive === 1 && (int)($parentType['is_active'] ?? 0) !== 1) {
+            throw new RuntimeException('Un service actif ne peut pas être rattaché à un type d’opération archivé.');
+        }
+
+        $selected706 = es_find_service_account($pdo, $serviceAccountId);
+        if ($serviceAccountId !== null && !$selected706) {
+            throw new RuntimeException('Le compte 706 sélectionné est introuvable.');
+        }
+
+        if ($selected706) {
+            if ((int)($selected706['is_active'] ?? 0) !== 1) {
+                throw new RuntimeException('Le compte 706 sélectionné est archivé.');
+            }
+
+            if ((int)($selected706['is_postable'] ?? 0) !== 1) {
+                throw new RuntimeException('Le compte 706 sélectionné n’est pas mouvementable.');
+            }
+
+            if (!empty($selected706['operation_type_label']) && !empty($parentType['code'])) {
+                $normalizedAccountType = strtoupper(trim((string)$selected706['operation_type_label']));
+                $normalizedParentType = strtoupper(trim((string)$parentType['code']));
+
+                if ($normalizedAccountType !== $normalizedParentType) {
+                    throw new RuntimeException('Le compte 706 sélectionné n’est pas cohérent avec le type d’opération choisi.');
+                }
+            }
         }
 
         $stmtDup = $pdo->prepare("
@@ -143,6 +285,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             LIMIT 1
         ");
         $stmtDup->execute([$code, $id]);
+
         if ($stmtDup->fetch()) {
             throw new RuntimeException('Ce code service existe déjà.');
         }
@@ -177,7 +320,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'admin_functional',
                 'service',
                 $id,
-                'Modification d’un service avec logique métier type/service'
+                'Modification d’un service avec hiérarchie 706'
             );
         }
 
@@ -185,13 +328,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $stmt->execute([$id]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        $serviceAccounts = es_fetch_service_accounts($pdo);
     } catch (Throwable $e) {
         $errorMessage = $e->getMessage();
     }
 }
 
 $pageTitle = 'Modifier un service';
-$pageSubtitle = 'Un service dépend d’un type d’opération ; ce type peut aussi être créé à la volée.';
+$pageSubtitle = 'Seuls les comptes 706 finaux mouvementables peuvent être utilisés.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -242,26 +386,26 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <option value="">Choisir</option>
                                 <?php foreach ($operationTypes as $item): ?>
                                     <option value="<?= (int)$item['id'] ?>" <?= (string)($row['operation_type_id'] ?? '') === (string)$item['id'] ? 'selected' : '' ?>>
-                                        <?= e($item['label'] . ' (' . $item['code'] . ')') ?>
+                                        <?= e($item['label'] . ' (' . $item['code'] . ')') ?><?= (int)$item['is_active'] !== 1 ? ' [archivé]' : '' ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
 
                         <div class="dashboard-note">
-                            Utilise ce champ si le type existe déjà. Sinon, remplis les champs ci-dessous pour le créer.
+                            Le compte 706 choisi doit être cohérent avec le type d’opération sélectionné.
                         </div>
                     </div>
 
                     <div class="dashboard-grid-2">
                         <div>
                             <label>Nouveau code type d’opération</label>
-                            <input type="text" name="new_operation_type_code" placeholder="Ex: FRAIS_DOSSIER">
+                            <input type="text" name="new_operation_type_code" placeholder="Ex: FRAIS_DE_SERVICE">
                         </div>
 
                         <div>
                             <label>Nouveau libellé type d’opération</label>
-                            <input type="text" name="new_operation_type_label" placeholder="Ex: Frais dossier">
+                            <input type="text" name="new_operation_type_label" placeholder="Ex: Frais de service">
                         </div>
                     </div>
 
@@ -276,12 +420,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                     <div class="dashboard-grid-2">
                         <div>
-                            <label>Compte 706</label>
+                            <label>Compte 706 (final mouvementable)</label>
                             <select name="service_account_id">
                                 <option value="">Aucun</option>
                                 <?php foreach ($serviceAccounts as $item): ?>
                                     <option value="<?= (int)$item['id'] ?>" <?= (string)($row['service_account_id'] ?? '') === (string)$item['id'] ? 'selected' : '' ?>>
-                                        <?= e($item['account_code'] . ' - ' . $item['account_label']) ?>
+                                        <?= e(es_service_account_display($item)) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -315,9 +459,9 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </div>
 
             <div class="dashboard-panel">
-                <h3 class="section-title">Règle métier</h3>
+                <h3 class="section-title">Hiérarchie 706</h3>
                 <div class="dashboard-note">
-                    Un service ne doit pas vivre sans type d’opération. Ce type peut être existant ou créé pendant l’édition.
+                    Les comptes parents 706 ne sont plus sélectionnables ici. Seuls les comptes finaux postables sont proposés.
                 </div>
             </div>
         </div>
