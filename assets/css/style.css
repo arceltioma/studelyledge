@@ -276,6 +276,31 @@ p{
     margin-bottom:16px;
 }
 
+/* Page hero */
+.page-hero{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:20px;
+    margin-bottom:20px;
+    padding:18px 22px;
+    background:linear-gradient(135deg, #ffffff 0%, #f8fbff 100%);
+    border:1px solid #e7edf6;
+    border-radius:18px;
+    box-shadow:0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.page-hero-left h1{
+    margin:0 0 6px;
+    font-size:1.6rem;
+    font-weight:800;
+    color:#172033;
+}
+
+.page-hero-left p{
+    margin:0;
+}
+
 /* Buttons */
 .btn-group{
     display:flex;
@@ -340,6 +365,39 @@ p{
     color:var(--heading);
     background:#fff;
     border-color:var(--border-strong);
+}
+
+.btn-warning{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    padding:10px 16px;
+    border-radius:12px;
+    border:1px solid #f2c078;
+    background:linear-gradient(135deg, #ffcf8a 0%, #f2b457 100%);
+    color:#6b3f00;
+    font-weight:700;
+    text-decoration:none;
+    transition:all 0.2s ease;
+    cursor:pointer;
+}
+
+.btn-warning:hover{
+    transform:translateY(-1px);
+    box-shadow:0 8px 18px rgba(242, 180, 87, 0.22);
+    filter:brightness(1.02);
+}
+
+.btn-warning:active{
+    transform:translateY(0);
+}
+
+.btn-warning:disabled,
+.btn-warning.disabled{
+    opacity:0.6;
+    cursor:not-allowed;
+    box-shadow:none;
 }
 
 /* Forms */
@@ -436,10 +494,12 @@ textarea:focus{
     display:inline-flex;
     align-items:center;
     justify-content:center;
-    padding:6px 10px;
+    padding:6px 12px;
     border-radius:999px;
-    font-size:12px;
+    font-size:0.82rem;
     font-weight:700;
+    line-height:1;
+    white-space:nowrap;
     border:1px solid transparent;
 }
 
@@ -536,6 +596,42 @@ pre{
     color:var(--heading);
     font-weight:700;
     text-align:right;
+}
+
+/* Details / fiches */
+.detail-grid{
+    display:grid;
+    grid-template-columns:1fr;
+    gap:12px;
+    margin-top:8px;
+}
+
+.detail-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    padding:12px 14px;
+    background:#ffffff;
+    border:1px solid #e8ecf4;
+    border-radius:12px;
+    min-height:52px;
+}
+
+.detail-label{
+    font-size:0.95rem;
+    font-weight:600;
+    color:#5b6475;
+    flex:0 0 40%;
+}
+
+.detail-value{
+    font-size:0.98rem;
+    font-weight:600;
+    color:#1f2937;
+    text-align:right;
+    flex:1 1 auto;
+    word-break:break-word;
 }
 
 /* Timeline */
@@ -799,6 +895,25 @@ pre{
         left:12px;
         right:12px;
         bottom:12px;
+    }
+}
+
+@media (max-width: 768px){
+    .detail-row{
+        flex-direction:column;
+        align-items:flex-start;
+    }
+
+    .detail-label,
+    .detail-value{
+        flex:1 1 auto;
+        width:100%;
+        text-align:left;
+    }
+
+    .page-hero{
+        flex-direction:column;
+        align-items:flex-start;
     }
 }
 

@@ -5,293 +5,189 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
-$pagePermission = 'clients_archive';
-enforcePagePermission($pdo, $pagePermission);
+enforcePagePermission($pdo, 'clients_delete');
 
-require_once __DIR__ . '/../../includes/header.php';
-
-$clientId = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
-
-if ($clientId <= 0) {
-    die('Client invalide.');
+$id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
+if ($id <= 0) {
+    exit('Client invalide.');
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| Chargement client
-|--------------------------------------------------------------------------
-*/
-
 $stmt = $pdo->prepare("
-    SELECT
-        id,
-        client_code,
-        first_name,
-        last_name,
-        is_active
+    SELECT *
     FROM clients
     WHERE id = ?
     LIMIT 1
 ");
-
-$stmt->execute([$clientId]);
+$stmt->execute([$id]);
 $client = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$client) {
-    die('Client introuvable.');
+    exit('Client introuvable.');
 }
 
+$bankAccount = findPrimaryBankAccountForClient($pdo, $id);
 
-$isActive = (int)$client['is_active'];
-$newState = $isActive ? 0 : 1;
+$linkedOperationsCount = 0;
+if (tableExists($pdo, 'operations') && columnExists($pdo, 'operations', 'client_id')) {
+    $stmtOps = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM operations
+        WHERE client_id = ?
+    ");
+    $stmtOps->execute([$id]);
+    $linkedOperationsCount = (int)$stmtOps->fetchColumn();
+}
+
+$hasBlockingLinks = $linkedOperationsCount > 0;
 
 $successMessage = '';
 $errorMessage = '';
 
-
-/*
-|--------------------------------------------------------------------------
-| Traitement POST
-|--------------------------------------------------------------------------
-*/
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-
     try {
+        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+            throw new RuntimeException('Jeton CSRF invalide.');
+        }
 
-        $stmtUpdate = $pdo->prepare("
-            UPDATE clients
-            SET is_active = ?
+        if ($hasBlockingLinks) {
+            throw new RuntimeException('Suppression impossible : ce client possède déjà des opérations liées. Archive-le à la place.');
+        }
+
+        $pdo->beginTransaction();
+
+        if (tableExists($pdo, 'client_bank_accounts')) {
+            $stmtDeleteLink = $pdo->prepare("
+                DELETE FROM client_bank_accounts
+                WHERE client_id = ?
+            ");
+            $stmtDeleteLink->execute([$id]);
+        }
+
+        if ($bankAccount && tableExists($pdo, 'bank_accounts')) {
+            $stmtDeleteBank = $pdo->prepare("
+                DELETE FROM bank_accounts
+                WHERE id = ?
+            ");
+            $stmtDeleteBank->execute([(int)$bankAccount['id']]);
+        }
+
+        $stmtDeleteClient = $pdo->prepare("
+            DELETE FROM clients
             WHERE id = ?
         ");
+        $stmtDeleteClient->execute([$id]);
 
-        $stmtUpdate->execute([$newState, $clientId]);
+        if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+            logUserAction(
+                $pdo,
+                (int)$_SESSION['user_id'],
+                'delete_client',
+                'clients',
+                'client',
+                $id,
+                'Suppression physique du client ' . ($client['client_code'] ?? '')
+            );
+        }
 
+        $pdo->commit();
 
-        /*
-        |--------------------------------------------------------------------------
-        | Audit log
-        |--------------------------------------------------------------------------
-        */
-
-        logUserAction(
-            $pdo,
-            (int)$_SESSION['user_id'],
-            $newState ? 'reactivate_client' : 'archive_client',
-            'clients',
-            'client',
-            $clientId,
-            ($newState ? 'Réactivation' : 'Archivage') .
-            " du client {$client['client_code']} {$client['first_name']} {$client['last_name']}"
-        );
-
-
-        header(
-            "Location: " .
-            APP_URL .
-            "modules/clients/client_view.php?id=" .
-            $clientId .
-            "&status=success"
-        );
-
+        header('Location: ' . APP_URL . 'modules/clients/clients_list.php');
         exit;
-
     } catch (Throwable $e) {
-
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         $errorMessage = $e->getMessage();
-
     }
-
 }
 
+$pageTitle = 'Supprimer un client';
+$pageSubtitle = 'Suppression physique réservée aux clients sans opérations liées.';
+require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
+    <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
-<?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
+    <div class="main">
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
+        <?php render_app_header_bar($pageTitle, $pageSubtitle); ?>
 
-<div class="main">
+        <?php if ($errorMessage !== ''): ?>
+            <div class="error"><?= e($errorMessage) ?></div>
+        <?php endif; ?>
 
-<?php render_app_header_bar(
-    'Archivage client',
-    'Gestion du statut actif / inactif du client.'
-); ?>
+        <div class="dashboard-grid-2">
+            <div class="form-card">
+                <h3 class="section-title">Contrôle avant suppression</h3>
 
+                <div class="detail-grid">
+                    <div class="detail-row">
+                        <span class="detail-label">Code client</span>
+                        <span class="detail-value"><?= e($client['client_code'] ?? '') ?></span>
+                    </div>
 
-<div class="page-title">
+                    <div class="detail-row">
+                        <span class="detail-label">Nom</span>
+                        <span class="detail-value"><?= e($client['full_name'] ?? '') ?></span>
+                    </div>
 
-<div>
+                    <div class="detail-row">
+                        <span class="detail-label">Compte 411</span>
+                        <span class="detail-value"><?= e($client['generated_client_account'] ?? '') ?></span>
+                    </div>
 
-<h1>
+                    <div class="detail-row">
+                        <span class="detail-label">Solde courant</span>
+                        <span class="detail-value"><?= number_format((float)($bankAccount['balance'] ?? 0), 2, ',', ' ') ?></span>
+                    </div>
 
-<?= $isActive ? 'Archiver un client' : 'Réactiver un client' ?>
+                    <div class="detail-row">
+                        <span class="detail-label">Opérations liées</span>
+                        <span class="detail-value"><?= (int)$linkedOperationsCount ?></span>
+                    </div>
+                </div>
 
-</h1>
+                <?php if ($hasBlockingLinks): ?>
+                    <div class="warning" style="margin-top:20px;">
+                        Ce client ne peut pas être supprimé physiquement car des opérations lui sont déjà rattachées.
+                        Utilise l’archivage / désactivation à la place.
+                    </div>
 
-<p class="muted">
+                    <div class="btn-group" style="margin-top:20px;">
+                        <a href="<?= e(APP_URL) ?>modules/clients/clients_archive.php?id=<?= (int)$id ?>&action=archive" class="btn btn-secondary">
+                            Archiver à la place
+                        </a>
+                        <a href="<?= e(APP_URL) ?>modules/clients/clients_list.php" class="btn btn-outline">
+                            Retour
+                        </a>
+                    </div>
+                <?php else: ?>
+                    <form method="POST" style="margin-top:20px;">
+                        <?= csrf_input() ?>
+                        <input type="hidden" name="id" value="<?= (int)$id ?>">
 
-Client concerné :
+                        <div class="btn-group">
+                            <button type="submit" class="btn btn-danger">Confirmer la suppression</button>
+                            <a href="<?= e(APP_URL) ?>modules/clients/clients_list.php" class="btn btn-outline">Annuler</a>
+                        </div>
+                    </form>
+                <?php endif; ?>
+            </div>
 
-<strong>
+            <div class="dashboard-panel">
+                <h3 class="section-title">Règle de gestion</h3>
+                <div class="dashboard-note">
+                    La suppression physique est réservée aux clients sans historique opérationnel.
+                    Dès qu’un client possède des opérations, il doit être archivé et non supprimé.
+                </div>
+            </div>
+        </div>
 
-<?= e($client['client_code']) ?>
-
-</strong>
-
-—
-
-<?= e($client['first_name'] . ' ' . $client['last_name']) ?>
-
-</p>
-
+        <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
+    </div>
 </div>
 
-<div class="btn-group">
-
-<a
-class="btn btn-outline"
-href="<?= APP_URL ?>modules/clients/client_view.php?id=<?= (int)$clientId ?>"
->
-Annuler
-</a>
-
-</div>
-
-</div>
-
-
-<?php if ($errorMessage): ?>
-
-<div class="error">
-
-<?= e($errorMessage) ?>
-
-</div>
-
-<?php endif; ?>
-
-
-<div class="dashboard-grid-2">
-
-
-<div class="card">
-
-<h3>Confirmation</h3>
-
-<p>
-
-<?php if ($isActive): ?>
-
-Vous êtes sur le point d’archiver ce client.
-
-<br><br>
-
-Le client ne sera plus actif dans les opérations mais son historique
-restera intact.
-
-<?php else: ?>
-
-Ce client est actuellement archivé.
-
-<br><br>
-
-La réactivation permettra à nouveau de l’utiliser dans les opérations.
-
-<?php endif; ?>
-
-</p>
-
-
-<form method="POST">
-
-<input type="hidden" name="id" value="<?= (int)$clientId ?>">
-
-
-<div class="btn-group" style="margin-top:20px;">
-
-<button
-type="submit"
-class="btn <?= $isActive ? 'btn-danger' : 'btn-success' ?>"
->
-
-<?= $isActive ? 'Confirmer archivage' : 'Confirmer réactivation' ?>
-
-</button>
-
-<a
-class="btn btn-outline"
-href="<?= APP_URL ?>modules/clients/client_view.php?id=<?= (int)$clientId ?>"
->
-Annuler
-</a>
-
-</div>
-
-</form>
-
-</div>
-
-
-<div class="card">
-
-<h3>Informations client</h3>
-
-<div class="stat-row">
-
-<span class="metric-label">Code client</span>
-
-<span class="metric-value">
-
-<?= e($client['client_code']) ?>
-
-</span>
-
-</div>
-
-
-<div class="stat-row">
-
-<span class="metric-label">Nom complet</span>
-
-<span class="metric-value">
-
-<?= e($client['first_name'] . ' ' . $client['last_name']) ?>
-
-</span>
-
-</div>
-
-
-<div class="stat-row">
-
-<span class="metric-label">Etat actuel</span>
-
-<span class="metric-value">
-
-<?= $isActive ? 'Actif' : 'Archivé' ?>
-
-</span>
-
-</div>
-
-
-<div class="dashboard-note">
-
-Archiver un client ne supprime jamais les données.  
-C’est une mesure de gestion, pas une amnésie.
-
-</div>
-
-</div>
-
-
-</div>
-
-
-<?php require_once __DIR__ . '/../../includes/footer.php'; ?>
-
-</div>
-
-</div>
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

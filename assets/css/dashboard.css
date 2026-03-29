@@ -305,6 +305,77 @@ body.sidebar-collapsed .sidebar-nav{
     position:relative;
 }
 
+/* KPI / cards */
+.kpi{
+    font-size:1.55rem;
+    font-weight:800;
+    color:#182133;
+    line-height:1.2;
+    margin-top:6px;
+}
+
+.metric-label{
+    font-size:0.92rem;
+    font-weight:600;
+    color:#667085;
+}
+
+.metric-value{
+    font-size:1rem;
+    font-weight:700;
+    color:#111827;
+}
+
+.stat-row{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:14px;
+    padding:12px 0;
+    border-bottom:1px solid #eef2f7;
+}
+
+.stat-row:last-child{
+    border-bottom:none;
+}
+
+/* Table actions */
+.table-card .btn-group{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+}
+
+.table-card td .btn,
+.table-card td .btn-outline,
+.table-card td .btn-secondary,
+.table-card td .btn-success,
+.table-card td .btn-danger,
+.table-card td .btn-warning{
+    min-width:96px;
+    text-align:center;
+}
+
+/* Clients / tables */
+.table-card table td,
+.table-card table th{
+    vertical-align:middle;
+}
+
+.table-card table td pre{
+    margin:0;
+    font-size:0.84rem;
+    line-height:1.35;
+}
+
+/* Dashboard panels */
+.dashboard-panel .section-title,
+.form-card .section-title,
+.table-card .section-title{
+    margin-top:0;
+    margin-bottom:14px;
+}
+
 /* Responsive dashboard/sidebar */
 @media (max-width: 1100px){
     .studely-sidebar{

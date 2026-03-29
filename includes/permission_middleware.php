@@ -1,162 +1,154 @@
 <?php
-require_once __DIR__ . '/../config/app.php';
-require_once __DIR__ . '/../config/security.php';
 
-if (!function_exists('pm_table_exists')) {
-    function pm_table_exists(PDO $pdo, string $tableName): bool
+require_once __DIR__ . '/admin_functions.php';
+
+if (!function_exists('pmw_is_logged_in')) {
+    function pmw_is_logged_in(): bool
     {
-        $stmt = $pdo->prepare("
-            SELECT COUNT(*)
-            FROM information_schema.TABLES
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = ?
-        ");
-        $stmt->execute([$tableName]);
-        return (int)$stmt->fetchColumn() > 0;
+        return isset($_SESSION['user_id']) && (int)$_SESSION['user_id'] > 0;
     }
 }
 
-if (!function_exists('pm_column_exists')) {
-    function pm_column_exists(PDO $pdo, string $tableName, string $columnName): bool
+if (!function_exists('pmw_redirect')) {
+    function pmw_redirect(string $url): void
     {
-        $stmt = $pdo->prepare("
-            SELECT COUNT(*)
-            FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = ?
-              AND COLUMN_NAME = ?
-        ");
-        $stmt->execute([$tableName, $columnName]);
-        return (int)$stmt->fetchColumn() > 0;
+        header('Location: ' . $url);
+        exit;
     }
 }
 
-if (!function_exists('currentUserRecord')) {
-    function currentUserRecord(PDO $pdo): ?array
+if (!function_exists('pmw_forbidden')) {
+    function pmw_forbidden(string $message = 'Accès refusé.'): void
     {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
-        }
-
-        $userId = (int)($_SESSION['user_id'] ?? 0);
-        if ($userId <= 0) {
-            return null;
-        }
-
-        if (!pm_table_exists($pdo, 'users')) {
-            return null;
-        }
-
-        $roleJoin = '';
-        $roleSelect = '';
-
-        if (pm_table_exists($pdo, 'roles') && pm_column_exists($pdo, 'users', 'role_id')) {
-            $roleJoin = " LEFT JOIN roles r ON r.id = u.role_id ";
-            $roleSelect = ", r.code AS role_code, r.label AS role_label ";
-        }
-
-        $stmt = $pdo->prepare("
-            SELECT u.* {$roleSelect}
-            FROM users u
-            {$roleJoin}
-            WHERE u.id = ?
-            LIMIT 1
-        ");
-        $stmt->execute([$userId]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        return $user ?: null;
+        http_response_code(403);
+        exit($message);
     }
 }
 
-if (!function_exists('currentUserCan')) {
-    function currentUserCan(PDO $pdo, string $permissionCode): bool
+if (!function_exists('pmw_store_intended_url')) {
+    function pmw_store_intended_url(): void
     {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
+        if (!isset($_SERVER['REQUEST_URI'])) {
+            return;
         }
 
-        $user = currentUserRecord($pdo);
-        if (!$user) {
-            return false;
-        }
-
-        $legacyRole = (string)($user['role'] ?? '');
-        $roleCode = (string)($user['role_code'] ?? '');
-
-        if (in_array($legacyRole, ['admin', 'superadmin'], true)) {
-            return true;
-        }
-
-        if (in_array($roleCode, ['admin_tech', 'superadmin'], true)) {
-            return true;
-        }
-
-        if (
-            !pm_table_exists($pdo, 'permissions') ||
-            !pm_table_exists($pdo, 'role_permissions') ||
-            !pm_table_exists($pdo, 'roles') ||
-            !pm_column_exists($pdo, 'users', 'role_id')
-        ) {
-            return true;
-        }
-
-        $roleId = (int)($user['role_id'] ?? 0);
-        if ($roleId <= 0) {
-            return false;
-        }
-
-        $stmt = $pdo->prepare("
-            SELECT COUNT(*)
-            FROM role_permissions rp
-            INNER JOIN permissions p ON p.id = rp.permission_id
-            WHERE rp.role_id = ?
-              AND p.code = ?
-        ");
-        $stmt->execute([$roleId, $permissionCode]);
-
-        return (int)$stmt->fetchColumn() > 0;
+        $_SESSION['intended_url'] = (string)$_SERVER['REQUEST_URI'];
     }
 }
 
-if (!function_exists('requirePermission')) {
-    function requirePermission(PDO $pdo, string $permissionCode): void
+if (!function_exists('pmw_consume_intended_url')) {
+    function pmw_consume_intended_url(?string $default = null): string
     {
-        if (!currentUserCan($pdo, $permissionCode)) {
-            http_response_code(403);
-            exit('Accès refusé.');
+        $url = $_SESSION['intended_url'] ?? $default ?? (defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php' : '/');
+        unset($_SESSION['intended_url']);
+
+        return (string)$url;
+    }
+}
+
+if (!function_exists('ensureAuthenticated')) {
+    function ensureAuthenticated(): void
+    {
+        if (pmw_is_logged_in()) {
+            return;
         }
+
+        pmw_store_intended_url();
+
+        $loginUrl = defined('APP_URL') ? APP_URL . 'login.php' : '/login.php';
+        pmw_redirect($loginUrl);
+    }
+}
+
+if (!function_exists('ensureGuestOnly')) {
+    function ensureGuestOnly(): void
+    {
+        if (!pmw_is_logged_in()) {
+            return;
+        }
+
+        $defaultUrl = defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php' : '/';
+        pmw_redirect($defaultUrl);
     }
 }
 
 if (!function_exists('enforcePagePermission')) {
-    function enforcePagePermission(PDO $pdo, string $permissionCode): void
+    function enforcePagePermission(PDO $pdo, string $permissionCode, bool $redirectIfUnauthorized = false): void
     {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
+        ensureAuthenticated();
+
+        if (currentUserCan($pdo, $permissionCode)) {
+            return;
         }
 
-        if (empty($_SESSION['user_id'])) {
-            header('Location: ' . APP_URL . 'login.php?error=' . urlencode('Merci de vous connecter.'));
-            exit;
+        if ($redirectIfUnauthorized) {
+            $target = defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php?error=access_denied' : '/';
+            pmw_redirect($target);
         }
 
-        if (!currentUserCan($pdo, $permissionCode)) {
-            http_response_code(403);
+        pmw_forbidden('Accès refusé : permission insuffisante pour cette page.');
+    }
+}
 
-            echo '<!DOCTYPE html>';
-            echo '<html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">';
-            echo '<title>Accès refusé</title>';
-            echo '<link rel="stylesheet" href="' . e(app_asset('assets/css/style.css')) . '">';
-            echo '</head><body class="login-page">';
-            echo '<div class="login-box">';
-            echo '<h2>Accès refusé</h2>';
-            echo '<p class="muted">Vous ne disposez pas de la permission requise : <strong>' . e($permissionCode) . '</strong>.</p>';
-            echo '<div class="btn-group" style="justify-content:center;margin-top:18px;">';
-            echo '<a class="btn btn-outline" href="' . e(APP_URL) . 'modules/dashboard/dashboard.php">Retour au dashboard</a>';
-            echo '</div>';
-            echo '</div></body></html>';
-            exit;
+if (!function_exists('enforceAnyPermission')) {
+    function enforceAnyPermission(PDO $pdo, array $permissionCodes, bool $redirectIfUnauthorized = false): void
+    {
+        ensureAuthenticated();
+
+        foreach ($permissionCodes as $permissionCode) {
+            if (is_string($permissionCode) && $permissionCode !== '' && currentUserCan($pdo, $permissionCode)) {
+                return;
+            }
         }
+
+        if ($redirectIfUnauthorized) {
+            $target = defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php?error=access_denied' : '/';
+            pmw_redirect($target);
+        }
+
+        pmw_forbidden('Accès refusé : aucune des permissions requises n’est disponible.');
+    }
+}
+
+if (!function_exists('enforceAllPermissions')) {
+    function enforceAllPermissions(PDO $pdo, array $permissionCodes, bool $redirectIfUnauthorized = false): void
+    {
+        ensureAuthenticated();
+
+        foreach ($permissionCodes as $permissionCode) {
+            if (!is_string($permissionCode) || $permissionCode === '') {
+                continue;
+            }
+
+            if (!currentUserCan($pdo, $permissionCode)) {
+                if ($redirectIfUnauthorized) {
+                    $target = defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php?error=access_denied' : '/';
+                    pmw_redirect($target);
+                }
+
+                pmw_forbidden('Accès refusé : toutes les permissions requises ne sont pas réunies.');
+            }
+        }
+    }
+}
+
+if (!function_exists('middlewareRequireAuthAndPermission')) {
+    function middlewareRequireAuthAndPermission(PDO $pdo, string $permissionCode): void
+    {
+        enforcePagePermission($pdo, $permissionCode);
+    }
+}
+
+if (!function_exists('middlewareRequireAuthOnly')) {
+    function middlewareRequireAuthOnly(): void
+    {
+        ensureAuthenticated();
+    }
+}
+
+if (!function_exists('middlewareGuestOnly')) {
+    function middlewareGuestOnly(): void
+    {
+        ensureGuestOnly();
     }
 }

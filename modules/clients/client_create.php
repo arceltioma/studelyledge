@@ -167,6 +167,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $initialBalance
         );
 
+        recomputeClientBalance($pdo, $clientId);
+
         if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
             logUserAction(
                 $pdo,
@@ -204,6 +206,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
+        <?php render_app_header_bar($pageTitle, $pageSubtitle); ?>
 
         <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
         <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
@@ -356,7 +359,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <h3 class="section-title">Règles appliquées</h3>
                 <div class="dashboard-note">
                     Le code client reste généré automatiquement sur 9 chiffres et le compte client reste généré en 411 + code client.
-                    En revanche, tu peux maintenant choisir manuellement le compte 512 à lier et définir le solde initial du compte client 411.
+                    Tu peux maintenant choisir manuellement le compte 512 à lier et définir le solde initial du compte client 411.
                 </div>
             </div>
         </div>

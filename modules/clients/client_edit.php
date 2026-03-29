@@ -156,16 +156,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
 
         studely_create_or_link_client_bank_account(
-    $pdo,
-    $id,
-    (string)$client['generated_client_account'],
-    $countryCommercial,
-    'Compte client ' . $client['generated_client_account'],
-    $initialBalance
-);
+            $pdo,
+            $id,
+            (string)($client['generated_client_account'] ?? ''),
+            $countryCommercial,
+            'Compte client ' . (string)($client['generated_client_account'] ?? ''),
+            $initialBalance
+        );
 
-// 🔥 recalcul propre après modification
-recomputeClientBalance($pdo, $id);
+        recomputeClientBalance($pdo, $id);
 
         if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
             logUserAction(
@@ -203,6 +202,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
+        <?php render_app_header_bar($pageTitle, $pageSubtitle); ?>
 
         <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
         <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>

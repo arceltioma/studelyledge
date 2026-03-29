@@ -17,6 +17,7 @@ if (!function_exists('tableExists')) {
               AND TABLE_NAME = ?
         ");
         $stmt->execute([$tableName]);
+
         return (int)$stmt->fetchColumn() > 0;
     }
 }
@@ -32,7 +33,119 @@ if (!function_exists('columnExists')) {
               AND COLUMN_NAME = ?
         ");
         $stmt->execute([$tableName, $columnName]);
+
         return (int)$stmt->fetchColumn() > 0;
+    }
+}
+
+if (!function_exists('render_app_header_bar')) {
+    function render_app_header_bar(string $title, string $subtitle = ''): void
+    {
+        echo '<div class="page-hero">';
+        echo '<div class="page-hero-left">';
+        echo '<h1>' . e($title) . '</h1>';
+        if ($subtitle !== '') {
+            echo '<p class="muted">' . e($subtitle) . '</p>';
+        }
+        echo '</div>';
+        echo '</div>';
+    }
+}
+
+if (!function_exists('currentUserCan')) {
+    function currentUserCan(PDO $pdo, string $permissionCode): bool
+    {
+        if (!isset($_SESSION['user_id'])) {
+            return false;
+        }
+
+        if (
+            !tableExists($pdo, 'users') ||
+            !tableExists($pdo, 'roles') ||
+            !tableExists($pdo, 'permissions') ||
+            !tableExists($pdo, 'role_permissions')
+        ) {
+            return true;
+        }
+
+        $sql = "
+            SELECT COUNT(*)
+            FROM users u
+            INNER JOIN roles r ON r.id = u.role_id
+            INNER JOIN role_permissions rp ON rp.role_id = r.id
+            INNER JOIN permissions p ON p.id = rp.permission_id
+            WHERE u.id = ?
+              AND p.code = ?
+        ";
+
+        if (columnExists($pdo, 'users', 'is_active')) {
+            $sql .= " AND COALESCE(u.is_active,1) = 1";
+        }
+
+        if (columnExists($pdo, 'roles', 'is_active')) {
+            $sql .= " AND COALESCE(r.is_active,1) = 1";
+        }
+
+        if (columnExists($pdo, 'permissions', 'is_active')) {
+            $sql .= " AND COALESCE(p.is_active,1) = 1";
+        }
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([(int)$_SESSION['user_id'], $permissionCode]);
+
+        return (int)$stmt->fetchColumn() > 0;
+    }
+}
+
+if (!function_exists('logUserAction')) {
+    function logUserAction(
+        PDO $pdo,
+        int $userId,
+        string $action,
+        ?string $module = null,
+        ?string $entityType = null,
+        $entityId = null,
+        ?string $details = null
+    ): void {
+        if (!tableExists($pdo, 'user_logs')) {
+            return;
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'user_id' => $userId,
+            'action' => $action,
+            'module' => $module,
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'details' => $details,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'user_logs', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'user_logs', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (!$columns) {
+            return;
+        }
+
+        $stmt = $pdo->prepare("
+            INSERT INTO user_logs (" . implode(', ', $columns) . ")
+            VALUES (" . implode(', ', $values) . ")
+        ");
+        $stmt->execute($params);
     }
 }
 
@@ -96,55 +209,24 @@ if (!function_exists('getPermissionOptions')) {
     }
 }
 
-if (!function_exists('logUserAction')) {
-    function logUserAction(
-        PDO $pdo,
-        int $userId,
-        string $action,
-        ?string $module = null,
-        ?string $entityType = null,
-        $entityId = null,
-        ?string $details = null
-    ): void {
-        if (!tableExists($pdo, 'user_logs')) {
-            return;
-        }
-
-        $columns = [];
-        $values = [];
-        $params = [];
-
-        $map = [
-            'user_id' => $userId,
-            'action' => $action,
-            'module' => $module,
-            'entity_type' => $entityType,
-            'entity_id' => $entityId,
-            'details' => $details,
-        ];
-
-        foreach ($map as $column => $value) {
-            if (columnExists($pdo, 'user_logs', $column)) {
-                $columns[] = $column;
-                $values[] = '?';
-                $params[] = $value;
-            }
-        }
-
-        if (columnExists($pdo, 'user_logs', 'created_at')) {
-            $columns[] = 'created_at';
-            $values[] = 'NOW()';
-        }
-
-        if (!$columns) {
-            return;
+if (!function_exists('findClientById')) {
+    function findClientById(PDO $pdo, int $clientId): ?array
+    {
+        if (!tableExists($pdo, 'clients')) {
+            return null;
         }
 
         $stmt = $pdo->prepare("
-            INSERT INTO user_logs (" . implode(', ', $columns) . ")
-            VALUES (" . implode(', ', $values) . ")
+            SELECT *
+            FROM clients
+            WHERE id = ?
+            LIMIT 1
         ");
-        $stmt->execute($params);
+        $stmt->execute([$clientId]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $row ?: null;
     }
 }
 
@@ -186,26 +268,7 @@ if (!function_exists('findTreasuryAccountByCode')) {
         $stmt->execute([$accountCode]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        return $row ?: null;
-    }
-}
 
-if (!function_exists('findServiceAccountByCode')) {
-    function findServiceAccountByCode(PDO $pdo, string $accountCode): ?array
-    {
-        if (!tableExists($pdo, 'service_accounts')) {
-            return null;
-        }
-
-        $stmt = $pdo->prepare("
-            SELECT *
-            FROM service_accounts
-            WHERE account_code = ?
-            LIMIT 1
-        ");
-        $stmt->execute([$accountCode]);
-
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row ?: null;
     }
 }
@@ -226,6 +289,28 @@ if (!function_exists('findTreasuryAccountById')) {
         $stmt->execute([$treasuryId]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $row ?: null;
+    }
+}
+
+if (!function_exists('findServiceAccountByCode')) {
+    function findServiceAccountByCode(PDO $pdo, string $accountCode): ?array
+    {
+        if (!tableExists($pdo, 'service_accounts')) {
+            return null;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM service_accounts
+            WHERE account_code = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$accountCode]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
         return $row ?: null;
     }
 }
@@ -251,6 +336,7 @@ if (!function_exists('getClientAccountingContext')) {
         $stmt->execute([$clientId]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
         return $row ?: null;
     }
 }
@@ -273,9 +359,29 @@ if (!function_exists('studely_commercial_countries')) {
     function studely_commercial_countries(): array
     {
         return [
-            'France','Allemagne','Belgique','Cameroun','Sénégal','Côte d\'Ivoire','Benin',
-            'Burkina Faso','Congo Brazzaville','Congo Kinshasa','Gabon','Tchad','Mali','Togo',
-            'Mexique','Inde','Algérie','Guinée','Tunisie','Maroc','Niger','Afrique de l\'est','Autres pays',
+            'France',
+            'Allemagne',
+            'Belgique',
+            'Cameroun',
+            'Sénégal',
+            "Côte d'Ivoire",
+            'Benin',
+            'Burkina Faso',
+            'Congo Brazzaville',
+            'Congo Kinshasa',
+            'Gabon',
+            'Tchad',
+            'Mali',
+            'Togo',
+            'Mexique',
+            'Inde',
+            'Algérie',
+            'Guinée',
+            'Tunisie',
+            'Maroc',
+            'Niger',
+            "Afrique de l'est",
+            'Autres pays',
         ];
     }
 }
@@ -290,7 +396,7 @@ if (!function_exists('studely_origin_countries')) {
             'Bosnie-Herzégovine','Botswana','Brésil','Brunei','Bulgarie','Burkina Faso','Burundi','Cap-Vert',
             'Cambodge','Cameroun','Canada','République centrafricaine','Chili','Chine','Chypre','Colombie',
             'Comores','Congo','République démocratique du Congo','Corée du Nord','Corée du Sud','Costa Rica',
-            'Côte d’Ivoire','Croatie','Cuba','Danemark','Djibouti','Dominique','Égypte','Émirats arabes unis',
+            "Côte d’Ivoire",'Croatie','Cuba','Danemark','Djibouti','Dominique','Égypte','Émirats arabes unis',
             'Équateur','Érythrée','Espagne','Estonie','Eswatini','États-Unis','Éthiopie','Fidji','Finlande',
             'France','Gabon','Gambie','Géorgie','Ghana','Grèce','Grenade','Guatemala','Guinée','Guinée-Bissau',
             'Guinée équatoriale','Guyana','Haïti','Honduras','Hongrie','Inde','Indonésie','Irak','Iran',
@@ -342,6 +448,7 @@ if (!function_exists('studely_normalize_text')) {
 
         $value = strtoupper($value);
         $value = preg_replace('/[^A-Z0-9]+/', ' ', $value) ?? '';
+
         return trim($value);
     }
 }
@@ -467,6 +574,7 @@ if (!function_exists('studely_create_or_link_client_bank_account')) {
         float $initialBalance = 0.0
     ): int {
         $existing = findPrimaryBankAccountForClient($pdo, $clientId);
+
         if ($existing) {
             $sets = [];
             $params = [];
@@ -488,11 +596,6 @@ if (!function_exists('studely_create_or_link_client_bank_account')) {
 
             if (columnExists($pdo, 'bank_accounts', 'initial_balance')) {
                 $sets[] = 'initial_balance = ?';
-                $params[] = $initialBalance;
-            }
-
-            if (columnExists($pdo, 'bank_accounts', 'balance')) {
-                $sets[] = 'balance = ?';
                 $params[] = $initialBalance;
             }
 
@@ -795,8 +898,6 @@ if (!function_exists('resolveAccountingOperation')) {
             'VIREMENT_MENSUEL',
             'VIREMENT_EXCEPTIONEL',
             'VIREMENT_EXEPTIONEL',
-            'VIREMENT_REGULIER',
-            'VIREMENT_REGULIER',
             'VIREMENT_REGULIER',
         ];
 
@@ -1144,6 +1245,59 @@ if (!function_exists('createInternalTreasuryMovement')) {
     }
 }
 
+if (!function_exists('recomputeClientBalance')) {
+    function recomputeClientBalance(PDO $pdo, int $clientId): void
+    {
+        $client = findClientById($pdo, $clientId);
+        if (!$client) {
+            throw new RuntimeException('Client introuvable pour recalcul.');
+        }
+
+        $accountNumber = (string)($client['generated_client_account'] ?? '');
+        if ($accountNumber === '') {
+            return;
+        }
+
+        $bankAccount = findPrimaryBankAccountForClient($pdo, $clientId);
+        if (!$bankAccount) {
+            return;
+        }
+
+        $initial = (float)($bankAccount['initial_balance'] ?? 0);
+
+        if (!tableExists($pdo, 'operations')) {
+            $stmtUpdate = $pdo->prepare("
+                UPDATE bank_accounts
+                SET balance = ?, updated_at = NOW()
+                WHERE id = ?
+            ");
+            $stmtUpdate->execute([$initial, (int)$bankAccount['id']]);
+            return;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT
+                COALESCE(SUM(CASE WHEN debit_account_code = ? THEN amount ELSE 0 END),0) AS total_debit,
+                COALESCE(SUM(CASE WHEN credit_account_code = ? THEN amount ELSE 0 END),0) AS total_credit
+            FROM operations
+        ");
+        $stmt->execute([$accountNumber, $accountNumber]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $totalDebit = (float)($row['total_debit'] ?? 0);
+        $totalCredit = (float)($row['total_credit'] ?? 0);
+
+        $newBalance = $initial - $totalDebit + $totalCredit;
+
+        $stmtUpdate = $pdo->prepare("
+            UPDATE bank_accounts
+            SET balance = ?, updated_at = NOW()
+            WHERE id = ?
+        ");
+        $stmtUpdate->execute([$newBalance, (int)$bankAccount['id']]);
+    }
+}
+
 if (!function_exists('recomputeAllBalances')) {
     function recomputeAllBalances(PDO $pdo): array
     {
@@ -1271,47 +1425,5 @@ if (!function_exists('recomputeAllBalances')) {
         }
 
         return $report;
-    }
-}
-if (!function_exists('recomputeClientBalance')) {
-    function recomputeClientBalance(PDO $pdo, int $clientId): void
-    {
-        $client = findClientById($pdo, $clientId);
-        if (!$client) {
-            throw new RuntimeException("Client introuvable pour recalcul.");
-        }
-
-        $accountNumber = $client['generated_client_account'] ?? null;
-        if (!$accountNumber) {
-            return;
-        }
-
-        $bankAccount = findPrimaryBankAccountForClient($pdo, $clientId);
-        if (!$bankAccount) {
-            return;
-        }
-
-        $initial = (float)($bankAccount['initial_balance'] ?? 0);
-
-        $stmt = $pdo->prepare("
-            SELECT 
-                COALESCE(SUM(CASE WHEN debit_account_code = ? THEN amount ELSE 0 END),0) AS total_debit,
-                COALESCE(SUM(CASE WHEN credit_account_code = ? THEN amount ELSE 0 END),0) AS total_credit
-            FROM operations
-        ");
-        $stmt->execute([$accountNumber, $accountNumber]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        $totalDebit = (float)$row['total_debit'];
-        $totalCredit = (float)$row['total_credit'];
-
-        $newBalance = $initial + $totalDebit - $totalCredit;
-
-        $stmtUpdate = $pdo->prepare("
-            UPDATE bank_accounts
-            SET balance = ?, updated_at = NOW()
-            WHERE id = ?
-        ");
-        $stmtUpdate->execute([$newBalance, $bankAccount['id']]);
     }
 }

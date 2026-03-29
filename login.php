@@ -3,49 +3,114 @@ require_once __DIR__ . '/config/app.php';
 require_once __DIR__ . '/config/database.php';
 require_once __DIR__ . '/config/security.php';
 
-$pdo = getPDO();
-
-if (session_status() === PHP_SESSION_NONE) {
+if (session_status() !== PHP_SESSION_ACTIVE) {
     session_start();
 }
 
-if (!empty($_SESSION['user_id'])) {
-    header('Location: ' . APP_URL . 'modules/dashboard/dashboard.php');
-    exit;
-}
+require_once __DIR__ . '/includes/auth_check.php';
+require_once __DIR__ . '/includes/admin_functions.php';
 
-$error = trim((string)($_GET['error'] ?? ''));
+/*
+|--------------------------------------------------------------------------
+| Si déjà connecté, on ne laisse pas revenir sur la page login
+|--------------------------------------------------------------------------
+*/
+redirectIfAuthenticated();
+
+$pdo = getPDO();
+
+$errorMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $username = clean_input($_POST['username'] ?? '');
-    $password = (string)($_POST['password'] ?? '');
-
     try {
-        $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ? LIMIT 1");
+        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+            throw new RuntimeException('Jeton CSRF invalide.');
+        }
+
+        $username = trim((string)($_POST['username'] ?? ''));
+        $password = (string)($_POST['password'] ?? '');
+
+        if ($username === '' || $password === '') {
+            throw new RuntimeException('Merci de renseigner votre identifiant et votre mot de passe.');
+        }
+
+        if (!tableExists($pdo, 'users')) {
+            throw new RuntimeException('La table des utilisateurs est introuvable.');
+        }
+
+        $selectParts = [
+            'u.id',
+            columnExists($pdo, 'users', 'username') ? 'u.username' : 'NULL AS username',
+            columnExists($pdo, 'users', 'password') ? 'u.password' : 'NULL AS password_hash',
+            columnExists($pdo, 'users', 'is_active') ? 'u.is_active' : '1 AS is_active',
+            'r.id AS role_id',
+            columnExists($pdo, 'roles', 'label') ? 'r.label AS role_name' : (
+                columnExists($pdo, 'roles', 'name') ? 'r.name AS role_name' : 'NULL AS role_name'
+            ),
+            columnExists($pdo, 'roles', 'code') ? 'r.code AS role_code' : 'NULL AS role_code',
+        ];
+
+        $sql = "
+            SELECT " . implode(",\n", $selectParts) . "
+            FROM users u
+            LEFT JOIN roles r ON r.id = u.role_id
+            WHERE u.username = ?
+            LIMIT 1
+        ";
+
+        $stmt = $pdo->prepare($sql);
         $stmt->execute([$username]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if ($user && password_verify($password, (string)$user['password'])) {
-            session_regenerate_id(true);
-
-            $_SESSION['user_id'] = (int)$user['id'];
-            $_SESSION['username'] = (string)$user['username'];
-            $_SESSION['role'] = $user['role'] ?? 'user';
-            $_SESSION['role_id'] = isset($user['role_id']) ? (int)$user['role_id'] : null;
-            $_SESSION['last_activity'] = time();
-
-            if (array_key_exists('last_login_at', $user)) {
-                $stmtUpdateLogin = $pdo->prepare("UPDATE users SET last_login_at = NOW() WHERE id = ?");
-                $stmtUpdateLogin->execute([(int)$user['id']]);
-            }
-
-            header('Location: ' . APP_URL . 'modules/dashboard/dashboard.php');
-            exit;
+        if (!$user) {
+            throw new RuntimeException('Identifiants invalides.');
         }
 
-        $error = 'Identifiants incorrects.';
+        if ((int)($user['is_active'] ?? 1) !== 1) {
+            throw new RuntimeException('Votre compte est désactivé.');
+        }
+
+        $storedHash = (string)($user['password_hash'] ?? $user['password'] ?? '');
+        $isPasswordValid = false;
+
+        if ($storedHash !== '') {
+            if (password_verify($password, $storedHash)) {
+                $isPasswordValid = true;
+            } elseif ($password === $storedHash) {
+                // Compatibilité temporaire si certains comptes sont encore en mot de passe non hashé
+                $isPasswordValid = true;
+            }
+        }
+
+        if (!$isPasswordValid) {
+            throw new RuntimeException('Identifiants invalides.');
+        }
+
+        session_regenerate_id(true);
+
+        $_SESSION['user_id'] = (int)$user['id'];
+        $_SESSION['username'] = (string)($user['username'] ?? '');
+        $_SESSION['role_id'] = isset($user['role_id']) ? (int)$user['role_id'] : null;
+        $_SESSION['role_name'] = (string)($user['role_name'] ?? '');
+        $_SESSION['role'] = (string)($user['role_code'] ?? $user['role_name'] ?? '');
+
+        if (function_exists('logUserAction')) {
+            logUserAction(
+                $pdo,
+                (int)$user['id'],
+                'login',
+                'auth',
+                'user',
+                (int)$user['id'],
+                'Connexion utilisateur'
+            );
+        }
+
+        $target = consumeIntendedUrl(APP_URL . 'modules/dashboard/dashboard.php');
+        header('Location: ' . $target);
+        exit;
     } catch (Throwable $e) {
-        $error = APP_DEBUG ? ('Erreur de connexion : ' . $e->getMessage()) : 'Une erreur est survenue.';
+        $errorMessage = $e->getMessage();
     }
 }
 ?>
@@ -54,122 +119,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Connexion - <?= e(APP_NAME) ?></title>
-    <link rel="stylesheet" href="<?= e(app_asset('assets/css/style.css')) ?>">
-
-    <style>
-        .login-page{
-            min-height:100vh;
-            margin:0;
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            padding:24px;
-            background:
-                radial-gradient(circle at top left, rgba(93, 135, 255, 0.18), transparent 32%),
-                radial-gradient(circle at bottom right, rgba(29, 37, 73, 0.20), transparent 28%),
-                linear-gradient(135deg, #f6f8ff 0%, #eef3ff 100%);
-        }
-
-        .login-box{
-            width:100%;
-            max-width:430px;
-            background:#ffffff;
-            border-radius:28px;
-            padding:34px 30px;
-            box-shadow:0 22px 55px rgba(19,31,72,0.16);
-            border:1px solid rgba(29,37,73,0.08);
-        }
-
-        .login-logo{
-            display:block;
-            max-width:190px;
-            width:100%;
-            height:auto;
-            margin:0 auto 18px auto;
-        }
-
-        .login-box h2{
-            margin:0 0 22px 0;
-            text-align:center;
-            color:#1d2549;
-            font-size:30px;
-        }
-
-        .login-box form{
-            display:flex;
-            flex-direction:column;
-            gap:14px;
-        }
-
-        .login-box input[type="text"],
-        .login-box input[type="password"]{
-            width:100%;
-            box-sizing:border-box;
-            border:1px solid #d6def5;
-            border-radius:16px;
-            padding:14px 16px;
-            font-size:15px;
-            outline:none;
-            background:#fbfcff;
-            transition:border-color .2s ease, box-shadow .2s ease, transform .2s ease;
-        }
-
-        .login-box input[type="text"]:focus,
-        .login-box input[type="password"]:focus{
-            border-color:#5b7cff;
-            box-shadow:0 0 0 4px rgba(91,124,255,0.12);
-            background:#fff;
-        }
-
-        .login-box button[type="submit"]{
-            margin-top:8px;
-            border:none;
-            border-radius:18px;
-            padding:15px 18px;
-            font-size:15px;
-            font-weight:700;
-            color:#fff;
-            cursor:pointer;
-            background:linear-gradient(135deg,#1d2549 0%,#2f4db8 100%);
-            box-shadow:0 14px 26px rgba(47,77,184,0.28);
-            transition:transform .18s ease, box-shadow .18s ease, opacity .18s ease;
-        }
-
-        .login-box button[type="submit"]:hover{
-            transform:translateY(-1px);
-            box-shadow:0 16px 30px rgba(47,77,184,0.34);
-        }
-
-        .login-box button[type="submit"]:active{
-            transform:translateY(0);
-            opacity:.96;
-        }
-
-        .error{
-            margin-bottom:16px;
-            border-radius:14px;
-            padding:12px 14px;
-            background:#fff1f2;
-            border:1px solid #fecdd3;
-            color:#b42318;
-            font-size:14px;
-        }
-    </style>
+    <title><?= e(APP_NAME) ?> - Connexion</title>
+    <link rel="stylesheet" href="<?= e(APP_URL) ?>assets/css/style.css">
+    <link rel="stylesheet" href="<?= e(APP_URL) ?>assets/css/dashboard.css">
 </head>
 <body class="login-page">
     <div class="login-box">
-        <img src="<?= e(app_asset('assets/img/logo.png')) ?>" alt="StudelyLedger" class="login-logo">
+        <img src="<?= e(APP_URL) ?>assets/img/logo.png" alt="Studely Ledger" class="login-logo">
+
         <h2>Connexion</h2>
 
-        <?php if ($error !== ''): ?>
-            <div class="error"><?= e($error) ?></div>
+        <?php if ($errorMessage !== ''): ?>
+            <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
 
-        <form method="POST" action="<?= e(APP_URL) ?>login.php" novalidate>
-            <input type="text" name="username" placeholder="Utilisateur" required autofocus>
-            <input type="password" name="password" placeholder="Mot de passe" required>
-            <button type="submit">Connexion</button>
+        <form method="POST" action="">
+            <?= csrf_input() ?>
+
+            <div>
+                <label for="username">Identifiant</label>
+                <input
+                    type="text"
+                    id="username"
+                    name="username"
+                    value="<?= e($_POST['username'] ?? '') ?>"
+                    autocomplete="username"
+                    required
+                >
+            </div>
+
+            <div>
+                <label for="password">Mot de passe</label>
+                <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    autocomplete="current-password"
+                    required
+                >
+            </div>
+
+            <button type="submit">Se connecter</button>
         </form>
     </div>
 </body>
