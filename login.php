@@ -12,7 +12,7 @@ require_once __DIR__ . '/includes/admin_functions.php';
 
 /*
 |--------------------------------------------------------------------------
-| Si déjà connecté, on ne laisse pas revenir sur la page login
+| Redirection si déjà connecté
 |--------------------------------------------------------------------------
 */
 redirectIfAuthenticated();
@@ -31,11 +31,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $password = (string)($_POST['password'] ?? '');
 
         if ($username === '' || $password === '') {
-            throw new RuntimeException('Merci de renseigner votre identifiant et votre mot de passe.');
+            throw new RuntimeException('Veuillez renseigner tous les champs.');
         }
 
         if (!tableExists($pdo, 'users')) {
-            throw new RuntimeException('La table des utilisateurs est introuvable.');
+            throw new RuntimeException('La table users est introuvable.');
         }
 
         $selectParts = [
@@ -44,11 +44,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             columnExists($pdo, 'users', 'password') ? 'u.password' : 'NULL AS password_hash',
             columnExists($pdo, 'users', 'is_active') ? 'u.is_active' : '1 AS is_active',
             'r.id AS role_id',
-            columnExists($pdo, 'roles', 'label') ? 'r.label AS role_name' : (
-                columnExists($pdo, 'roles', 'name') ? 'r.name AS role_name' : 'NULL AS role_name'
-            ),
-            columnExists($pdo, 'roles', 'code') ? 'r.code AS role_code' : 'NULL AS role_code',
         ];
+
+        if (tableExists($pdo, 'roles')) {
+            if (columnExists($pdo, 'roles', 'label')) {
+                $selectParts[] = 'r.label AS role_name';
+            } elseif (columnExists($pdo, 'roles', 'name')) {
+                $selectParts[] = 'r.name AS role_name';
+            } elseif (columnExists($pdo, 'roles', 'code')) {
+                $selectParts[] = 'r.code AS role_name';
+            } else {
+                $selectParts[] = 'NULL AS role_name';
+            }
+
+            if (columnExists($pdo, 'roles', 'code')) {
+                $selectParts[] = 'r.code AS role_code';
+            } else {
+                $selectParts[] = 'NULL AS role_code';
+            }
+        } else {
+            $selectParts[] = 'NULL AS role_name';
+            $selectParts[] = 'NULL AS role_code';
+        }
 
         $sql = "
             SELECT " . implode(",\n", $selectParts) . "
@@ -67,22 +84,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ((int)($user['is_active'] ?? 1) !== 1) {
-            throw new RuntimeException('Votre compte est désactivé.');
+            throw new RuntimeException('Compte désactivé.');
         }
 
         $storedHash = (string)($user['password_hash'] ?? $user['password'] ?? '');
-        $isPasswordValid = false;
+        $valid = false;
 
         if ($storedHash !== '') {
             if (password_verify($password, $storedHash)) {
-                $isPasswordValid = true;
+                $valid = true;
             } elseif ($password === $storedHash) {
-                // Compatibilité temporaire si certains comptes sont encore en mot de passe non hashé
-                $isPasswordValid = true;
+                // Compatibilité temporaire si certains mots de passe sont encore stockés en clair
+                $valid = true;
             }
         }
 
-        if (!$isPasswordValid) {
+        if (!$valid) {
             throw new RuntimeException('Identifiants invalides.');
         }
 
@@ -109,6 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $target = consumeIntendedUrl(APP_URL . 'modules/dashboard/dashboard.php');
         header('Location: ' . $target);
         exit;
+
     } catch (Throwable $e) {
         $errorMessage = $e->getMessage();
     }
@@ -120,44 +138,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?= e(APP_NAME) ?> - Connexion</title>
+
     <link rel="stylesheet" href="<?= e(APP_URL) ?>assets/css/style.css">
     <link rel="stylesheet" href="<?= e(APP_URL) ?>assets/css/dashboard.css">
 </head>
+
 <body class="login-page">
     <div class="login-box">
-        <img src="<?= e(APP_URL) ?>assets/img/logo.png" alt="Studely Ledger" class="login-logo">
+        <img src="<?= e(APP_URL) ?>assets/img/logo.png" class="login-logo" alt="Logo">
 
         <h2>Connexion</h2>
+
+        <?php if (isset($_GET['logout'])): ?>
+            <div class="success">Vous êtes déconnecté avec succès.</div>
+        <?php endif; ?>
 
         <?php if ($errorMessage !== ''): ?>
             <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
 
-        <form method="POST" action="">
+        <form method="POST">
             <?= csrf_input() ?>
 
-            <div>
-                <label for="username">Identifiant</label>
-                <input
-                    type="text"
-                    id="username"
-                    name="username"
-                    value="<?= e($_POST['username'] ?? '') ?>"
-                    autocomplete="username"
-                    required
-                >
-            </div>
+            <label for="username">Identifiant</label>
+            <input type="text" id="username" name="username" value="<?= e($_POST['username'] ?? '') ?>" required>
 
-            <div>
-                <label for="password">Mot de passe</label>
-                <input
-                    type="password"
-                    id="password"
-                    name="password"
-                    autocomplete="current-password"
-                    required
-                >
-            </div>
+            <label for="password">Mot de passe</label>
+            <input type="password" id="password" name="password" required>
 
             <button type="submit">Se connecter</button>
         </form>

@@ -1,331 +1,303 @@
 <?php
-if (!defined('APP_URL')) {
-    require_once __DIR__ . '/../config/app.php';
-}
+require_once __DIR__ . '/../config/app.php';
 
-require_once __DIR__ . '/admin_functions.php';
+$currentUri = $_SERVER['REQUEST_URI'] ?? '';
 
-$currentPath = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '';
-$currentPath = str_replace('\\', '/', $currentPath);
-
-function sidebar_is_active(array $paths, string $currentPath): bool
-{
-    foreach ($paths as $path) {
-        if ($path !== '' && str_contains($currentPath, $path)) {
-            return true;
-        }
+if (!function_exists('e')) {
+    function e(?string $value): string
+    {
+        return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8');
     }
-    return false;
 }
 
-function sidebar_group_open(array $items, string $currentPath): bool
-{
-    foreach ($items as $item) {
-        if (!empty($item['children'])) {
-            if (sidebar_group_open($item['children'], $currentPath)) {
+if (!function_exists('sidebarActive')) {
+    function sidebarActive(string $needle, string $currentUri): string
+    {
+        return str_contains($currentUri, $needle) ? 'active' : '';
+    }
+}
+
+if (!function_exists('sidebarGroupOpen')) {
+    function sidebarGroupOpen(array $needles, string $currentUri): bool
+    {
+        foreach ($needles as $needle) {
+            if (str_contains($currentUri, $needle)) {
                 return true;
             }
         }
-
-        if (!empty($item['match']) && sidebar_is_active((array)$item['match'], $currentPath)) {
-            return true;
-        }
+        return false;
     }
-    return false;
 }
 
-function sidebar_render_link(array $item, string $currentPath): void
-{
-    $isActive = !empty($item['match']) && sidebar_is_active((array)$item['match'], $currentPath);
-    $label = $item['label'] ?? 'Lien';
-    $href = $item['href'] ?? '#';
-    $icon = $item['icon'] ?? '•';
+/*
+|--------------------------------------------------------------------------
+| Permissions (robuste mais souple)
+|--------------------------------------------------------------------------
+*/
+$canAdminFunctional = true;
+$canAdminTechnical = true;
+$canAnalytics = true;
+$canSupport = true;
 
-    echo '<a href="' . e($href) . '" class="sidebar-link' . ($isActive ? ' active' : '') . '">';
-    echo '<span>' . e($icon) . '</span>';
-    echo '<span>' . e($label) . '</span>';
-    echo '</a>';
-}
+if (isset($pdo) && $pdo instanceof PDO && function_exists('currentUserCan')) {
 
-$nav = [];
+    $canAdminFunctional =
+        currentUserCan($pdo, 'operations_create') ||
+        currentUserCan($pdo, 'treasury_view') ||
+        currentUserCan($pdo, 'admin_functional_view');
 
-/* Dashboard */
-if (currentUserCan($pdo, 'dashboard_view')) {
-    $nav[] = [
-        'type' => 'link',
-        'label' => 'Dashboard',
-        'icon' => '⌂',
-        'href' => APP_URL . 'modules/dashboard/dashboard.php',
-        'match' => [
-            '/modules/dashboard/dashboard.php',
-            '/modules/dashboard/accounting_control_dashboard.php'
-        ],
-    ];
-}
+    $canAdminTechnical =
+        currentUserCan($pdo, 'admin_dashboard_view') ||
+        currentUserCan($pdo, 'admin_users_manage') ||
+        currentUserCan($pdo, 'support_admin_manage') ||
+        currentUserCan($pdo, 'admin_manage') ||
+        currentUserCan($pdo, 'settings_manage');
 
-/* Clients */
-$clientsChildren = [];
-if (currentUserCan($pdo, 'clients_view')) {
-    $clientsChildren[] = [
-        'label' => 'Liste des clients',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/clients/clients_list.php',
-        'match' => [
-            '/modules/clients/clients_list.php',
-            '/modules/clients/client_view.php'
-        ],
-    ];
-}
-if (currentUserCan($pdo, 'clients_create')) {
-    $clientsChildren[] = [
-        'label' => 'Créer un client',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/clients/client_create.php',
-        'match' => ['/modules/clients/client_create.php'],
-    ];
-    $clientsChildren[] = [
-        'label' => 'Import clients CSV',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/clients/import_clients_csv.php',
-        'match' => ['/modules/clients/import_clients_csv.php'],
-    ];
-}
-if (!empty($clientsChildren)) {
-    $nav[] = [
-        'type' => 'group',
-        'label' => 'Clients',
-        'children' => $clientsChildren,
-    ];
+    $canAnalytics = currentUserCan($pdo, 'analytics_view');
+
+    $canSupport =
+        currentUserCan($pdo, 'support_requests_view') ||
+        currentUserCan($pdo, 'support_view') ||
+        currentUserCan($pdo, 'support_create') ||
+        currentUserCan($pdo, 'dashboard_view');
 }
 
-/* Opérations */
-$operationsChildren = [];
-if (currentUserCan($pdo, 'operations_view') || currentUserCan($pdo, 'operations_create')) {
-    $operationsChildren[] = [
-        'label' => 'Créer une opération',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/operations/operation_create.php',
-        'match' => ['/modules/operations/operation_create.php'],
-    ];
-}
-if (currentUserCan($pdo, 'operations_view')) {
-    $operationsChildren[] = [
-        'label' => 'Liste des opérations',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/operations/operations_list.php',
-        'match' => ['/modules/operations/operations_list.php'],
-    ];
-}
-if (!empty($operationsChildren)) {
-    $nav[] = [
-        'type' => 'group',
-        'label' => 'Opérations',
-        'children' => $operationsChildren,
-    ];
-}
+/*
+|--------------------------------------------------------------------------
+| Group open state
+|--------------------------------------------------------------------------
+*/
+$groupMainOpen = sidebarGroupOpen([
+    '/modules/dashboard/',
+    '/modules/clients/',
+    '/modules/operations/',
+    '/modules/treasury/',
+    '/modules/analytics/'
+], $currentUri);
 
-/* Imports */
-$importsChildren = [];
-if (currentUserCan($pdo, 'imports_upload') || currentUserCan($pdo, 'imports_create')) {
-    $importsChildren[] = [
-        'label' => 'Uploader un import',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/imports/import_upload.php',
-        'match' => ['/modules/imports/import_upload.php'],
-    ];
-}
-if (currentUserCan($pdo, 'imports_journal')) {
-    $importsChildren[] = [
-        'label' => 'Journal des imports',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/imports/import_journal.php',
-        'match' => [
-            '/modules/imports/import_journal.php',
-            '/modules/imports/import_preview.php',
-            '/modules/imports/rejected_rows.php',
-            '/modules/imports/correct_rejected_row.php'
-        ],
-    ];
-}
-if (!empty($importsChildren)) {
-    $nav[] = [
-        'type' => 'group',
-        'label' => 'Imports',
-        'children' => $importsChildren,
-    ];
-}
+$groupImportsOpen = sidebarGroupOpen([
+    '/modules/imports/',
+    '/modules/clients/import_clients_csv.php',
+    '/modules/treasury/import_treasury_csv.php'
+], $currentUri);
 
-/* Trésorerie */
-$treasuryChildren = [];
-if (currentUserCan($pdo, 'treasury_view')) {
-    $treasuryChildren[] = [
-        'label' => 'Comptes internes',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/treasury/treasury_accounts.php',
-        'match' => ['/modules/treasury/treasury_accounts.php'],
-    ];
-}
-if (currentUserCan($pdo, 'treasury_import')) {
-    $treasuryChildren[] = [
-        'label' => 'Import trésorerie',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/treasury/import_treasury_csv.php',
-        'match' => ['/modules/treasury/import_treasury_csv.php'],
-    ];
-}
-if (!empty($treasuryChildren)) {
-    $nav[] = [
-        'type' => 'group',
-        'label' => 'Trésorerie',
-        'children' => $treasuryChildren,
-    ];
-}
+$groupExportsOpen = sidebarGroupOpen([
+    '/modules/statements/'
+], $currentUri);
 
-/* Admin fonctionnel */
-$adminFunctionalChildren = [];
-if (currentUserCan($pdo, 'admin_functional_view')) {
-    $adminFunctionalChildren[] = [
-        'label' => 'Types d’opérations',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/admin_functional/manage_operation_types.php',
-        'match' => [
-            '/modules/admin_functional/manage_operation_types.php',
-            '/modules/admin_functional/edit_operation_type.php'
-        ],
-    ];
-    $adminFunctionalChildren[] = [
-        'label' => 'Services',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/admin_functional/manage_services.php',
-        'match' => [
-            '/modules/admin_functional/manage_services.php',
-            '/modules/admin_functional/edit_service.php'
-        ],
-    ];
-}
-if (!empty($adminFunctionalChildren)) {
-    $nav[] = [
-        'type' => 'group',
-        'label' => 'Référentiels',
-        'children' => $adminFunctionalChildren,
-    ];
-}
+$groupSupportOpen = sidebarGroupOpen([
+    '/modules/support/'
+], $currentUri);
 
-/* Support */
-$supportChildren = [];
-if (currentUserCan($pdo, 'support_requests_view')) {
-    $supportChildren[] = [
-        'label' => 'Demandes support',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/support/support_requests.php',
-        'match' => [
-            '/modules/support/support_requests.php',
-            '/modules/support/ask_question.php',
-            '/modules/support/report_bug.php',
-            '/modules/support/request_access.php'
-        ],
-    ];
-}
-if (!empty($supportChildren)) {
-    $nav[] = [
-        'type' => 'group',
-        'label' => 'Support',
-        'children' => $supportChildren,
-    ];
-}
+$groupAdminFunctionalOpen = sidebarGroupOpen([
+    '/modules/admin_functional/'
+], $currentUri);
 
-/* Administration */
-$adminChildren = [];
-if (currentUserCan($pdo, 'users_manage')) {
-    $adminChildren[] = [
-        'label' => 'Utilisateurs',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/admin/manage_users.php',
-        'match' => [
-            '/modules/admin/manage_users.php',
-            '/modules/admin/user_create.php',
-            '/modules/admin/user_edit.php',
-            '/modules/admin/user_delete.php',
-            '/modules/admin/user_logs.php'
-        ],
-    ];
-}
-if (currentUserCan($pdo, 'settings_manage')) {
-    $adminChildren[] = [
-        'label' => 'Paramètres',
-        'icon' => '◦',
-        'href' => APP_URL . 'modules/admin/settings.php',
-        'match' => ['/modules/admin/settings.php'],
-    ];
-}
-if (!empty($adminChildren)) {
-    $nav[] = [
-        'type' => 'group',
-        'label' => 'Administration',
-        'children' => $adminChildren,
-    ];
-}
+$groupAdminTechnicalOpen = sidebarGroupOpen([
+    '/modules/admin/'
+], $currentUri);
 ?>
 
-<aside class="studely-sidebar" id="studelySidebar">
-    <div class="studely-sidebar-inner">
+<aside class="sidebar studely-sidebar">
+    <div class="sidebar-inner studely-sidebar-inner">
+
         <div class="sidebar-top">
             <div class="sidebar-brand-card">
-                <button type="button" class="sidebar-collapse-btn" id="sidebarCollapseBtn" aria-label="Réduire le menu">
+
+                <button type="button" class="sidebar-collapse-btn" id="sidebarCollapseBtn">
                     ☰
                 </button>
 
                 <div class="sidebar-brand-visual">
-                    <img src="<?= e(APP_URL) ?>assets/img/logo.png" alt="Studely Ledger" class="sidebar-logo">
+                    <img src="<?= e(app_asset('assets/img/logo-sidebar.png')) ?>" class="sidebar-logo" alt="Studely Ledger">
                 </div>
 
                 <div class="sidebar-brand-text">
                     <strong>Studely Ledger</strong>
-                    <span>Pilotage & contrôle</span>
+                    <span>Console financière</span>
                 </div>
             </div>
         </div>
 
         <nav class="sidebar-nav">
-            <?php foreach ($nav as $item): ?>
-                <?php if (($item['type'] ?? '') === 'link'): ?>
-                    <?php sidebar_render_link($item, $currentPath); ?>
-                <?php elseif (($item['type'] ?? '') === 'group'): ?>
-                    <?php $isOpen = sidebar_group_open($item['children'] ?? [], $currentPath); ?>
-                    <details class="sidebar-group" <?= $isOpen ? 'open' : '' ?>>
-                        <summary><?= e($item['label'] ?? 'Groupe') ?></summary>
-                        <div class="sidebar-group-links">
-                            <?php foreach (($item['children'] ?? []) as $child): ?>
-                                <?php sidebar_render_link($child, $currentPath); ?>
-                            <?php endforeach; ?>
-                        </div>
-                    </details>
-                <?php endif; ?>
-            <?php endforeach; ?>
+
+            <details class="sidebar-group" <?= $groupMainOpen ? 'open' : '' ?>>
+                <summary>Navigation principale</summary>
+
+                <div class="sidebar-group-links">
+
+                    <a class="sidebar-link <?= sidebarActive('/modules/dashboard/dashboard.php', $currentUri) ?>"
+                       href="<?= e(APP_URL) ?>modules/dashboard/dashboard.php">
+                        📊 <span>Dashboard</span>
+                    </a>
+
+                    <a class="sidebar-link <?= sidebarActive('/modules/clients/', $currentUri) ?>"
+                       href="<?= e(APP_URL) ?>modules/clients/clients_list.php">
+                        👤 <span>Clients</span>
+                    </a>
+
+                    <a class="sidebar-link <?= sidebarActive('/modules/operations/', $currentUri) ?>"
+                       href="<?= e(APP_URL) ?>modules/operations/operations_list.php">
+                        💰 <span>Opérations</span>
+                    </a>
+
+                    <a class="sidebar-link <?= sidebarActive('/modules/treasury/', $currentUri) ?>"
+                       href="<?= e(APP_URL) ?>modules/treasury/index.php">
+                        🏦 <span>Comptes internes</span>
+                    </a>
+
+                    <?php if ($canAnalytics): ?>
+                        <a class="sidebar-link <?= sidebarActive('/modules/analytics/', $currentUri) ?>"
+                           href="<?= e(APP_URL) ?>modules/analytics/revenue_analysis.php">
+                            📈 <span>Analytics</span>
+                        </a>
+                    <?php endif; ?>
+
+                </div>
+            </details>
+
+            <details class="sidebar-group" <?= $groupImportsOpen ? 'open' : '' ?>>
+                <summary>Imports</summary>
+
+                <div class="sidebar-group-links">
+
+                    <a class="sidebar-link <?= sidebarActive('/modules/imports/import_preview.php', $currentUri) ?>"
+                       href="<?= e(APP_URL) ?>modules/imports/import_preview.php">
+                        📥 <span>Import relevés</span>
+                    </a>
+
+                    <a class="sidebar-link <?= sidebarActive('/modules/imports/import_journal.php', $currentUri) ?>"
+                       href="<?= e(APP_URL) ?>modules/imports/import_journal.php">
+                        🧾 <span>Journal imports</span>
+                    </a>
+
+                    <a class="sidebar-link <?= sidebarActive('/modules/clients/import_clients_csv.php', $currentUri) ?>"
+                       href="<?= e(APP_URL) ?>modules/clients/import_clients_csv.php">
+                        🧍 <span>Import clients CSV</span>
+                    </a>
+
+                    <a class="sidebar-link <?= sidebarActive('/modules/treasury/import_treasury_csv.php', $currentUri) ?>"
+                       href="<?= e(APP_URL) ?>modules/treasury/import_treasury_csv.php">
+                        🏛️ <span>Import comptes internes</span>
+                    </a>
+
+                </div>
+            </details>
+
+            <details class="sidebar-group" <?= $groupExportsOpen ? 'open' : '' ?>>
+                <summary>Exports</summary>
+
+                <div class="sidebar-group-links">
+                    <a class="sidebar-link <?= sidebarActive('/modules/statements/', $currentUri) ?>"
+                       href="<?= e(APP_URL) ?>modules/statements/index.php">
+                        📤 <span>Hub exports</span>
+                    </a>
+                </div>
+            </details>
+
+            <?php if ($canSupport): ?>
+                <details class="sidebar-group" <?= $groupSupportOpen ? 'open' : '' ?>>
+                    <summary>Support</summary>
+
+                    <div class="sidebar-group-links">
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/support/support_requests.php', $currentUri) ?>"
+                           href="<?= e(APP_URL) ?>modules/support/support_requests.php">
+                            🆘 <span>Demandes support</span>
+                        </a>
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/support/ask_question.php', $currentUri) ?>"
+                           href="<?= e(APP_URL) ?>modules/support/ask_question.php">
+                            ❓ <span>Poser une question</span>
+                        </a>
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/support/report_bug.php', $currentUri) ?>"
+                           href="<?= e(APP_URL) ?>modules/support/report_bug.php">
+                            🐞 <span>Signaler un bug</span>
+                        </a>
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/support/request_access.php', $currentUri) ?>"
+                           href="<?= e(APP_URL) ?>modules/support/request_access.php">
+                            🔐 <span>Demander un accès</span>
+                        </a>
+
+                    </div>
+                </details>
+            <?php endif; ?>
+
+            <?php if ($canAdminFunctional): ?>
+                <details class="sidebar-group" <?= $groupAdminFunctionalOpen ? 'open' : '' ?>>
+                    <summary>Administration fonctionnelle</summary>
+
+                    <div class="sidebar-group-links">
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/admin_functional/manage_services.php', $currentUri) ?>"
+                           href="<?= e(APP_URL) ?>modules/admin_functional/manage_services.php">
+                            🧩 <span>Services</span>
+                        </a>
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/admin_functional/manage_operation_types.php', $currentUri) ?>"
+                           href="<?= e(APP_URL) ?>modules/admin_functional/manage_operation_types.php">
+                            🧠 <span>Types d’opérations</span>
+                        </a>
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/admin_functional/manage_accounts.php', $currentUri) ?>"
+                           href="<?= e(APP_URL) ?>modules/admin_functional/manage_accounts.php">
+                            📚 <span>Comptes</span>
+                        </a>
+
+                    </div>
+                </details>
+            <?php endif; ?>
+
+            <?php if ($canAdminTechnical): ?>
+                <details class="sidebar-group" <?= $groupAdminTechnicalOpen ? 'open' : '' ?>>
+                    <summary>Administration technique</summary>
+
+                    <div class="sidebar-group-links">
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/admin/user_logs.php', $currentUri) ?>"
+                           href="<?= e(APP_URL) ?>modules/admin/user_logs.php">
+                            📜 <span>Logs</span>
+                        </a>
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/admin/users.php', $currentUri) ?>"
+                           href="<?= e(APP_URL) ?>modules/admin/users.php">
+                            👥 <span>Utilisateurs</span>
+                        </a>
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/admin/settings.php', $currentUri) ?>"
+                           href="<?= e(APP_URL) ?>modules/admin/settings.php">
+                            ⚙️ <span>Paramètres</span>
+                        </a>
+
+                    </div>
+                </details>
+            <?php endif; ?>
+
         </nav>
 
         <div class="sidebar-bottom">
             <a href="<?= e(APP_URL) ?>logout.php" class="btn btn-danger sidebar-logout-btn">Déconnexion</a>
         </div>
+
     </div>
 </aside>
 
 <script>
-(function () {
-    const body = document.body;
+document.addEventListener('DOMContentLoaded', function () {
     const btn = document.getElementById('sidebarCollapseBtn');
-    const storageKey = 'studely_sidebar_collapsed';
+    const key = 'studely_sidebar';
 
-    if (!btn) return;
-
-    const saved = localStorage.getItem(storageKey);
-    if (saved === '1') {
-        body.classList.add('sidebar-collapsed');
+    if (localStorage.getItem(key) === '1') {
+        document.body.classList.add('sidebar-collapsed');
     }
 
-    btn.addEventListener('click', function () {
-        body.classList.toggle('sidebar-collapsed');
-        localStorage.setItem(storageKey, body.classList.contains('sidebar-collapsed') ? '1' : '0');
-    });
-})();
+    if (btn) {
+        btn.addEventListener('click', function () {
+            document.body.classList.toggle('sidebar-collapsed');
+            localStorage.setItem(key, document.body.classList.contains('sidebar-collapsed') ? '1' : '0');
+        });
+    }
+});
 </script>

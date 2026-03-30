@@ -91,13 +91,3 @@ if (!function_exists('requireLogin')) {
         redirectToLogin();
     }
 }
-
-/*
-|--------------------------------------------------------------------------
-| Comportement par défaut du fichier
-|--------------------------------------------------------------------------
-| Ce fichier peut être inclus directement dans les pages protégées.
-| Dans ce cas, on impose simplement qu’un utilisateur soit connecté.
-| Les permissions fines sont ensuite gérées par permission_middleware.php.
-*/
-requireLogin();
