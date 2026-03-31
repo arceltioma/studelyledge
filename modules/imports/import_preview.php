@@ -5,238 +5,206 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
-require_once __DIR__ . '/../../config/security.php';
 
-enforcePagePermission($pdo, 'imports_create');
+studelyEnforceAccess($pdo, 'imports_preview_page');
 
-$batchId = (int)($_GET['batch_id'] ?? 0);
-if ($batchId <= 0) {
-    exit('Batch import invalide.');
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
 }
 
-$batch = null;
-if (tableExists($pdo, 'import_batches')) {
-    $stmtBatch = $pdo->prepare("
-        SELECT *
-        FROM import_batches
-        WHERE id = ?
-        LIMIT 1
-    ");
-    $stmtBatch->execute([$batchId]);
-    $batch = $stmtBatch->fetch(PDO::FETCH_ASSOC) ?: null;
-}
-if (!$batch) {
-    exit('Batch introuvable.');
-}
+$successMessage = '';
+$errorMessage = '';
+$previewRows = [];
 
-$rows = [];
-$stmtRows = $pdo->prepare("
-    SELECT *
-    FROM import_rows
-    WHERE batch_id = ?
-    ORDER BY row_number ASC
-");
-$stmtRows->execute([$batchId]);
-$rows = $stmtRows->fetchAll(PDO::FETCH_ASSOC);
+$treasuryAccounts = tableExists($pdo, 'treasury_accounts')
+    ? $pdo->query("
+        SELECT id, account_code, account_label
+        FROM treasury_accounts
+        ORDER BY account_code ASC
+    ")->fetchAll(PDO::FETCH_ASSOC)
+    : [];
 
-$previewResults = [];
-$readyCount = 0;
-$rejectedCount = 0;
+$clients = tableExists($pdo, 'clients')
+    ? $pdo->query("
+        SELECT id, client_code, full_name
+        FROM clients
+        ORDER BY client_code ASC
+    ")->fetchAll(PDO::FETCH_ASSOC)
+    : [];
 
-foreach ($rows as $row) {
-    $raw = json_decode((string)($row['raw_data'] ?? ''), true);
-    $rawRow = $raw['row'] ?? [];
+$operationTypes = tableExists($pdo, 'ref_operation_types')
+    ? $pdo->query("
+        SELECT id, code, label
+        FROM ref_operation_types
+        ORDER BY label ASC
+    ")->fetchAll(PDO::FETCH_ASSOC)
+    : [];
 
-    $clientCode = trim((string)($row['client_code'] ?? ''));
-    $operationDate = trim((string)($row['operation_date'] ?? ''));
-    $operationType = strtoupper(trim((string)($row['operation_type'] ?? '')));
-    $label = trim((string)($row['label'] ?? ''));
-    $amount = (float)($row['amount'] ?? 0);
-    $reference = trim((string)($row['reference'] ?? ''));
-    $sourceType = trim((string)($row['source_type'] ?? 'import'));
+$services = tableExists($pdo, 'ref_services')
+    ? $pdo->query("
+        SELECT id, code, label
+        FROM ref_services
+        ORDER BY label ASC
+    ")->fetchAll(PDO::FETCH_ASSOC)
+    : [];
 
-    $serviceCode = trim((string)($rawRow['service_code'] ?? $rawRow['code_service'] ?? ''));
-    $sourceTreasuryCode = trim((string)($rawRow['treasury_account_code'] ?? $rawRow['compte_512'] ?? ''));
-    $targetTreasuryCode = trim((string)($rawRow['target_treasury_account_code'] ?? $rawRow['compte_512_cible'] ?? ''));
-
-    $client = null;
-    $service = null;
-    $error = null;
-    $resolved = null;
-
-    try {
-        if ($clientCode !== '') {
-            $stmtClient = $pdo->prepare("
-                SELECT *
-                FROM clients
-                WHERE client_code = ?
-                LIMIT 1
-            ");
-            $stmtClient->execute([$clientCode]);
-            $client = $stmtClient->fetch(PDO::FETCH_ASSOC) ?: null;
-        }
-
-        if ($operationType !== 'VIREMENT_INTERNE' && !$client) {
-            throw new RuntimeException('Client introuvable.');
-        }
-
-        if ($serviceCode !== '') {
-            $stmtService = $pdo->prepare("
-                SELECT *
-                FROM ref_services
-                WHERE code = ?
-                LIMIT 1
-            ");
-            $stmtService->execute([$serviceCode]);
-            $service = $stmtService->fetch(PDO::FETCH_ASSOC) ?: null;
-
-            if (!$service) {
-                throw new RuntimeException('Service introuvable.');
-            }
-        }
-
-        $payload = [
-            'operation_type_code' => $operationType,
-            'client_id' => $client['id'] ?? null,
-            'service_id' => $service['id'] ?? null,
-            'amount' => $amount,
-            'operation_date' => $operationDate !== '' ? $operationDate : date('Y-m-d'),
-            'reference' => $reference !== '' ? $reference : null,
-            'label' => $label !== '' ? $label : null,
-            'source_type' => $sourceType !== '' ? $sourceType : 'import',
-            'operation_kind' => 'import',
-            'source_treasury_code' => $sourceTreasuryCode !== '' ? $sourceTreasuryCode : null,
-            'target_treasury_code' => $targetTreasuryCode !== '' ? $targetTreasuryCode : null,
-        ];
-
-        $resolved = resolveAccountingOperation($pdo, $payload);
-
-        $stmtUpdate = $pdo->prepare("
-            UPDATE import_rows
-            SET status = 'ready',
-                error_message = NULL
-            WHERE id = ?
-        ");
-        $stmtUpdate->execute([(int)$row['id']]);
-
-        $readyCount++;
-    } catch (Throwable $e) {
-        $error = $e->getMessage();
-
-        $stmtUpdate = $pdo->prepare("
-            UPDATE import_rows
-            SET status = 'rejected',
-                error_message = ?
-            WHERE id = ?
-        ");
-        $stmtUpdate->execute([$error, (int)$row['id']]);
-
-        $rejectedCount++;
-    }
-
-    $previewResults[] = [
-        'row' => $row,
-        'client' => $client,
-        'service' => $service,
-        'resolved' => $resolved,
-        'error' => $error,
-    ];
+if (!empty($_SESSION['statement_import_preview']['rows'])) {
+    $previewRows = $_SESSION['statement_import_preview']['rows'];
 }
 
-$stmtBatchUpdate = $pdo->prepare("
-    UPDATE import_batches
-    SET ready_rows = ?,
-        rejected_rows = ?,
-        status = ?
-    WHERE id = ?
-");
-$stmtBatchUpdate->execute([
-    $readyCount,
-    $rejectedCount,
-    $rejectedCount > 0 ? 'validated_with_rejections' : 'validated',
-    $batchId
-]);
-
-$pageTitle = 'Prévisualisation import';
-$pageSubtitle = 'La prévisualisation applique exactement le même moteur comptable que la saisie manuelle.';
+$pageTitle = 'Prévisualisation imports';
+$pageSubtitle = 'On détecte, on normalise, on rattache, puis seulement après on valide.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
+
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
-
-        <div class="card-grid">
-            <div class="card">
-                <h3>Lignes totales</h3>
-                <div class="kpi"><?= count($previewResults) ?></div>
-            </div>
-            <div class="card">
-                <h3>Prêtes</h3>
-                <div class="kpi"><?= (int)$readyCount ?></div>
-            </div>
-            <div class="card">
-                <h3>Rejetées</h3>
-                <div class="kpi"><?= (int)$rejectedCount ?></div>
-            </div>
-        </div>
-
-        <div class="btn-group" style="margin:20px 0;">
-            <a href="<?= e(APP_URL) ?>modules/imports/import_upload.php" class="btn btn-outline">Retour upload</a>
-            <a href="<?= e(APP_URL) ?>modules/imports/rejected_rows.php?batch_id=<?= (int)$batchId ?>" class="btn btn-secondary">Voir les rejets</a>
-            <?php if ($rejectedCount === 0): ?>
-                <a href="<?= e(APP_URL) ?>modules/imports/validate_import_batch.php?batch_id=<?= (int)$batchId ?>" class="btn btn-success" onclick="return confirm('Valider et insérer toutes les lignes prêtes ?');">Valider l’import</a>
-            <?php else: ?>
-                <button type="button" class="btn btn-outline" disabled>Validation verrouillée</button>
-            <?php endif; ?>
-        </div>
-
-        <?php if ($rejectedCount > 0): ?>
-            <div class="warning">
-                La validation finale est verrouillée tant qu’il reste des lignes rejetées.
-            </div>
+        <?php if (function_exists('render_app_header_bar')): ?>
+            <?php render_app_header_bar($pageTitle, $pageSubtitle); ?>
         <?php endif; ?>
 
-        <div class="table-card" style="margin-top:20px;">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Ligne</th>
-                        <th>Client</th>
-                        <th>Type</th>
-                        <th>Service</th>
-                        <th>Montant</th>
-                        <th>Débit</th>
-                        <th>Crédit</th>
-                        <th>706 résolu</th>
-                        <th>Statut</th>
-                        <th>Erreur</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($previewResults as $item): ?>
-                        <?php $row = $item['row']; ?>
-                        <tr>
-                            <td><?= (int)($row['row_number'] ?? 0) ?></td>
-                            <td><?= e(trim((string)($row['client_code'] ?? '') . ' - ' . (string)($item['client']['full_name'] ?? ''))) ?></td>
-                            <td><?= e($row['operation_type'] ?? '') ?></td>
-                            <td><?= e(trim((string)($item['service']['code'] ?? '') . ' - ' . (string)($item['service']['label'] ?? ''))) ?></td>
-                            <td><?= number_format((float)($row['amount'] ?? 0), 2, ',', ' ') ?></td>
-                            <td><?= e($item['resolved']['debit_account_code'] ?? '') ?></td>
-                            <td><?= e($item['resolved']['credit_account_code'] ?? '') ?></td>
-                            <td><?= e($item['resolved']['analytic_account']['account_code'] ?? '') ?></td>
-                            <td><?= e($item['error'] ? 'rejected' : 'ready') ?></td>
-                            <td><?= e($item['error'] ?? '') ?></td>
-                        </tr>
-                    <?php endforeach; ?>
+        <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
+        <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
 
-                    <?php if (!$previewResults): ?>
-                        <tr><td colspan="10">Aucune ligne à prévisualiser.</td></tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
+        <div class="dashboard-grid-2">
+            <div class="form-card">
+                <h3 class="section-title">Charger un relevé</h3>
+                <form method="POST" enctype="multipart/form-data">
+                    <div>
+                        <label>Fichier CSV / TXT</label>
+                        <input type="file" name="statement_file" accept=".csv,.txt" required>
+                    </div>
+
+                    <div style="margin-top:16px;">
+                        <label>Compte interne source (optionnel)</label>
+                        <select name="forced_treasury_account_id">
+                            <option value="">Détection automatique</option>
+                            <?php foreach ($treasuryAccounts as $ta): ?>
+                                <option value="<?= (int)$ta['id'] ?>">
+                                    <?= e($ta['account_code'] . ' - ' . $ta['account_label']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="btn-group" style="margin-top:20px;">
+                        <button type="submit" class="btn btn-primary">Analyser le fichier</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="dashboard-panel">
+                <h3 class="section-title">Ce que fait le parseur</h3>
+                <div class="dashboard-note">
+                    Détection souple des colonnes, gestion débit/crédit/solde, normalisation des montants, reconnaissance client et compte interne.
+                </div>
+            </div>
         </div>
+
+        <?php if ($previewRows): ?>
+            <form method="POST" action="<?= APP_URL ?>modules/imports/import_validate.php">
+                <div class="table-card" style="margin-top:20px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;">
+                        <h3 class="section-title">Prévisualisation</h3>
+                        <div class="btn-group">
+                            <button type="submit" class="btn btn-success">Valider l’import</button>
+                        </div>
+                    </div>
+
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Importer</th>
+                                <th>Ligne</th>
+                                <th>Date</th>
+                                <th>Libellé</th>
+                                <th>Débit</th>
+                                <th>Crédit</th>
+                                <th>Client</th>
+                                <th>Type</th>
+                                <th>Service</th>
+                                <th>Compte interne</th>
+                                <th>Statut</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($previewRows as $idx => $row): ?>
+                                <?php
+                                $statusClass = $row['status'] === 'ok'
+                                    ? 'status-success'
+                                    : ($row['status'] === 'ambiguous' ? 'status-warning' : 'status-danger');
+                                ?>
+                                <tr>
+                                    <td><input type="checkbox" name="selected_rows[]" value="<?= (int)$idx ?>" <?= $row['status'] === 'rejected' ? '' : 'checked' ?>></td>
+                                    <td><?= (int)$row['row_no'] ?></td>
+                                    <td><?= e($row['operation_date'] ?? '') ?></td>
+                                    <td><?= e($row['label'] ?? '') ?></td>
+                                    <td><?= isset($row['debit']) && $row['debit'] !== null ? number_format((float)$row['debit'], 2, ',', ' ') : '—' ?></td>
+                                    <td><?= isset($row['credit']) && $row['credit'] !== null ? number_format((float)$row['credit'], 2, ',', ' ') : '—' ?></td>
+
+                                    <td>
+                                        <select name="row_client_id[<?= (int)$idx ?>]">
+                                            <option value="">Aucun</option>
+                                            <?php foreach ($clients as $client): ?>
+                                                <option value="<?= (int)$client['id'] ?>" <?= (string)($row['client_id'] ?? '') === (string)$client['id'] ? 'selected' : '' ?>>
+                                                    <?= e(($client['client_code'] ?? '') . ' - ' . ($client['full_name'] ?? '')) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+
+                                    <td>
+                                        <select name="row_operation_type_code[<?= (int)$idx ?>]">
+                                            <?php foreach ($operationTypes as $type): ?>
+                                                <option value="<?= e($type['code']) ?>" <?= ($row['operation_type_code'] ?? '') === $type['code'] ? 'selected' : '' ?>>
+                                                    <?= e($type['label']) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+
+                                    <td>
+                                        <select name="row_service_code[<?= (int)$idx ?>]">
+                                            <option value="">Aucun</option>
+                                            <?php foreach ($services as $service): ?>
+                                                <option value="<?= e($service['code']) ?>" <?= ($row['service_code'] ?? '') === $service['code'] ? 'selected' : '' ?>>
+                                                    <?= e($service['label']) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+
+                                    <td>
+                                        <select name="row_treasury_account_id[<?= (int)$idx ?>]">
+                                            <option value="">Aucun</option>
+                                            <?php foreach ($treasuryAccounts as $ta): ?>
+                                                <option value="<?= (int)$ta['id'] ?>" <?= (string)($row['treasury_account_id'] ?? '') === (string)$ta['id'] ? 'selected' : '' ?>>
+                                                    <?= e($ta['account_code'] . ' - ' . $ta['account_label']) ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </td>
+
+                                    <td>
+                                        <span class="status-pill <?= $statusClass ?>"><?= e($row['status']) ?></span>
+                                        <?php if (!empty($row['status_reason'])): ?>
+                                            <div class="muted"><?= e($row['status_reason']) ?></div>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+
+                            <?php if (!$previewRows): ?>
+                                <tr><td colspan="11">Aucune ligne à afficher.</td></tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </form>
+        <?php endif; ?>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>

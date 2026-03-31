@@ -7,6 +7,13 @@ if (!function_exists('e')) {
     }
 }
 
+if (!function_exists('clean_input')) {
+    function clean_input(?string $value): string
+    {
+        return trim((string)($value ?? ''));
+    }
+}
+
 if (!function_exists('tableExists')) {
     function tableExists(PDO $pdo, string $tableName): bool
     {
@@ -42,7 +49,7 @@ if (!function_exists('render_app_header_bar')) {
     function render_app_header_bar(string $title, string $subtitle = ''): void
     {
         echo '<div class="page-hero">';
-        echo '<div class="page-hero-left">';
+        echo '<div>';
         echo '<h1>' . e($title) . '</h1>';
         if ($subtitle !== '') {
             echo '<p class="muted">' . e($subtitle) . '</p>';
@@ -52,102 +59,364 @@ if (!function_exists('render_app_header_bar')) {
     }
 }
 
-if (!function_exists('currentUserCan')) {
-    function currentUserCan(PDO $pdo, string $permissionCode): bool
+/*
+|--------------------------------------------------------------------------
+| Utilisateur courant / rôles / permissions
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('currentUserRecord')) {
+    function currentUserRecord(PDO $pdo): ?array
     {
-        if (!isset($_SESSION['user_id'])) {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+
+        $userId = (int)($_SESSION['user_id'] ?? 0);
+        if ($userId <= 0 || !tableExists($pdo, 'users')) {
+            return null;
+        }
+
+        $roleJoin = '';
+        $roleSelect = 'NULL AS role_code, NULL AS role_label, NULL AS legacy_role';
+
+        if (tableExists($pdo, 'roles') && columnExists($pdo, 'users', 'role_id')) {
+            $roleJoin = 'LEFT JOIN roles r ON r.id = u.role_id';
+            $roleSelectParts = [];
+
+            $roleSelectParts[] = columnExists($pdo, 'roles', 'code') ? 'r.code AS role_code' : 'NULL AS role_code';
+            $roleSelectParts[] = columnExists($pdo, 'roles', 'label') ? 'r.label AS role_label' : (
+                columnExists($pdo, 'roles', 'name') ? 'r.name AS role_label' : 'NULL AS role_label'
+            );
+            $roleSelectParts[] = columnExists($pdo, 'users', 'role') ? 'u.role AS legacy_role' : 'NULL AS legacy_role';
+
+            $roleSelect = implode(', ', $roleSelectParts);
+        } elseif (columnExists($pdo, 'users', 'role')) {
+            $roleSelect = 'NULL AS role_code, NULL AS role_label, u.role AS legacy_role';
+        }
+
+        $userColumns = ['u.id'];
+
+        $optionalUserColumns = [
+            'username',
+            'email',
+            'is_active',
+            'role_id',
+            'role',
+            'created_at',
+            'updated_at',
+        ];
+
+        foreach ($optionalUserColumns as $column) {
+            if (columnExists($pdo, 'users', $column)) {
+                $userColumns[] = 'u.' . $column;
+            }
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT
+                " . implode(', ', $userColumns) . ",
+                {$roleSelect}
+            FROM users u
+            {$roleJoin}
+            WHERE u.id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$userId]);
+
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $user ?: null;
+    }
+}
+
+if (!function_exists('currentUserHasRoleCode')) {
+    function currentUserHasRoleCode(PDO $pdo, array $roleCodes): bool
+    {
+        $user = currentUserRecord($pdo);
+        if (!$user) {
             return false;
         }
 
-        if (
-            !tableExists($pdo, 'users') ||
-            !tableExists($pdo, 'roles') ||
-            !tableExists($pdo, 'permissions') ||
-            !tableExists($pdo, 'role_permissions')
-        ) {
-            return true;
+        $currentValues = [
+            strtolower(trim((string)($user['role_code'] ?? ''))),
+            strtolower(trim((string)($user['legacy_role'] ?? ''))),
+            strtolower(trim((string)($user['role_label'] ?? ''))),
+            strtolower(trim((string)($_SESSION['role'] ?? ''))),
+            strtolower(trim((string)($_SESSION['role_name'] ?? ''))),
+        ];
+
+        foreach ($roleCodes as $code) {
+            $normalized = strtolower(trim((string)$code));
+            if ($normalized !== '' && in_array($normalized, $currentValues, true)) {
+                return true;
+            }
         }
 
-        $sql = "
+        return false;
+    }
+}
+
+if (!function_exists('currentUserIsAdminLike')) {
+    function currentUserIsAdminLike(PDO $pdo): bool
+    {
+        return currentUserHasRoleCode($pdo, [
+            'admin',
+            'superadmin',
+            'super_admin',
+            'admin_tech',
+            'admin-tech',
+            'admin technique',
+            'administrateur',
+            'administrateur technique',
+            'admin global',
+        ]);
+    }
+}
+
+if (!function_exists('permissionCodeExists')) {
+    function permissionCodeExists(PDO $pdo, string $code): bool
+    {
+        if (!tableExists($pdo, 'permissions') || !columnExists($pdo, 'permissions', 'code')) {
+            return false;
+        }
+
+        $stmt = $pdo->prepare("
             SELECT COUNT(*)
-            FROM users u
-            INNER JOIN roles r ON r.id = u.role_id
-            INNER JOIN role_permissions rp ON rp.role_id = r.id
-            INNER JOIN permissions p ON p.id = rp.permission_id
-            WHERE u.id = ?
-              AND p.code = ?
-        ";
-
-        if (columnExists($pdo, 'users', 'is_active')) {
-            $sql .= " AND COALESCE(u.is_active,1) = 1";
-        }
-
-        if (columnExists($pdo, 'roles', 'is_active')) {
-            $sql .= " AND COALESCE(r.is_active,1) = 1";
-        }
-
-        if (columnExists($pdo, 'permissions', 'is_active')) {
-            $sql .= " AND COALESCE(p.is_active,1) = 1";
-        }
-
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([(int)$_SESSION['user_id'], $permissionCode]);
+            FROM permissions
+            WHERE code = ?
+        ");
+        $stmt->execute([$code]);
 
         return (int)$stmt->fetchColumn() > 0;
     }
 }
 
-if (!function_exists('logUserAction')) {
-    function logUserAction(
-        PDO $pdo,
-        int $userId,
-        string $action,
-        ?string $module = null,
-        ?string $entityType = null,
-        $entityId = null,
-        ?string $details = null
-    ): void {
-        if (!tableExists($pdo, 'user_logs')) {
-            return;
+if (!function_exists('currentUserCan')) {
+    function currentUserCan(PDO $pdo, string $permissionCode): bool
+    {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
         }
 
-        $columns = [];
-        $values = [];
-        $params = [];
-
-        $map = [
-            'user_id' => $userId,
-            'action' => $action,
-            'module' => $module,
-            'entity_type' => $entityType,
-            'entity_id' => $entityId,
-            'details' => $details,
-        ];
-
-        foreach ($map as $column => $value) {
-            if (columnExists($pdo, 'user_logs', $column)) {
-                $columns[] = $column;
-                $values[] = '?';
-                $params[] = $value;
-            }
+        $user = currentUserRecord($pdo);
+        if (!$user) {
+            return false;
         }
 
-        if (columnExists($pdo, 'user_logs', 'created_at')) {
-            $columns[] = 'created_at';
-            $values[] = 'NOW()';
+        /*
+        |--------------------------------------------------------------------------
+        | Super admin pragmatique
+        |--------------------------------------------------------------------------
+        */
+        if (currentUserIsAdminLike($pdo)) {
+            return true;
         }
 
-        if (!$columns) {
-            return;
+        /*
+        |--------------------------------------------------------------------------
+        | Si la matrice n’existe pas encore complètement,
+        | on autorise par défaut pour ne pas casser l’application.
+        |--------------------------------------------------------------------------
+        */
+        if (
+            !tableExists($pdo, 'permissions') ||
+            !tableExists($pdo, 'role_permissions') ||
+            !tableExists($pdo, 'roles') ||
+            !columnExists($pdo, 'users', 'role_id')
+        ) {
+            return true;
+        }
+
+        if (!permissionCodeExists($pdo, $permissionCode)) {
+            return false;
+        }
+
+        $roleId = (int)($user['role_id'] ?? 0);
+        if ($roleId <= 0) {
+            return false;
         }
 
         $stmt = $pdo->prepare("
-            INSERT INTO user_logs (" . implode(', ', $columns) . ")
-            VALUES (" . implode(', ', $values) . ")
+            SELECT COUNT(*)
+            FROM role_permissions rp
+            INNER JOIN permissions p ON p.id = rp.permission_id
+            WHERE rp.role_id = ?
+              AND p.code = ?
         ");
-        $stmt->execute($params);
+        $stmt->execute([$roleId, $permissionCode]);
+
+        return (int)$stmt->fetchColumn() > 0;
     }
 }
+
+if (!function_exists('currentUserCanAny')) {
+    function currentUserCanAny(PDO $pdo, array $permissionCodes): bool
+    {
+        foreach ($permissionCodes as $code) {
+            if (is_string($code) && $code !== '' && currentUserCan($pdo, $code)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('currentUserCanAll')) {
+    function currentUserCanAll(PDO $pdo, array $permissionCodes): bool
+    {
+        foreach ($permissionCodes as $code) {
+            if (!is_string($code) || $code === '') {
+                continue;
+            }
+
+            if (!currentUserCan($pdo, $code)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('requirePermission')) {
+    function requirePermission(PDO $pdo, string $permissionCode): void
+    {
+        if (!currentUserCan($pdo, $permissionCode)) {
+            http_response_code(403);
+            exit('Accès refusé.');
+        }
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Cartographie centralisée des accès
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('studelyAccessMap')) {
+    function studelyAccessMap(): array
+    {
+        return [
+            'dashboard_view_page' => ['dashboard_view', 'admin_manage'],
+            'analytics_view_page' => ['analytics_view', 'dashboard_view', 'admin_manage'],
+
+            'clients_view_page' => ['clients_view', 'clients_manage', 'admin_manage'],
+            'clients_create_page' => ['clients_create', 'clients_manage', 'admin_manage'],
+            'clients_edit_page' => ['clients_edit', 'clients_manage', 'admin_manage'],
+            'clients_delete_page' => ['clients_delete', 'clients_manage', 'admin_manage'],
+            'clients_archive_page' => ['clients_archive', 'clients_edit', 'clients_manage', 'admin_manage'],
+
+            'operations_view_page' => ['operations_view', 'operations_manage', 'admin_manage'],
+            'operations_create_page' => ['operations_create', 'operations_manage', 'admin_manage'],
+            'operations_edit_page' => ['operations_edit', 'operations_manage', 'admin_manage'],
+            'operations_delete_page' => ['operations_delete', 'operations_manage', 'admin_manage'],
+            'operations_validate_page' => ['operations_validate', 'operations_manage', 'admin_manage'],
+
+            'imports_upload_page' => ['imports_upload', 'imports_create', 'imports_manage', 'admin_manage'],
+            'imports_preview_page' => ['imports_preview', 'imports_upload', 'imports_create', 'imports_manage', 'admin_manage'],
+            'imports_validate_page' => ['imports_validate', 'imports_manage', 'admin_manage'],
+            'imports_journal_page' => ['imports_journal', 'imports_manage', 'admin_manage'],
+            'imports_rejected_page' => ['imports_rejected_manage', 'imports_manage', 'admin_manage'],
+
+            'treasury_view_page' => ['treasury_view', 'treasury_manage', 'admin_manage'],
+            'treasury_create_page' => ['treasury_create', 'treasury_manage', 'admin_manage'],
+            'treasury_edit_page' => ['treasury_edit', 'treasury_manage', 'admin_manage'],
+            'treasury_delete_page' => ['treasury_delete', 'treasury_manage', 'admin_manage'],
+            'treasury_import_page' => ['treasury_import', 'treasury_manage', 'admin_manage'],
+
+            'statements_view_page' => ['statements_view', 'clients_view', 'admin_manage'],
+            'statements_export_page' => ['statements_export', 'statements_view', 'clients_view', 'admin_manage'],
+
+            'support_view_page' => ['support_view', 'support_requests_view', 'support_manage', 'support_admin_manage', 'admin_manage'],
+            'support_create_page' => ['support_create', 'support_view', 'support_requests_view', 'support_manage', 'support_admin_manage', 'admin_manage'],
+            'support_admin_page' => ['support_admin_manage', 'support_manage', 'admin_manage'],
+
+            'admin_functional_page' => ['admin_functional_view', 'admin_manage'],
+            'services_manage_page' => ['services_manage', 'admin_functional_view', 'admin_manage'],
+            'operation_types_manage_page' => ['operation_types_manage', 'admin_functional_view', 'admin_manage'],
+            'service_accounts_manage_page' => ['service_accounts_view', 'admin_functional_view', 'admin_manage'],
+            'statuses_manage_page' => ['statuses_manage', 'admin_functional_view', 'admin_manage'],
+
+            'admin_dashboard_page' => ['admin_dashboard_view', 'admin_manage'],
+            'users_manage_page' => ['users_manage', 'admin_manage'],
+            'roles_manage_page' => ['roles_manage', 'admin_manage'],
+            'permissions_manage_page' => ['permissions_manage', 'admin_manage'],
+            'user_logs_view_page' => ['user_logs_view', 'admin_manage'],
+            'settings_manage_page' => ['settings_manage', 'admin_manage'],
+        ];
+    }
+}
+
+if (!function_exists('studelyCanAccess')) {
+    function studelyCanAccess(PDO $pdo, string $accessKey): bool
+    {
+        $map = studelyAccessMap();
+        $codes = $map[$accessKey] ?? [];
+
+        if (!$codes) {
+            return false;
+        }
+
+        if (currentUserIsAdminLike($pdo)) {
+            return true;
+        }
+
+        return currentUserCanAny($pdo, $codes);
+    }
+}
+
+if (!function_exists('studelyEnforceAccess')) {
+    function studelyEnforceAccess(PDO $pdo, string $accessKey, ?string $fallbackPermission = null): void
+    {
+        if (studelyCanAccess($pdo, $accessKey)) {
+            return;
+        }
+
+        $map = studelyAccessMap();
+        $codes = $map[$accessKey] ?? [];
+        $fallback = $fallbackPermission ?: (($codes[0] ?? '') ?: 'dashboard_view');
+
+        if (!function_exists('enforcePagePermission')) {
+            if (!currentUserCan($pdo, $fallback)) {
+                http_response_code(403);
+                exit('Accès refusé : permission insuffisante pour cette page.');
+            }
+            return;
+        }
+
+        enforcePagePermission($pdo, $fallback);
+    }
+}
+
+if (!function_exists('studelyModulePermissions')) {
+    function studelyModulePermissions(): array
+    {
+        return [
+            'dashboard' => ['dashboard_view'],
+            'analytics' => ['analytics_view'],
+
+            'clients' => ['clients_view', 'clients_create', 'clients_edit', 'clients_delete', 'clients_archive', 'clients_manage'],
+            'operations' => ['operations_view', 'operations_create', 'operations_edit', 'operations_delete', 'operations_validate', 'operations_manage'],
+            'imports' => ['imports_upload', 'imports_create', 'imports_preview', 'imports_validate', 'imports_journal', 'imports_rejected_manage', 'imports_manage'],
+            'treasury' => ['treasury_view', 'treasury_create', 'treasury_edit', 'treasury_delete', 'treasury_import', 'treasury_manage'],
+            'statements' => ['statements_view', 'statements_export'],
+
+            'support' => ['support_view', 'support_requests_view', 'support_create', 'support_manage', 'support_admin_manage'],
+
+            'admin_functional' => ['admin_functional_view', 'services_manage', 'operation_types_manage', 'service_accounts_view', 'statuses_manage'],
+            'admin' => ['admin_dashboard_view', 'users_manage', 'roles_manage', 'permissions_manage', 'user_logs_view', 'settings_manage', 'admin_manage'],
+        ];
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Référentiels / options
+|--------------------------------------------------------------------------
+*/
 
 if (!function_exists('fetchSelectOptions')) {
     function fetchSelectOptions(PDO $pdo, string $tableName, string $labelColumn = 'label', string $where = '1=1'): array
@@ -209,26 +478,69 @@ if (!function_exists('getPermissionOptions')) {
     }
 }
 
-if (!function_exists('findClientById')) {
-    function findClientById(PDO $pdo, int $clientId): ?array
-    {
-        if (!tableExists($pdo, 'clients')) {
-            return null;
+/*
+|--------------------------------------------------------------------------
+| Journalisation
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('logUserAction')) {
+    function logUserAction(
+        PDO $pdo,
+        int $userId,
+        string $action,
+        ?string $module = null,
+        ?string $entityType = null,
+        $entityId = null,
+        ?string $details = null
+    ): void {
+        if (!tableExists($pdo, 'user_logs')) {
+            return;
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'user_id' => $userId,
+            'action' => $action,
+            'module' => $module,
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'details' => $details,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'user_logs', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'user_logs', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (!$columns) {
+            return;
         }
 
         $stmt = $pdo->prepare("
-            SELECT *
-            FROM clients
-            WHERE id = ?
-            LIMIT 1
+            INSERT INTO user_logs (" . implode(', ', $columns) . ")
+            VALUES (" . implode(', ', $values) . ")
         ");
-        $stmt->execute([$clientId]);
-
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        return $row ?: null;
+        $stmt->execute($params);
     }
 }
+
+/*
+|--------------------------------------------------------------------------
+| Comptes / contexte client
+|--------------------------------------------------------------------------
+*/
 
 if (!function_exists('findPrimaryBankAccountForClient')) {
     function findPrimaryBankAccountForClient(PDO $pdo, int $clientId): ?array
@@ -252,6 +564,26 @@ if (!function_exists('findPrimaryBankAccountForClient')) {
     }
 }
 
+if (!function_exists('findTreasuryAccountById')) {
+    function findTreasuryAccountById(PDO $pdo, int $treasuryId): ?array
+    {
+        if ($treasuryId <= 0 || !tableExists($pdo, 'treasury_accounts')) {
+            return null;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM treasury_accounts
+            WHERE id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$treasuryId]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
+    }
+}
+
 if (!function_exists('findTreasuryAccountByCode')) {
     function findTreasuryAccountByCode(PDO $pdo, string $accountCode): ?array
     {
@@ -268,28 +600,6 @@ if (!function_exists('findTreasuryAccountByCode')) {
         $stmt->execute([$accountCode]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        return $row ?: null;
-    }
-}
-
-if (!function_exists('findTreasuryAccountById')) {
-    function findTreasuryAccountById(PDO $pdo, int $treasuryId): ?array
-    {
-        if (!tableExists($pdo, 'treasury_accounts')) {
-            return null;
-        }
-
-        $stmt = $pdo->prepare("
-            SELECT *
-            FROM treasury_accounts
-            WHERE id = ?
-            LIMIT 1
-        ");
-        $stmt->execute([$treasuryId]);
-
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
         return $row ?: null;
     }
 }
@@ -310,7 +620,6 @@ if (!function_exists('findServiceAccountByCode')) {
         $stmt->execute([$accountCode]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
         return $row ?: null;
     }
 }
@@ -326,8 +635,7 @@ if (!function_exists('getClientAccountingContext')) {
             SELECT
                 c.*,
                 ta.account_code AS treasury_account_code,
-                ta.account_label AS treasury_account_label,
-                ta.country_label AS treasury_country_label
+                ta.account_label AS treasury_account_label
             FROM clients c
             LEFT JOIN treasury_accounts ta ON ta.id = c.initial_treasury_account_id
             WHERE c.id = ?
@@ -336,461 +644,13 @@ if (!function_exists('getClientAccountingContext')) {
         $stmt->execute([$clientId]);
 
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
         return $row ?: null;
     }
 }
 
-if (!function_exists('studely_destination_countries')) {
-    function studely_destination_countries(): array
-    {
-        return [
-            'Allemagne',
-            'Belgique',
-            'France',
-            'Espagne',
-            'Italie',
-            'Autres destinations',
-        ];
-    }
-}
-
-if (!function_exists('studely_commercial_countries')) {
-    function studely_commercial_countries(): array
-    {
-        return [
-            'France',
-            'Allemagne',
-            'Belgique',
-            'Cameroun',
-            'Sénégal',
-            "Côte d'Ivoire",
-            'Benin',
-            'Burkina Faso',
-            'Congo Brazzaville',
-            'Congo Kinshasa',
-            'Gabon',
-            'Tchad',
-            'Mali',
-            'Togo',
-            'Mexique',
-            'Inde',
-            'Algérie',
-            'Guinée',
-            'Tunisie',
-            'Maroc',
-            'Niger',
-            "Afrique de l'est",
-            'Autres pays',
-        ];
-    }
-}
-
-if (!function_exists('studely_origin_countries')) {
-    function studely_origin_countries(): array
-    {
-        return [
-            'Afghanistan','Afrique du Sud','Albanie','Algérie','Allemagne','Andorre','Angola','Antigua-et-Barbuda',
-            'Arabie saoudite','Argentine','Arménie','Australie','Autriche','Azerbaïdjan','Bahamas','Bahreïn',
-            'Bangladesh','Barbade','Belgique','Belize','Bénin','Bhoutan','Biélorussie','Birmanie','Bolivie',
-            'Bosnie-Herzégovine','Botswana','Brésil','Brunei','Bulgarie','Burkina Faso','Burundi','Cap-Vert',
-            'Cambodge','Cameroun','Canada','République centrafricaine','Chili','Chine','Chypre','Colombie',
-            'Comores','Congo','République démocratique du Congo','Corée du Nord','Corée du Sud','Costa Rica',
-            "Côte d’Ivoire",'Croatie','Cuba','Danemark','Djibouti','Dominique','Égypte','Émirats arabes unis',
-            'Équateur','Érythrée','Espagne','Estonie','Eswatini','États-Unis','Éthiopie','Fidji','Finlande',
-            'France','Gabon','Gambie','Géorgie','Ghana','Grèce','Grenade','Guatemala','Guinée','Guinée-Bissau',
-            'Guinée équatoriale','Guyana','Haïti','Honduras','Hongrie','Inde','Indonésie','Irak','Iran',
-            'Irlande','Islande','Israël','Italie','Jamaïque','Japon','Jordanie','Kazakhstan','Kenya',
-            'Kirghizistan','Kiribati','Koweït','Laos','Lesotho','Lettonie','Liban','Liberia','Libye',
-            'Liechtenstein','Lituanie','Luxembourg','Macédoine du Nord','Madagascar','Malaisie','Malawi',
-            'Maldives','Mali','Malte','Maroc','Îles Marshall','Maurice','Mauritanie','Mexique','Micronésie',
-            'Moldavie','Monaco','Mongolie','Monténégro','Mozambique','Namibie','Nauru','Népal','Nicaragua',
-            'Niger','Nigeria','Norvège','Nouvelle-Zélande','Oman','Ouganda','Ouzbékistan','Pakistan',
-            'Palaos','Palestine','Panama','Papouasie-Nouvelle-Guinée','Paraguay','Pays-Bas','Pérou',
-            'Philippines','Pologne','Portugal','Qatar','Roumanie','Royaume-Uni','Russie','Rwanda',
-            'Saint-Christophe-et-Niévès','Saint-Marin','Saint-Vincent-et-les-Grenadines','Sainte-Lucie',
-            'Salomon','Salvador','Samoa','Sao Tomé-et-Principe','Sénégal','Serbie','Seychelles',
-            'Sierra Leone','Singapour','Slovaquie','Slovénie','Somalie','Soudan','Soudan du Sud',
-            'Sri Lanka','Suède','Suisse','Suriname','Syrie','Tadjikistan','Tanzanie','Tchad','Tchéquie',
-            'Thaïlande','Timor oriental','Togo','Tonga','Trinité-et-Tobago','Tunisie','Turkménistan',
-            'Turquie','Tuvalu','Ukraine','Uruguay','Vanuatu','Vatican','Venezuela','Vietnam','Yémen',
-            'Zambie','Zimbabwe',
-        ];
-    }
-}
-
-if (!function_exists('studely_client_types')) {
-    function studely_client_types(): array
-    {
-        return [
-            'Etudiant',
-            'Particulier',
-            'Entreprise',
-            'Partenaire',
-        ];
-    }
-}
-
-if (!function_exists('studely_normalize_text')) {
-    function studely_normalize_text(?string $value): string
-    {
-        $value = (string)($value ?? '');
-        $value = trim($value);
-
-        if ($value === '') {
-            return '';
-        }
-
-        $trans = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $value);
-        if ($trans !== false) {
-            $value = $trans;
-        }
-
-        $value = strtoupper($value);
-        $value = preg_replace('/[^A-Z0-9]+/', ' ', $value) ?? '';
-
-        return trim($value);
-    }
-}
-
-if (!function_exists('studely_generate_next_client_code')) {
-    function studely_generate_next_client_code(PDO $pdo): string
-    {
-        if (!tableExists($pdo, 'clients')) {
-            return '000000001';
-        }
-
-        $stmt = $pdo->query("
-            SELECT MAX(CAST(client_code AS UNSIGNED))
-            FROM clients
-            WHERE client_code REGEXP '^[0-9]{1,9}$'
-        ");
-        $max = (int)$stmt->fetchColumn();
-
-        return str_pad((string)($max + 1), 9, '0', STR_PAD_LEFT);
-    }
-}
-
-if (!function_exists('studely_preferred_treasury_codes_by_country')) {
-    function studely_preferred_treasury_codes_by_country(): array
-    {
-        return [
-            'FRANCE' => ['5120101'],
-            'ALLEMAGNE' => ['5120101'],
-            'BELGIQUE' => ['5120301'],
-            'CAMEROUN' => ['5120404', '5120405', '5120401'],
-            'SENEGAL' => ['5120502', '5120501'],
-            'COTE D IVOIRE' => ['5120601', '5120603', '5120602'],
-            'BENIN' => ['5120701', '5120702'],
-            'BURKINA FASO' => ['5120801'],
-            'CONGO BRAZZAVILLE' => ['5120901', '5120902'],
-            'CONGO KINSHASA' => ['5121001', '5121002'],
-            'GABON' => ['5121101', '5121102', '5121103'],
-            'TCHAD' => ['5121201', '5121202'],
-            'MALI' => ['5121301', '5121302'],
-            'TOGO' => ['5121401', '5121403'],
-            'MEXIQUE' => ['5120101'],
-            'INDE' => ['5120101'],
-            'ALGERIE' => ['5121701'],
-            'GUINEE' => ['5121801', '5121802'],
-            'TUNISIE' => ['5121901'],
-            'MAROC' => ['5122001'],
-            'NIGER' => ['5122101'],
-            'AFRIQUE DE L EST' => ['5120101'],
-            'AUTRES PAYS' => ['5120101'],
-            'AUTRES DESTINATIONS' => ['5120101'],
-            'ESPAGNE' => ['5120101'],
-            'ITALIE' => ['5120101'],
-        ];
-    }
-}
-
-if (!function_exists('studely_resolve_default_treasury_account')) {
-    function studely_resolve_default_treasury_account(PDO $pdo, string $countryCommercial, ?string $preferredCode = null): ?array
-    {
-        if (!tableExists($pdo, 'treasury_accounts')) {
-            return null;
-        }
-
-        $normalizedCountry = studely_normalize_text($countryCommercial);
-        $preferredMap = studely_preferred_treasury_codes_by_country();
-
-        $candidateCodes = [];
-        if ($preferredCode !== null && trim($preferredCode) !== '') {
-            $candidateCodes[] = trim($preferredCode);
-        }
-        if (isset($preferredMap[$normalizedCountry])) {
-            $candidateCodes = array_merge($candidateCodes, $preferredMap[$normalizedCountry]);
-        }
-
-        foreach (array_unique($candidateCodes) as $code) {
-            $stmt = $pdo->prepare("
-                SELECT *
-                FROM treasury_accounts
-                WHERE account_code = ?
-                  AND COALESCE(is_active,1) = 1
-                LIMIT 1
-            ");
-            $stmt->execute([$code]);
-            $row = $stmt->fetch(PDO::FETCH_ASSOC);
-            if ($row) {
-                return $row;
-            }
-        }
-
-        $stmt = $pdo->prepare("
-            SELECT *
-            FROM treasury_accounts
-            WHERE COALESCE(is_active,1) = 1
-              AND UPPER(TRIM(country_label)) = UPPER(TRIM(?))
-            ORDER BY account_code ASC
-            LIMIT 1
-        ");
-        $stmt->execute([$countryCommercial]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($row) {
-            return $row;
-        }
-
-        $fallback = $pdo->query("
-            SELECT *
-            FROM treasury_accounts
-            WHERE COALESCE(is_active,1) = 1
-            ORDER BY account_code ASC
-            LIMIT 1
-        ")->fetch(PDO::FETCH_ASSOC);
-
-        return $fallback ?: null;
-    }
-}
-
-if (!function_exists('studely_create_or_link_client_bank_account')) {
-    function studely_create_or_link_client_bank_account(
-        PDO $pdo,
-        int $clientId,
-        string $generatedClientAccount,
-        string $countryLabel,
-        ?string $accountName = null,
-        float $initialBalance = 0.0
-    ): int {
-        $existing = findPrimaryBankAccountForClient($pdo, $clientId);
-
-        if ($existing) {
-            $sets = [];
-            $params = [];
-
-            if (columnExists($pdo, 'bank_accounts', 'account_name')) {
-                $sets[] = 'account_name = ?';
-                $params[] = $accountName ?: ('Compte client ' . $generatedClientAccount);
-            }
-
-            if (columnExists($pdo, 'bank_accounts', 'bank_name')) {
-                $sets[] = 'bank_name = ?';
-                $params[] = 'Compte Client Interne';
-            }
-
-            if (columnExists($pdo, 'bank_accounts', 'country')) {
-                $sets[] = 'country = ?';
-                $params[] = $countryLabel !== '' ? $countryLabel : 'France';
-            }
-
-            if (columnExists($pdo, 'bank_accounts', 'initial_balance')) {
-                $sets[] = 'initial_balance = ?';
-                $params[] = $initialBalance;
-            }
-
-            if (columnExists($pdo, 'bank_accounts', 'updated_at')) {
-                $sets[] = 'updated_at = NOW()';
-            }
-
-            if ($sets) {
-                $params[] = (int)$existing['id'];
-                $stmt = $pdo->prepare("
-                    UPDATE bank_accounts
-                    SET " . implode(', ', $sets) . "
-                    WHERE id = ?
-                ");
-                $stmt->execute($params);
-            }
-
-            return (int)$existing['id'];
-        }
-
-        $columns = [];
-        $values = [];
-        $params = [];
-
-        $map = [
-            'account_name' => $accountName ?: ('Compte client ' . $generatedClientAccount),
-            'account_number' => $generatedClientAccount,
-            'bank_name' => 'Compte Client Interne',
-            'country' => $countryLabel !== '' ? $countryLabel : 'France',
-            'initial_balance' => $initialBalance,
-            'balance' => $initialBalance,
-            'is_active' => 1,
-        ];
-
-        foreach ($map as $column => $value) {
-            if (columnExists($pdo, 'bank_accounts', $column)) {
-                $columns[] = $column;
-                $values[] = '?';
-                $params[] = $value;
-            }
-        }
-
-        if (columnExists($pdo, 'bank_accounts', 'created_at')) {
-            $columns[] = 'created_at';
-            $values[] = 'NOW()';
-        }
-
-        if (columnExists($pdo, 'bank_accounts', 'updated_at')) {
-            $columns[] = 'updated_at';
-            $values[] = 'NOW()';
-        }
-
-        $stmt = $pdo->prepare("
-            INSERT INTO bank_accounts (" . implode(', ', $columns) . ")
-            VALUES (" . implode(', ', $values) . ")
-        ");
-        $stmt->execute($params);
-
-        $bankAccountId = (int)$pdo->lastInsertId();
-
-        if (tableExists($pdo, 'client_bank_accounts')) {
-            $linkColumns = ['client_id', 'bank_account_id'];
-            $linkValues = ['?', '?'];
-            $linkParams = [$clientId, $bankAccountId];
-
-            if (columnExists($pdo, 'client_bank_accounts', 'created_at')) {
-                $linkColumns[] = 'created_at';
-                $linkValues[] = 'NOW()';
-            }
-
-            $stmtLink = $pdo->prepare("
-                INSERT INTO client_bank_accounts (" . implode(', ', $linkColumns) . ")
-                VALUES (" . implode(', ', $linkValues) . ")
-            ");
-            $stmtLink->execute($linkParams);
-        }
-
-        return $bankAccountId;
-    }
-}
-
-if (!function_exists('studely_service_family_token_from_label')) {
-    function studely_service_family_token_from_label(?string $serviceLabel): string
-    {
-        $label = studely_normalize_text($serviceLabel);
-
-        if ($label === '') {
-            return '';
-        }
-
-        if (str_contains($label, 'AVI')) {
-            return 'AVI';
-        }
-        if (str_contains($label, 'ATS')) {
-            return 'ATS';
-        }
-        if (str_contains($label, 'COMMISSION') && str_contains($label, 'TRANSFERT')) {
-            return 'COMMISSION DE TRANSFERT';
-        }
-        if (str_contains($label, 'GESTION')) {
-            return 'FRAIS DE GESTION';
-        }
-        if (str_contains($label, 'PLACEMENT')) {
-            return 'CA PLACEMENT';
-        }
-        if (str_contains($label, 'DIVERS')) {
-            return 'CA DIVERS';
-        }
-        if (str_contains($label, 'DEBOURS') && str_contains($label, 'LOGEMENT')) {
-            return 'CA DEBOURS LOGEMENT';
-        }
-        if (str_contains($label, 'DEBOURS') && str_contains($label, 'ASSURANCE')) {
-            return 'CA DEBOURS ASSURANCE';
-        }
-        if (str_contains($label, 'COURTAGE') && str_contains($label, 'PRET')) {
-            return 'CA COURTAGE PRET';
-        }
-        if (str_contains($label, 'MICROFINANCE')) {
-            return 'FRAIS DEBOURS MICROFINANCE';
-        }
-
-        return $label;
-    }
-}
-
-if (!function_exists('studely_find_best_service_account')) {
-    function studely_find_best_service_account(
-        PDO $pdo,
-        string $operationTypeCode,
-        string $serviceLabel,
-        string $countryDestination,
-        string $countryCommercial
-    ): ?array {
-        if (!tableExists($pdo, 'service_accounts')) {
-            return null;
-        }
-
-        $serviceToken = studely_service_family_token_from_label($serviceLabel);
-        $normalizedType = studely_normalize_text($operationTypeCode);
-        $normalizedDestination = studely_normalize_text($countryDestination);
-        $normalizedCommercial = studely_normalize_text($countryCommercial);
-
-        $stmt = $pdo->query("
-            SELECT *
-            FROM service_accounts
-            WHERE COALESCE(is_active,1) = 1
-              AND COALESCE(is_postable,0) = 1
-            ORDER BY account_code ASC
-        ");
-        $accounts = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-        $best = null;
-        $bestScore = -1;
-
-        foreach ($accounts as $account) {
-            $score = 0;
-
-            $accountType = studely_normalize_text($account['operation_type_label'] ?? '');
-            $accountLabel = studely_normalize_text($account['account_label'] ?? '');
-            $accountDestination = studely_normalize_text($account['destination_country_label'] ?? '');
-            $accountCommercial = studely_normalize_text($account['commercial_country_label'] ?? '');
-
-            if ($accountType !== '' && $accountType === $normalizedType) {
-                $score += 100;
-            }
-
-            if ($serviceToken !== '' && str_contains($accountLabel, $serviceToken)) {
-                $score += 80;
-            }
-
-            if ($normalizedDestination !== '' && $accountDestination !== '' && $accountDestination === $normalizedDestination) {
-                $score += 50;
-            }
-
-            if ($normalizedCommercial !== '' && $accountCommercial !== '' && $accountCommercial === $normalizedCommercial) {
-                $score += 40;
-            }
-
-            if ($score > $bestScore) {
-                $bestScore = $score;
-                $best = $account;
-            }
-        }
-
-        return $bestScore > 0 ? $best : null;
-    }
-}
-
 if (!function_exists('resolveServiceAccountFromServiceId')) {
-    function resolveServiceAccountFromServiceId(
-        PDO $pdo,
-        ?int $serviceId,
-        ?array $clientContext = null,
-        ?string $operationTypeCode = null
-    ): ?array {
+    function resolveServiceAccountFromServiceId(PDO $pdo, ?int $serviceId): ?array
+    {
         if ($serviceId === null || !tableExists($pdo, 'ref_services')) {
             return null;
         }
@@ -801,74 +661,30 @@ if (!function_exists('resolveServiceAccountFromServiceId')) {
                 rs.code,
                 rs.label,
                 rs.service_account_id,
-                rs.treasury_account_id,
-                sa.account_code AS direct_account_code,
-                sa.account_label AS direct_account_label,
-                sa.operation_type_label AS direct_operation_type_label,
-                sa.destination_country_label AS direct_destination_country_label,
-                sa.commercial_country_label AS direct_commercial_country_label,
-                sa.is_postable AS direct_is_postable,
-                sa.is_active AS direct_is_active
+                sa.account_code,
+                sa.account_label
             FROM ref_services rs
             LEFT JOIN service_accounts sa ON sa.id = rs.service_account_id
             WHERE rs.id = ?
             LIMIT 1
         ");
         $stmt->execute([$serviceId]);
+
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        if (!$row) {
-            return null;
-        }
-
-        $countryDestination = (string)($clientContext['country_destination'] ?? '');
-        $countryCommercial = (string)($clientContext['country_commercial'] ?? '');
-        $effectiveType = (string)($operationTypeCode ?? '');
-
-        $best = studely_find_best_service_account(
-            $pdo,
-            $effectiveType,
-            (string)($row['label'] ?? ''),
-            $countryDestination,
-            $countryCommercial
-        );
-
-        if ($best) {
-            return [
-                'id' => $row['id'],
-                'code' => $row['code'],
-                'label' => $row['label'],
-                'service_account_id' => $best['id'],
-                'account_code' => $best['account_code'],
-                'account_label' => $best['account_label'],
-                'operation_type_label' => $best['operation_type_label'] ?? null,
-                'destination_country_label' => $best['destination_country_label'] ?? null,
-                'commercial_country_label' => $best['commercial_country_label'] ?? null,
-            ];
-        }
-
-        if (!empty($row['direct_account_code']) && (int)($row['direct_is_active'] ?? 0) === 1 && (int)($row['direct_is_postable'] ?? 0) === 1) {
-            return [
-                'id' => $row['id'],
-                'code' => $row['code'],
-                'label' => $row['label'],
-                'service_account_id' => $row['service_account_id'],
-                'account_code' => $row['direct_account_code'],
-                'account_label' => $row['direct_account_label'],
-                'operation_type_label' => $row['direct_operation_type_label'] ?? null,
-                'destination_country_label' => $row['direct_destination_country_label'] ?? null,
-                'commercial_country_label' => $row['direct_commercial_country_label'] ?? null,
-            ];
-        }
-
-        return null;
+        return $row ?: null;
     }
 }
+
+/*
+|--------------------------------------------------------------------------
+| Moteur comptable
+|--------------------------------------------------------------------------
+*/
 
 if (!function_exists('resolveAccountingOperation')) {
     function resolveAccountingOperation(PDO $pdo, array $payload): array
     {
-        $operationTypeCode = (string)($payload['operation_type_code'] ?? '');
+        $operationTypeCode = strtoupper(trim((string)($payload['operation_type_code'] ?? '')));
         $clientId = isset($payload['client_id']) ? (int)$payload['client_id'] : null;
         $serviceId = isset($payload['service_id']) ? (int)$payload['service_id'] : null;
         $sourceTreasuryCode = $payload['source_treasury_code'] ?? null;
@@ -886,46 +702,50 @@ if (!function_exists('resolveAccountingOperation')) {
             }
         }
 
-        $serviceInfo = $serviceId
-            ? resolveServiceAccountFromServiceId($pdo, $serviceId, $clientContext, $operationTypeCode)
-            : null;
+        $serviceInfo = $serviceId ? resolveServiceAccountFromServiceId($pdo, $serviceId) : null;
 
         $debit = null;
         $credit = null;
         $analytic = null;
 
-        $typesDebit411Credit512 = [
-            'VIREMENT_MENSUEL',
-            'VIREMENT_EXCEPTIONEL',
-            'VIREMENT_EXEPTIONEL',
-            'VIREMENT_REGULIER',
-        ];
-
-        $typesDebit411Credit706 = [
-            'REGULARISATION_NEGATIVE',
-            'FRAIS_DE_SERVICE',
-            'FRAIS_SERVICE',
-            'FRAIS_BANCAIRES',
-            'AUTRES_FRAIS',
-            'CA_PLACEMENT',
-            'CA_DIVERS',
-            'CA_DEBOURS_LOGEMENT',
-            'CA_DEBOURS_ASSURANCE',
-            'CA_COURTAGE_PRET',
-            'FRAIS_DEBOURS_MICROFINANCE',
-        ];
-
-        $typesDebit706Credit411 = [
-            'REGULARISATION_POSITIVE',
-        ];
-
         switch ($operationTypeCode) {
             case 'VERSEMENT':
+            case 'REGULARISATION_POSITIVE':
+            case 'CREDIT_CLIENT':
                 if (!$clientContext) {
                     throw new RuntimeException('Client obligatoire.');
                 }
                 $debit = $sourceTreasuryCode ?: ($clientContext['treasury_account_code'] ?? null);
                 $credit = $clientContext['generated_client_account'] ?? null;
+                break;
+
+            case 'VIREMENT_MENSUEL':
+            case 'VIREMENT_EXCEPTIONEL':
+            case 'VIREMENT_REGULIER':
+            case 'REGULARISATION_NEGATIVE':
+            case 'FRAIS_BANCAIRES':
+            case 'DEBIT_CLIENT':
+                if (!$clientContext) {
+                    throw new RuntimeException('Client obligatoire.');
+                }
+                $debit = $clientContext['generated_client_account'] ?? null;
+                $credit = $sourceTreasuryCode ?: ($clientContext['treasury_account_code'] ?? null);
+                break;
+
+            case 'FRAIS_DE_SERVICE':
+            case 'FRAIS_SERVICE':
+                if (!$clientContext) {
+                    throw new RuntimeException('Client obligatoire.');
+                }
+                if (!$serviceInfo || empty($serviceInfo['account_code'])) {
+                    throw new RuntimeException('Le service choisi n’a pas de compte 706 associé.');
+                }
+                $debit = $clientContext['generated_client_account'] ?? null;
+                $credit = $serviceInfo['account_code'];
+                $analytic = [
+                    'account_code' => $serviceInfo['account_code'],
+                    'account_label' => $serviceInfo['account_label'] ?? null,
+                ];
                 break;
 
             case 'VIREMENT_INTERNE':
@@ -936,50 +756,17 @@ if (!function_exists('resolveAccountingOperation')) {
                 $credit = $targetTreasuryCode;
                 break;
 
+            case 'MANUAL':
+            case 'IMPORT_RELEVE':
+            case 'REGULARISATION':
+                if (!$clientContext) {
+                    throw new RuntimeException('Client obligatoire.');
+                }
+                $debit = $clientContext['generated_client_account'] ?? null;
+                $credit = $sourceTreasuryCode ?: ($clientContext['treasury_account_code'] ?? null);
+                break;
+
             default:
-                if (in_array($operationTypeCode, $typesDebit411Credit512, true)) {
-                    if (!$clientContext) {
-                        throw new RuntimeException('Client obligatoire.');
-                    }
-                    $debit = $clientContext['generated_client_account'] ?? null;
-                    $credit = $sourceTreasuryCode ?: ($clientContext['treasury_account_code'] ?? null);
-                    break;
-                }
-
-                if (in_array($operationTypeCode, $typesDebit411Credit706, true)) {
-                    if (!$clientContext) {
-                        throw new RuntimeException('Client obligatoire.');
-                    }
-                    if (!$serviceInfo || empty($serviceInfo['account_code'])) {
-                        throw new RuntimeException('Le service choisi ne permet pas de résoudre automatiquement le compte 706.');
-                    }
-
-                    $debit = $clientContext['generated_client_account'] ?? null;
-                    $credit = $serviceInfo['account_code'];
-                    $analytic = [
-                        'account_code' => $serviceInfo['account_code'],
-                        'account_label' => $serviceInfo['account_label'] ?? null,
-                    ];
-                    break;
-                }
-
-                if (in_array($operationTypeCode, $typesDebit706Credit411, true)) {
-                    if (!$clientContext) {
-                        throw new RuntimeException('Client obligatoire.');
-                    }
-                    if (!$serviceInfo || empty($serviceInfo['account_code'])) {
-                        throw new RuntimeException('Le service choisi ne permet pas de résoudre automatiquement le compte 706.');
-                    }
-
-                    $debit = $serviceInfo['account_code'];
-                    $credit = $clientContext['generated_client_account'] ?? null;
-                    $analytic = [
-                        'account_code' => $serviceInfo['account_code'],
-                        'account_label' => $serviceInfo['account_label'] ?? null,
-                    ];
-                    break;
-                }
-
                 throw new RuntimeException('Type d’opération non géré par le moteur.');
         }
 
@@ -1036,12 +823,14 @@ if (!function_exists('updateTreasuryBalanceDelta')) {
             return;
         }
 
+        $params = [$delta, $treasuryId];
+
         $stmt = $pdo->prepare("
             UPDATE treasury_accounts
             SET " . implode(', ', $sets) . "
             WHERE id = ?
         ");
-        $stmt->execute([$delta, $treasuryId]);
+        $stmt->execute($params);
     }
 }
 
@@ -1066,44 +855,44 @@ if (!function_exists('updateServiceAccountBalanceDelta')) {
 if (!function_exists('applyAccountingBalanceEffects')) {
     function applyAccountingBalanceEffects(PDO $pdo, array $payload, array $resolved, int $bankAccountId = 0): void
     {
+        $operationTypeCode = strtoupper(trim((string)($payload['operation_type_code'] ?? '')));
         $amount = (float)($payload['amount'] ?? 0);
 
         if ($amount <= 0) {
             return;
         }
 
-        $debitCode = (string)($resolved['debit_account_code'] ?? '');
-        $creditCode = (string)($resolved['credit_account_code'] ?? '');
-
         if ($bankAccountId > 0) {
-            $bank = null;
-            if (tableExists($pdo, 'bank_accounts')) {
-                $stmt = $pdo->prepare("SELECT * FROM bank_accounts WHERE id = ? LIMIT 1");
-                $stmt->execute([$bankAccountId]);
-                $bank = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
-            }
-
-            if ($bank && !empty($bank['account_number'])) {
-                $accountNumber = (string)$bank['account_number'];
-
-                if ($debitCode === $accountNumber) {
-                    updateBankAccountBalanceDelta($pdo, $bankAccountId, -$amount);
-                }
-
-                if ($creditCode === $accountNumber) {
-                    updateBankAccountBalanceDelta($pdo, $bankAccountId, +$amount);
-                }
+            if (in_array($operationTypeCode, ['VERSEMENT', 'REGULARISATION_POSITIVE', 'CREDIT_CLIENT'], true)) {
+                updateBankAccountBalanceDelta($pdo, $bankAccountId, +$amount);
+            } elseif (in_array($operationTypeCode, [
+                'FRAIS_DE_SERVICE',
+                'FRAIS_SERVICE',
+                'VIREMENT_MENSUEL',
+                'VIREMENT_EXCEPTIONEL',
+                'VIREMENT_REGULIER',
+                'REGULARISATION_NEGATIVE',
+                'FRAIS_BANCAIRES',
+                'DEBIT_CLIENT',
+                'MANUAL',
+                'IMPORT_RELEVE',
+                'REGULARISATION'
+            ], true)) {
+                updateBankAccountBalanceDelta($pdo, $bankAccountId, -$amount);
             }
         }
 
+        $debitCode = (string)($resolved['debit_account_code'] ?? '');
+        $creditCode = (string)($resolved['credit_account_code'] ?? '');
+
         $debitTreasury = findTreasuryAccountByCode($pdo, $debitCode);
         if ($debitTreasury) {
-            updateTreasuryBalanceDelta($pdo, (int)$debitTreasury['id'], +$amount);
+            updateTreasuryBalanceDelta($pdo, (int)$debitTreasury['id'], -$amount);
         }
 
         $creditTreasury = findTreasuryAccountByCode($pdo, $creditCode);
         if ($creditTreasury) {
-            updateTreasuryBalanceDelta($pdo, (int)$creditTreasury['id'], -$amount);
+            updateTreasuryBalanceDelta($pdo, (int)$creditTreasury['id'], +$amount);
         }
 
         $debitService = findServiceAccountByCode($pdo, $debitCode);
@@ -1245,59 +1034,6 @@ if (!function_exists('createInternalTreasuryMovement')) {
     }
 }
 
-if (!function_exists('recomputeClientBalance')) {
-    function recomputeClientBalance(PDO $pdo, int $clientId): void
-    {
-        $client = findClientById($pdo, $clientId);
-        if (!$client) {
-            throw new RuntimeException('Client introuvable pour recalcul.');
-        }
-
-        $accountNumber = (string)($client['generated_client_account'] ?? '');
-        if ($accountNumber === '') {
-            return;
-        }
-
-        $bankAccount = findPrimaryBankAccountForClient($pdo, $clientId);
-        if (!$bankAccount) {
-            return;
-        }
-
-        $initial = (float)($bankAccount['initial_balance'] ?? 0);
-
-        if (!tableExists($pdo, 'operations')) {
-            $stmtUpdate = $pdo->prepare("
-                UPDATE bank_accounts
-                SET balance = ?, updated_at = NOW()
-                WHERE id = ?
-            ");
-            $stmtUpdate->execute([$initial, (int)$bankAccount['id']]);
-            return;
-        }
-
-        $stmt = $pdo->prepare("
-            SELECT
-                COALESCE(SUM(CASE WHEN debit_account_code = ? THEN amount ELSE 0 END),0) AS total_debit,
-                COALESCE(SUM(CASE WHEN credit_account_code = ? THEN amount ELSE 0 END),0) AS total_credit
-            FROM operations
-        ");
-        $stmt->execute([$accountNumber, $accountNumber]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
-
-        $totalDebit = (float)($row['total_debit'] ?? 0);
-        $totalCredit = (float)($row['total_credit'] ?? 0);
-
-        $newBalance = $initial - $totalDebit + $totalCredit;
-
-        $stmtUpdate = $pdo->prepare("
-            UPDATE bank_accounts
-            SET balance = ?, updated_at = NOW()
-            WHERE id = ?
-        ");
-        $stmtUpdate->execute([$newBalance, (int)$bankAccount['id']]);
-    }
-}
-
 if (!function_exists('recomputeAllBalances')) {
     function recomputeAllBalances(PDO $pdo): array
     {
@@ -1331,8 +1067,8 @@ if (!function_exists('recomputeAllBalances')) {
                 $totals = $stmtBank->fetch(PDO::FETCH_ASSOC) ?: [];
 
                 $newBalance = (float)$account['initial_balance']
-                    - (float)($totals['total_debit'] ?? 0)
-                    + (float)($totals['total_credit'] ?? 0);
+                    + (float)($totals['total_debit'] ?? 0)
+                    - (float)($totals['total_credit'] ?? 0);
 
                 $stmtUpdateBank->execute([$newBalance, (int)$account['id']]);
                 $report['bank_accounts']++;
@@ -1425,5 +1161,104 @@ if (!function_exists('recomputeAllBalances')) {
         }
 
         return $report;
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Génération / catalogues métiers
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('generateClientCode')) {
+    function generateClientCode(PDO $pdo): string
+    {
+        do {
+            $code = str_pad((string)random_int(1, 999999999), 9, '0', STR_PAD_LEFT);
+
+            if (!tableExists($pdo, 'clients') || !columnExists($pdo, 'clients', 'client_code')) {
+                return $code;
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT COUNT(*)
+                FROM clients
+                WHERE client_code = ?
+            ");
+            $stmt->execute([$code]);
+            $exists = (int)$stmt->fetchColumn() > 0;
+        } while ($exists);
+
+        return $code;
+    }
+}
+
+if (!function_exists('studely_destination_countries')) {
+    function studely_destination_countries(): array
+    {
+        return [
+            'Allemagne',
+            'Belgique',
+            'France',
+            'Espagne',
+            'Italie',
+            'Autres destinations',
+        ];
+    }
+}
+
+if (!function_exists('studely_commercial_countries')) {
+    function studely_commercial_countries(): array
+    {
+        return [
+            'France','Allemagne','Belgique','Cameroun','Sénégal','Côte d\'Ivoire','Benin',
+            'Burkina Faso','Congo Brazzaville','Congo Kinshasa','Gabon','Tchad','Mali','Togo',
+            'Mexique','Inde','Algérie','Guinée','Tunisie','Maroc','Niger','Afrique de l\'est','Autres pays',
+        ];
+    }
+}
+
+if (!function_exists('studely_origin_countries')) {
+    function studely_origin_countries(): array
+    {
+        return [
+            'Afghanistan','Afrique du Sud','Albanie','Algérie','Allemagne','Andorre','Angola','Antigua-et-Barbuda',
+            'Arabie saoudite','Argentine','Arménie','Australie','Autriche','Azerbaïdjan','Bahamas','Bahreïn',
+            'Bangladesh','Barbade','Belgique','Belize','Bénin','Bhoutan','Biélorussie','Birmanie','Bolivie',
+            'Bosnie-Herzégovine','Botswana','Brésil','Brunei','Bulgarie','Burkina Faso','Burundi','Cap-Vert',
+            'Cambodge','Cameroun','Canada','République centrafricaine','Chili','Chine','Chypre','Colombie',
+            'Comores','Congo','République démocratique du Congo','Corée du Nord','Corée du Sud','Costa Rica',
+            'Côte d’Ivoire','Croatie','Cuba','Danemark','Djibouti','Dominique','Égypte','Émirats arabes unis',
+            'Équateur','Érythrée','Espagne','Estonie','Eswatini','États-Unis','Éthiopie','Fidji','Finlande',
+            'France','Gabon','Gambie','Géorgie','Ghana','Grèce','Grenade','Guatemala','Guinée','Guinée-Bissau',
+            'Guinée équatoriale','Guyana','Haïti','Honduras','Hongrie','Inde','Indonésie','Irak','Iran',
+            'Irlande','Islande','Israël','Italie','Jamaïque','Japon','Jordanie','Kazakhstan','Kenya',
+            'Kirghizistan','Kiribati','Koweït','Laos','Lesotho','Lettonie','Liban','Liberia','Libye',
+            'Liechtenstein','Lituanie','Luxembourg','Macédoine du Nord','Madagascar','Malaisie','Malawi',
+            'Maldives','Mali','Malte','Maroc','Îles Marshall','Maurice','Mauritanie','Mexique','Micronésie',
+            'Moldavie','Monaco','Mongolie','Monténégro','Mozambique','Namibie','Nauru','Népal','Nicaragua',
+            'Niger','Nigeria','Norvège','Nouvelle-Zélande','Oman','Ouganda','Ouzbékistan','Pakistan',
+            'Palaos','Palestine','Panama','Papouasie-Nouvelle-Guinée','Paraguay','Pays-Bas','Pérou',
+            'Philippines','Pologne','Portugal','Qatar','Roumanie','Royaume-Uni','Russie','Rwanda',
+            'Saint-Christophe-et-Niévès','Saint-Marin','Saint-Vincent-et-les-Grenadines','Sainte-Lucie',
+            'Salomon','Salvador','Samoa','Sao Tomé-et-Principe','Sénégal','Serbie','Seychelles',
+            'Sierra Leone','Singapour','Slovaquie','Slovénie','Somalie','Soudan','Soudan du Sud',
+            'Sri Lanka','Suède','Suisse','Suriname','Syrie','Tadjikistan','Tanzanie','Tchad','Tchéquie',
+            'Thaïlande','Timor oriental','Togo','Tonga','Trinité-et-Tobago','Tunisie','Turkménistan',
+            'Turquie','Tuvalu','Ukraine','Uruguay','Vanuatu','Vatican','Venezuela','Vietnam','Yémen',
+            'Zambie','Zimbabwe',
+        ];
+    }
+}
+
+if (!function_exists('studely_client_types')) {
+    function studely_client_types(): array
+    {
+        return [
+            'Etudiant',
+            'Particulier',
+            'Entreprise',
+            'Partenaire',
+        ];
     }
 }
