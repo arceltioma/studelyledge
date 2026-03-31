@@ -6,7 +6,45 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-studelyEnforceAccess($pdo, 'imports_preview_page');
+if (function_exists('studelyEnforceAccess')) {
+    studelyEnforceAccess($pdo, 'imports_preview_page');
+} else {
+    enforcePagePermission($pdo, 'imports_preview');
+}
+
+if (!function_exists('sl_normalize_code')) {
+    function sl_normalize_code(?string $value): string
+    {
+        $value = strtoupper(trim((string)$value));
+        $value = str_replace(
+            ['É', 'È', 'Ê', 'Ë', 'À', 'Â', 'Ä', 'Î', 'Ï', 'Ô', 'Ö', 'Ù', 'Û', 'Ü', 'Ç', ' ', '-', '/', '\''],
+            ['E', 'E', 'E', 'E', 'A', 'A', 'A', 'I', 'I', 'O', 'O', 'U', 'U', 'U', 'C', '_', '_', '_', ''],
+            $value
+        );
+        $value = preg_replace('/[^A-Z0-9_]/', '', $value);
+        $value = preg_replace('/_+/', '_', $value);
+        return trim((string)$value, '_');
+    }
+}
+
+if (!function_exists('sl_operation_service_map')) {
+    function sl_operation_service_map(): array
+    {
+        return [
+            'VERSEMENT' => ['VERSEMENT'],
+            'VIREMENT' => ['INTERNE', 'MENSUEL', 'EXCEPTIONEL', 'REGULIER'],
+            'REGULARISATION' => ['POSITIVE', 'NEGATIVE'],
+            'FRAIS_SERVICE' => ['AVI', 'ATS'],
+            'FRAIS_GESTION' => ['GESTION'],
+            'COMMISSION_DE_TRANSFERT' => ['COMMISSION_DE_TRANSFERT'],
+            'CA_PLACEMENT' => ['CA_PLACEMENT'],
+            'CA_DIVERS' => ['CA_DIVERS'],
+            'CA_LOGEMENT' => ['CA_LOGEMENT'],
+            'CA_COURTAGE_PRET' => ['CA_COURTAGE_PRET'],
+            'FRAIS_DEBOURDS_MICROFINANCE' => ['FRAIS_DEBOURDS_MICROFINANCE'],
+        ];
+    }
+}
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
@@ -42,9 +80,15 @@ $operationTypes = tableExists($pdo, 'ref_operation_types')
 
 $services = tableExists($pdo, 'ref_services')
     ? $pdo->query("
-        SELECT id, code, label
-        FROM ref_services
-        ORDER BY label ASC
+        SELECT
+            rs.id,
+            rs.code,
+            rs.label,
+            rs.operation_type_id,
+            rot.code AS operation_type_code
+        FROM ref_services rs
+        LEFT JOIN ref_operation_types rot ON rot.id = rs.operation_type_id
+        ORDER BY rs.label ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
 
@@ -53,7 +97,6 @@ if (!empty($_SESSION['statement_import_preview']['rows'])) {
 }
 
 $pageTitle = 'Prévisualisation imports';
-$pageSubtitle = 'On détecte, on normalise, on rattache, puis seulement après on valide.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -62,9 +105,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
-        <?php if (function_exists('render_app_header_bar')): ?>
-            <?php render_app_header_bar($pageTitle, $pageSubtitle); ?>
-        <?php endif; ?>
+        <?php render_app_header_bar('Prévisualisation des relevés bancaires', 'On détecte, on normalise, on rattache, puis seulement après on valide.'); ?>
 
         <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
         <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
@@ -106,6 +147,10 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
         <?php if ($previewRows): ?>
             <form method="POST" action="<?= APP_URL ?>modules/imports/import_validate.php">
+                <?php if (function_exists('csrf_input')): ?>
+                    <?= csrf_input() ?>
+                <?php endif; ?>
+
                 <div class="table-card" style="margin-top:20px;">
                     <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;">
                         <h3 class="section-title">Prévisualisation</h3>
@@ -136,9 +181,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 $statusClass = $row['status'] === 'ok'
                                     ? 'status-success'
                                     : ($row['status'] === 'ambiguous' ? 'status-warning' : 'status-danger');
+                                $rowTypeCode = sl_normalize_code((string)($row['operation_type_code'] ?? ''));
                                 ?>
                                 <tr>
-                                    <td><input type="checkbox" name="selected_rows[]" value="<?= (int)$idx ?>" <?= $row['status'] === 'rejected' ? '' : 'checked' ?>></td>
+                                    <td>
+                                        <input type="checkbox" name="selected_rows[]" value="<?= (int)$idx ?>" <?= $row['status'] === 'rejected' ? '' : 'checked' ?>>
+                                    </td>
                                     <td><?= (int)$row['row_no'] ?></td>
                                     <td><?= e($row['operation_date'] ?? '') ?></td>
                                     <td><?= e($row['label'] ?? '') ?></td>
@@ -157,9 +205,9 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                     </td>
 
                                     <td>
-                                        <select name="row_operation_type_code[<?= (int)$idx ?>]">
+                                        <select name="row_operation_type_code[<?= (int)$idx ?>]" class="row-operation-type">
                                             <?php foreach ($operationTypes as $type): ?>
-                                                <option value="<?= e($type['code']) ?>" <?= ($row['operation_type_code'] ?? '') === $type['code'] ? 'selected' : '' ?>>
+                                                <option value="<?= e($type['code']) ?>" data-type-code="<?= e(sl_normalize_code($type['code'] ?? '')) ?>" <?= ($row['operation_type_code'] ?? '') === $type['code'] ? 'selected' : '' ?>>
                                                     <?= e($type['label']) ?>
                                                 </option>
                                             <?php endforeach; ?>
@@ -167,10 +215,16 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                     </td>
 
                                     <td>
-                                        <select name="row_service_code[<?= (int)$idx ?>]">
+                                        <select name="row_service_code[<?= (int)$idx ?>]" class="row-service-select" data-row-type="<?= e($rowTypeCode) ?>">
                                             <option value="">Aucun</option>
                                             <?php foreach ($services as $service): ?>
-                                                <option value="<?= e($service['code']) ?>" <?= ($row['service_code'] ?? '') === $service['code'] ? 'selected' : '' ?>>
+                                                <option
+                                                    value="<?= e($service['code']) ?>"
+                                                    data-operation-type-id="<?= (int)($service['operation_type_id'] ?? 0) ?>"
+                                                    data-operation-type-code="<?= e(sl_normalize_code($service['operation_type_code'] ?? '')) ?>"
+                                                    data-service-code="<?= e(sl_normalize_code($service['code'] ?? '')) ?>"
+                                                    <?= ($row['service_code'] ?? '') === $service['code'] ? 'selected' : '' ?>
+                                                >
                                                     <?= e($service['label']) ?>
                                                 </option>
                                             <?php endforeach; ?>
@@ -205,6 +259,61 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 </div>
             </form>
         <?php endif; ?>
+
+        <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const map = <?= json_encode(sl_operation_service_map(), JSON_UNESCAPED_UNICODE) ?>;
+
+            document.querySelectorAll('tr').forEach(function (row) {
+                const typeSelect = row.querySelector('.row-operation-type');
+                const serviceSelect = row.querySelector('.row-service-select');
+
+                if (!typeSelect || !serviceSelect) {
+                    return;
+                }
+
+                const originalOptions = Array.from(serviceSelect.querySelectorAll('option')).map(option => option.cloneNode(true));
+
+                function refreshRowServices() {
+                    const selectedOption = typeSelect.options[typeSelect.selectedIndex];
+                    const selectedTypeCode = selectedOption ? (selectedOption.getAttribute('data-type-code') || '') : '';
+                    const currentValue = serviceSelect.value;
+
+                    serviceSelect.innerHTML = '';
+
+                    const placeholder = document.createElement('option');
+                    placeholder.value = '';
+                    placeholder.textContent = selectedTypeCode ? 'Aucun' : 'Choisir d’abord un type';
+                    serviceSelect.appendChild(placeholder);
+
+                    const allowedCodes = map[selectedTypeCode] || [];
+                    let stillValid = false;
+
+                    originalOptions.forEach(option => {
+                        if (option.value === '') {
+                            return;
+                        }
+
+                        const serviceCode = option.getAttribute('data-service-code') || '';
+                        const serviceTypeCode = option.getAttribute('data-operation-type-code') || '';
+
+                        if (allowedCodes.includes(serviceCode) || serviceTypeCode === selectedTypeCode) {
+                            const cloned = option.cloneNode(true);
+                            if (cloned.value === currentValue) {
+                                stillValid = true;
+                            }
+                            serviceSelect.appendChild(cloned);
+                        }
+                    });
+
+                    serviceSelect.value = stillValid ? currentValue : '';
+                }
+
+                typeSelect.addEventListener('change', refreshRowServices);
+                refreshRowServices();
+            });
+        });
+        </script>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>

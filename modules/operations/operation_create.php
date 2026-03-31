@@ -13,41 +13,72 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'operations_create');
 }
 
-function opOld(string $key, mixed $default = ''): string
-{
-    return e((string)($_POST[$key] ?? $default));
+if (!function_exists('sl_normalize_code')) {
+    function sl_normalize_code(?string $value): string
+    {
+        $value = strtoupper(trim((string)$value));
+        $value = str_replace(
+            ['É', 'È', 'Ê', 'Ë', 'À', 'Â', 'Ä', 'Î', 'Ï', 'Ô', 'Ö', 'Ù', 'Û', 'Ü', 'Ç', ' ', '-', '/', '\''],
+            ['E', 'E', 'E', 'E', 'A', 'A', 'A', 'I', 'I', 'O', 'O', 'U', 'U', 'U', 'C', '_', '_', '_', ''],
+            $value
+        );
+        $value = preg_replace('/[^A-Z0-9_]/', '', $value);
+        $value = preg_replace('/_+/', '_', $value);
+        return trim((string)$value, '_');
+    }
 }
 
-function opFindById(array $rows, int $id): ?array
-{
-    foreach ($rows as $row) {
-        if ((int)($row['id'] ?? 0) === $id) {
-            return $row;
+if (!function_exists('sl_operation_service_map')) {
+    function sl_operation_service_map(): array
+    {
+        return [
+            'VERSEMENT' => ['VERSEMENT'],
+            'VIREMENT' => ['INTERNE', 'MENSUEL', 'EXCEPTIONEL', 'REGULIER'],
+            'REGULARISATION' => ['POSITIVE', 'NEGATIVE'],
+            'FRAIS_SERVICE' => ['AVI', 'ATS'],
+            'FRAIS_GESTION' => ['GESTION'],
+            'COMMISSION_DE_TRANSFERT' => ['COMMISSION_DE_TRANSFERT'],
+            'CA_PLACEMENT' => ['CA_PLACEMENT'],
+            'CA_DIVERS' => ['CA_DIVERS'],
+            'CA_LOGEMENT' => ['CA_LOGEMENT'],
+            'CA_COURTAGE_PRET' => ['CA_COURTAGE_PRET'],
+            'FRAIS_DEBOURDS_MICROFINANCE' => ['FRAIS_DEBOURDS_MICROFINANCE'],
+        ];
+    }
+}
+
+if (!function_exists('sl_service_allowed_for_type')) {
+    function sl_service_allowed_for_type(?string $typeCode, ?string $serviceCode): bool
+    {
+        $map = sl_operation_service_map();
+        $typeCode = sl_normalize_code($typeCode);
+        $serviceCode = sl_normalize_code($serviceCode);
+
+        if ($typeCode === '' || $serviceCode === '' || !isset($map[$typeCode])) {
+            return false;
         }
+
+        return in_array($serviceCode, $map[$typeCode], true);
     }
-    return null;
 }
 
-function opServiceAccountDisplay(array $account): string
-{
-    $base = trim(($account['account_code'] ?? '') . ' - ' . ($account['account_label'] ?? ''));
-    $meta = [];
+if (!function_exists('opOld')) {
+    function opOld(string $key, mixed $default = ''): string
+    {
+        return e((string)($_POST[$key] ?? $default));
+    }
+}
 
-    if (!empty($account['operation_type_label'])) {
-        $meta[] = $account['operation_type_label'];
+if (!function_exists('opFindById')) {
+    function opFindById(array $rows, int $id): ?array
+    {
+        foreach ($rows as $row) {
+            if ((int)($row['id'] ?? 0) === $id) {
+                return $row;
+            }
+        }
+        return null;
     }
-    if (!empty($account['destination_country_label'])) {
-        $meta[] = 'Destination: ' . $account['destination_country_label'];
-    }
-    if (!empty($account['commercial_country_label'])) {
-        $meta[] = 'Commercial: ' . $account['commercial_country_label'];
-    }
-
-    if ($meta) {
-        $base .= ' [' . implode(' | ', $meta) . ']';
-    }
-
-    return $base;
 }
 
 $operationTypes = tableExists($pdo, 'ref_operation_types')
@@ -189,12 +220,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('Le service sélectionné est archivé.');
             }
 
-            if ((int)($selectedService['operation_type_active'] ?? 0) !== 1) {
-                throw new RuntimeException('Le type parent du service est archivé.');
+            if (!sl_service_allowed_for_type($selectedType['code'] ?? '', $selectedService['code'] ?? '')) {
+                throw new RuntimeException('Le service sélectionné ne correspond pas au type d’opération choisi.');
             }
 
-            if ((int)($selectedService['operation_type_id'] ?? 0) !== (int)$selectedType['id']) {
-                throw new RuntimeException('Le service sélectionné n’est pas rattaché au type d’opération choisi.');
+            if ((int)($selectedService['operation_type_active'] ?? 0) !== 1) {
+                throw new RuntimeException('Le type parent du service est archivé.');
             }
 
             if (!empty($selectedService['service_account_id'])) {
@@ -204,15 +235,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 if ((int)($selectedService['service_account_postable'] ?? 0) !== 1) {
                     throw new RuntimeException('Le compte 706 du service n’est pas mouvementable.');
-                }
-
-                if (!empty($selectedService['service_account_operation_type_label'])) {
-                    $normalized706Type = strtoupper(trim((string)$selectedService['service_account_operation_type_label']));
-                    $normalizedSelectedType = strtoupper(trim((string)$selectedType['code']));
-
-                    if ($normalized706Type !== $normalizedSelectedType) {
-                        throw new RuntimeException('Le compte 706 du service n’est pas cohérent avec le type d’opération.');
-                    }
                 }
             }
         }
@@ -251,11 +273,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        $typeCode = (string)$selectedType['code'];
-
-        $isInternalTransfer = ($typeCode === 'VIREMENT_INTERNE');
+        $typeCode = sl_normalize_code((string)$selectedType['code']);
+        $isInternalTransfer = ($typeCode === 'VIREMENT' && $selectedService && sl_normalize_code($selectedService['code'] ?? '') === 'INTERNE');
         $requiresClient = !$isInternalTransfer;
-        $requiresService = in_array($typeCode, ['FRAIS_DE_SERVICE', 'FRAIS_BANCAIRES', 'VIREMENT_EXCEPTIONEL'], true);
+        $requiresService = true;
 
         if ($requiresClient && !$selectedClient) {
             throw new RuntimeException('Le client est obligatoire pour cette opération.');
@@ -278,10 +299,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('Un virement interne ne doit pas être rattaché à un client.');
             }
 
-            if ($selectedService) {
-                throw new RuntimeException('Un virement interne ne doit pas être rattaché à un service.');
-            }
-
             $preview = [
                 'debit_account_code' => $selectedSourceTreasury['account_code'],
                 'credit_account_code' => $selectedTargetTreasury['account_code'],
@@ -297,7 +314,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'amount' => $amount,
                     'operation_date' => $operationDate,
                     'reference' => $reference !== '' ? $reference : null,
-                    'label' => $label !== '' ? $label : $selectedType['label'],
+                    'label' => $label !== '' ? $label : ($selectedType['label'] . ' - ' . ($selectedService['label'] ?? '')),
                 ]);
 
                 if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
@@ -331,7 +348,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'amount' => $amount,
                 'operation_date' => $operationDate,
                 'reference' => $reference !== '' ? $reference : null,
-                'label' => $label !== '' ? $label : $selectedType['label'],
+                'label' => $label !== '' ? $label : trim(($selectedType['label'] ?? '') . ' - ' . ($selectedService['label'] ?? '')),
                 'notes' => $notes !== '' ? $notes : null,
                 'source_type' => 'manual',
                 'operation_kind' => 'manual',
@@ -354,7 +371,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'operations',
                         'operation',
                         $operationId,
-                        'Création d’une opération avec hiérarchie 706'
+                        'Création d’une opération avec filtrage dynamique type/service'
                     );
                 }
 
@@ -373,7 +390,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $pageTitle = 'Créer une opération';
-$pageSubtitle = 'Le moteur contrôle type, service et hiérarchie 706 avant toute écriture.';
+$pageSubtitle = 'Le service affiché dépend du type d’opération choisi.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -409,10 +426,10 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <div>
                             <label>Type d’opération</label>
-                            <select name="operation_type_id" required>
+                            <select name="operation_type_id" id="operation_type_id" required>
                                 <option value="">Choisir</option>
                                 <?php foreach ($operationTypes as $type): ?>
-                                    <option value="<?= (int)$type['id'] ?>" <?= opOld('operation_type_id') == $type['id'] ? 'selected' : '' ?>>
+                                    <option value="<?= (int)$type['id'] ?>" data-type-code="<?= e(sl_normalize_code($type['code'] ?? '')) ?>" <?= opOld('operation_type_id') == $type['id'] ? 'selected' : '' ?>>
                                         <?= e($type['label']) ?> (<?= e($type['code']) ?>)<?= (int)$type['is_active'] !== 1 ? ' [archivé]' : '' ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -421,10 +438,16 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <div>
                             <label>Service</label>
-                            <select name="service_id">
-                                <option value="">Aucun</option>
+                            <select name="service_id" id="service_id">
+                                <option value="">Choisir d’abord un type</option>
                                 <?php foreach ($services as $service): ?>
-                                    <option value="<?= (int)$service['id'] ?>" <?= opOld('service_id') == $service['id'] ? 'selected' : '' ?>>
+                                    <option
+                                        value="<?= (int)$service['id'] ?>"
+                                        data-operation-type-id="<?= (int)($service['operation_type_id'] ?? 0) ?>"
+                                        data-operation-type-code="<?= e(sl_normalize_code($service['operation_type_code'] ?? '')) ?>"
+                                        data-service-code="<?= e(sl_normalize_code($service['code'] ?? '')) ?>"
+                                        <?= opOld('service_id') == $service['id'] ? 'selected' : '' ?>
+                                    >
                                         <?= e(($service['label'] ?? '') . ' (' . ($service['code'] ?? '') . ')') ?>
                                         <?php
                                         $meta = [];
@@ -441,7 +464,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                             echo ' [' . e(implode(' | ', $meta)) . ']';
                                         }
                                         ?>
-                                        <?= ((int)($service['is_active'] ?? 0) !== 1 || (int)($service['operation_type_active'] ?? 0) !== 1) ? ' [inactif]' : '' ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -449,7 +471,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <div>
                             <label>Client</label>
-                            <select name="client_id">
+                            <select name="client_id" id="client_id">
                                 <option value="">Aucun</option>
                                 <?php foreach ($clients as $client): ?>
                                     <option value="<?= (int)$client['id'] ?>" <?= opOld('client_id') == $client['id'] ? 'selected' : '' ?>>
@@ -467,7 +489,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <div>
                             <label>Compte interne source</label>
-                            <select name="source_treasury_account_id">
+                            <select name="source_treasury_account_id" id="source_treasury_account_id">
                                 <option value="">Auto / Aucun</option>
                                 <?php foreach ($treasuryAccounts as $acc): ?>
                                     <option value="<?= (int)$acc['id'] ?>" <?= opOld('source_treasury_account_id') == $acc['id'] ? 'selected' : '' ?>>
@@ -479,7 +501,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <div>
                             <label>Compte interne cible</label>
-                            <select name="target_treasury_account_id">
+                            <select name="target_treasury_account_id" id="target_treasury_account_id">
                                 <option value="">Aucun</option>
                                 <?php foreach ($treasuryAccounts as $acc): ?>
                                     <option value="<?= (int)$acc['id'] ?>" <?= opOld('target_treasury_account_id') == $acc['id'] ? 'selected' : '' ?>>
@@ -560,6 +582,94 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 </tbody>
             </table>
         </div>
+
+        <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const map = <?= json_encode(sl_operation_service_map(), JSON_UNESCAPED_UNICODE) ?>;
+            const typeSelect = document.getElementById('operation_type_id');
+            const serviceSelect = document.getElementById('service_id');
+            const clientSelect = document.getElementById('client_id');
+            const sourceSelect = document.getElementById('source_treasury_account_id');
+            const targetSelect = document.getElementById('target_treasury_account_id');
+
+            if (!typeSelect || !serviceSelect) {
+                return;
+            }
+
+            const originalServiceOptions = Array.from(serviceSelect.querySelectorAll('option')).map(option => option.cloneNode(true));
+
+            function getSelectedTypeCode() {
+                const selected = typeSelect.options[typeSelect.selectedIndex];
+                return selected ? (selected.getAttribute('data-type-code') || '') : '';
+            }
+
+            function refreshServices() {
+                const selectedTypeId = typeSelect.value;
+                const selectedTypeCode = getSelectedTypeCode();
+                const currentValue = serviceSelect.value;
+
+                serviceSelect.innerHTML = '';
+
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = selectedTypeId ? 'Choisir' : 'Choisir d’abord un type';
+                serviceSelect.appendChild(placeholder);
+
+                let stillValid = false;
+
+                originalServiceOptions.forEach(option => {
+                    if (option.value === '') {
+                        return;
+                    }
+
+                    const serviceTypeId = option.getAttribute('data-operation-type-id') || '';
+                    const serviceCode = option.getAttribute('data-service-code') || '';
+
+                    const allowedCodes = map[selectedTypeCode] || [];
+                    const byTypeId = selectedTypeId !== '' && serviceTypeId === selectedTypeId;
+                    const byCode = selectedTypeCode !== '' && allowedCodes.includes(serviceCode);
+
+                    if (byTypeId || byCode) {
+                        const cloned = option.cloneNode(true);
+                        if (cloned.value === currentValue) {
+                            stillValid = true;
+                        }
+                        serviceSelect.appendChild(cloned);
+                    }
+                });
+
+                serviceSelect.value = stillValid ? currentValue : '';
+                refreshFieldVisibility();
+            }
+
+            function refreshFieldVisibility() {
+                const selectedTypeCode = getSelectedTypeCode();
+                const selectedService = serviceSelect.options[serviceSelect.selectedIndex];
+                const selectedServiceCode = selectedService ? (selectedService.getAttribute('data-service-code') || '') : '';
+                const isInternal = selectedTypeCode === 'VIREMENT' && selectedServiceCode === 'INTERNE';
+
+                if (clientSelect) {
+                    clientSelect.closest('div').style.display = isInternal ? 'none' : '';
+                    if (isInternal) {
+                        clientSelect.value = '';
+                    }
+                }
+
+                if (targetSelect) {
+                    targetSelect.closest('div').style.display = isInternal ? '' : '';
+                }
+
+                if (sourceSelect) {
+                    sourceSelect.closest('div').style.display = '';
+                }
+            }
+
+            typeSelect.addEventListener('change', refreshServices);
+            serviceSelect.addEventListener('change', refreshFieldVisibility);
+
+            refreshServices();
+        });
+        </script>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
