@@ -1,5 +1,11 @@
 <?php
 
+/*
+|--------------------------------------------------------------------------
+| Helpers généraux
+|--------------------------------------------------------------------------
+*/
+
 if (!function_exists('e')) {
     function e(?string $value): string
     {
@@ -85,9 +91,9 @@ if (!function_exists('currentUserRecord')) {
             $roleSelectParts = [];
 
             $roleSelectParts[] = columnExists($pdo, 'roles', 'code') ? 'r.code AS role_code' : 'NULL AS role_code';
-            $roleSelectParts[] = columnExists($pdo, 'roles', 'label') ? 'r.label AS role_label' : (
-                columnExists($pdo, 'roles', 'name') ? 'r.name AS role_label' : 'NULL AS role_label'
-            );
+            $roleSelectParts[] = columnExists($pdo, 'roles', 'label')
+                ? 'r.label AS role_label'
+                : (columnExists($pdo, 'roles', 'name') ? 'r.name AS role_label' : 'NULL AS role_label');
             $roleSelectParts[] = columnExists($pdo, 'users', 'role') ? 'u.role AS legacy_role' : 'NULL AS legacy_role';
 
             $roleSelect = implode(', ', $roleSelectParts);
@@ -204,21 +210,10 @@ if (!function_exists('currentUserCan')) {
             return false;
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Super admin pragmatique
-        |--------------------------------------------------------------------------
-        */
         if (currentUserIsAdminLike($pdo)) {
             return true;
         }
 
-        /*
-        |--------------------------------------------------------------------------
-        | Si la matrice n’existe pas encore complètement,
-        | on autorise par défaut pour ne pas casser l’application.
-        |--------------------------------------------------------------------------
-        */
         if (
             !tableExists($pdo, 'permissions') ||
             !tableExists($pdo, 'role_permissions') ||
@@ -538,6 +533,127 @@ if (!function_exists('logUserAction')) {
 
 /*
 |--------------------------------------------------------------------------
+| Génération / catalogues métiers
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('generateClientCode')) {
+    function generateClientCode(PDO $pdo): string
+    {
+        do {
+            $code = str_pad((string)random_int(1, 999999999), 9, '0', STR_PAD_LEFT);
+
+            if (!tableExists($pdo, 'clients') || !columnExists($pdo, 'clients', 'client_code')) {
+                return $code;
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT COUNT(*)
+                FROM clients
+                WHERE client_code = ?
+            ");
+            $stmt->execute([$code]);
+            $exists = (int)$stmt->fetchColumn() > 0;
+        } while ($exists);
+
+        return $code;
+    }
+}
+
+if (!function_exists('studely_destination_countries')) {
+    function studely_destination_countries(): array
+    {
+        return [
+            'Allemagne',
+            'Belgique',
+            'France',
+            'Espagne',
+            'Italie',
+            'Autres destinations',
+        ];
+    }
+}
+
+if (!function_exists('studely_commercial_countries')) {
+    function studely_commercial_countries(): array
+    {
+        return [
+            'France','Allemagne','Belgique','Cameroun','Sénégal','Côte d\'Ivoire','Benin',
+            'Burkina Faso','Congo Brazzaville','Congo Kinshasa','Gabon','Tchad','Mali','Togo',
+            'Mexique','Inde','Algérie','Guinée','Tunisie','Maroc','Niger','Afrique de l\'est','Autres pays',
+        ];
+    }
+}
+
+if (!function_exists('studely_origin_countries')) {
+    function studely_origin_countries(): array
+    {
+        return [
+            'Afghanistan','Afrique du Sud','Albanie','Algérie','Allemagne','Andorre','Angola','Antigua-et-Barbuda',
+            'Arabie saoudite','Argentine','Arménie','Australie','Autriche','Azerbaïdjan','Bahamas','Bahreïn',
+            'Bangladesh','Barbade','Belgique','Belize','Bénin','Bhoutan','Biélorussie','Birmanie','Bolivie',
+            'Bosnie-Herzégovine','Botswana','Brésil','Brunei','Bulgarie','Burkina Faso','Burundi','Cap-Vert',
+            'Cambodge','Cameroun','Canada','République centrafricaine','Chili','Chine','Chypre','Colombie',
+            'Comores','Congo','République démocratique du Congo','Corée du Nord','Corée du Sud','Costa Rica',
+            'Côte d’Ivoire','Croatie','Cuba','Danemark','Djibouti','Dominique','Égypte','Émirats arabes unis',
+            'Équateur','Érythrée','Espagne','Estonie','Eswatini','États-Unis','Éthiopie','Fidji','Finlande',
+            'France','Gabon','Gambie','Géorgie','Ghana','Grèce','Grenade','Guatemala','Guinée','Guinée-Bissau',
+            'Guinée équatoriale','Guyana','Haïti','Honduras','Hongrie','Inde','Indonésie','Irak','Iran',
+            'Irlande','Islande','Israël','Italie','Jamaïque','Japon','Jordanie','Kazakhstan','Kenya',
+            'Kirghizistan','Kiribati','Koweït','Laos','Lesotho','Lettonie','Liban','Liberia','Libye',
+            'Liechtenstein','Lituanie','Luxembourg','Macédoine du Nord','Madagascar','Malaisie','Malawi',
+            'Maldives','Mali','Malte','Maroc','Îles Marshall','Maurice','Mauritanie','Mexique','Micronésie',
+            'Moldavie','Monaco','Mongolie','Monténégro','Mozambique','Namibie','Nauru','Népal','Nicaragua',
+            'Niger','Nigeria','Norvège','Nouvelle-Zélande','Oman','Ouganda','Ouzbékistan','Pakistan',
+            'Palaos','Palestine','Panama','Papouasie-Nouvelle-Guinée','Paraguay','Pays-Bas','Pérou',
+            'Philippines','Pologne','Portugal','Qatar','Roumanie','Royaume-Uni','Russie','Rwanda',
+            'Saint-Christophe-et-Niévès','Saint-Marin','Saint-Vincent-et-les-Grenadines','Sainte-Lucie',
+            'Salomon','Salvador','Samoa','Sao Tomé-et-Principe','Sénégal','Serbie','Seychelles',
+            'Sierra Leone','Singapour','Slovaquie','Slovénie','Somalie','Soudan','Soudan du Sud',
+            'Sri Lanka','Suède','Suisse','Suriname','Syrie','Tadjikistan','Tanzanie','Tchad','Tchéquie',
+            'Thaïlande','Timor oriental','Togo','Tonga','Trinité-et-Tobago','Tunisie','Turkménistan',
+            'Turquie','Tuvalu','Ukraine','Uruguay','Vanuatu','Vatican','Venezuela','Vietnam','Yémen',
+            'Zambie','Zimbabwe',
+        ];
+    }
+}
+
+if (!function_exists('studely_client_types')) {
+    function studely_client_types(): array
+    {
+        return [
+            'Etudiant',
+            'Particulier',
+            'Entreprise',
+            'Partenaire',
+        ];
+    }
+}
+
+if (!function_exists('sl_get_currency_options')) {
+    function sl_get_currency_options(PDO $pdo): array
+    {
+        if (tableExists($pdo, 'currencies')) {
+            return $pdo->query("
+                SELECT code, label
+                FROM currencies
+                WHERE COALESCE(is_active,1) = 1
+                ORDER BY code ASC
+            ")->fetchAll(PDO::FETCH_ASSOC);
+        }
+
+        return [
+            ['code' => 'EUR', 'label' => 'Euro'],
+            ['code' => 'USD', 'label' => 'Dollar US'],
+            ['code' => 'GBP', 'label' => 'Livre Sterling'],
+            ['code' => 'XAF', 'label' => 'Franc CFA BEAC'],
+            ['code' => 'XOF', 'label' => 'Franc CFA BCEAO'],
+        ];
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
 | Comptes / contexte client
 |--------------------------------------------------------------------------
 */
@@ -561,6 +677,26 @@ if (!function_exists('findPrimaryBankAccountForClient')) {
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         return $row ?: null;
+    }
+}
+
+if (!function_exists('sl_find_client_bank_accounts')) {
+    function sl_find_client_bank_accounts(PDO $pdo, int $clientId): array
+    {
+        if (!tableExists($pdo, 'client_bank_accounts') || !tableExists($pdo, 'bank_accounts')) {
+            return [];
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT ba.*
+            FROM client_bank_accounts cba
+            INNER JOIN bank_accounts ba ON ba.id = cba.bank_account_id
+            WHERE cba.client_id = ?
+            ORDER BY ba.account_number ASC
+        ");
+        $stmt->execute([$clientId]);
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 }
 
@@ -677,7 +813,275 @@ if (!function_exists('resolveServiceAccountFromServiceId')) {
 
 /*
 |--------------------------------------------------------------------------
-| Moteur comptable
+| Moteur comptable - helpers
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('sl_normalize_code')) {
+    function sl_normalize_code(?string $value): string
+    {
+        $value = strtoupper(trim((string)$value));
+        $value = str_replace(
+            ['É','È','Ê','Ë','À','Â','Ä','Î','Ï','Ô','Ö','Ù','Û','Ü','Ç',' ', '-', '/', '\''],
+            ['E','E','E','E','A','A','A','I','I','O','O','U','U','U','C','_','_','_',''],
+            $value
+        );
+        $value = preg_replace('/[^A-Z0-9_]/', '', $value);
+        $value = preg_replace('/_+/', '_', $value);
+        return trim((string)$value, '_');
+    }
+}
+
+if (!function_exists('sl_operation_service_map')) {
+    function sl_operation_service_map(): array
+    {
+        return [
+            'VERSEMENT' => ['VERSEMENT'],
+            'VIREMENT' => ['INTERNE', 'MENSUEL', 'EXCEPTIONEL', 'REGULIER'],
+            'REGULARISATION' => ['POSITIVE', 'NEGATIVE'],
+            'FRAIS_SERVICE' => ['AVI', 'ATS'],
+            'FRAIS_GESTION' => ['GESTION'],
+            'COMMISSION_DE_TRANSFERT' => ['COMMISSION_DE_TRANSFERT'],
+            'CA_PLACEMENT' => ['CA_PLACEMENT'],
+            'CA_DIVERS' => ['CA_DIVERS'],
+            'CA_DEBOURDS_ASSURANCE' => ['CA_DEBOURDS_ASSURANCE'],
+            'CA_LOGEMENT' => ['CA_LOGEMENT'],
+            'CA_COURTAGE_PRET' => ['CA_COURTAGE_PRET'],
+            'FRAIS_DEBOURDS_MICROFINANCE' => ['FRAIS_DEBOURDS_MICROFINANCE'],
+        ];
+    }
+}
+
+if (!function_exists('sl_manual_accounting_cases')) {
+    function sl_manual_accounting_cases(): array
+    {
+        return [
+            'VIREMENT::INTERNE',
+            'CA_DIVERS::CA_DIVERS',
+            'CA_DEBOURDS_ASSURANCE::CA_DEBOURDS_ASSURANCE',
+            'FRAIS_DEBOURDS_MICROFINANCE::FRAIS_DEBOURDS_MICROFINANCE',
+            'CA_COURTAGE_PRET::CA_COURTAGE_PRET',
+            'CA_LOGEMENT::CA_LOGEMENT',
+        ];
+    }
+}
+
+if (!function_exists('sl_service_allowed_for_type')) {
+    function sl_service_allowed_for_type(?string $typeCode, ?string $serviceCode): bool
+    {
+        $map = sl_operation_service_map();
+        $typeCode = sl_normalize_code($typeCode);
+        $serviceCode = sl_normalize_code($serviceCode);
+
+        if ($typeCode === '' || $serviceCode === '' || !isset($map[$typeCode])) {
+            return false;
+        }
+
+        return in_array($serviceCode, $map[$typeCode], true);
+    }
+}
+
+if (!function_exists('sl_is_manual_accounting_case')) {
+    function sl_is_manual_accounting_case(?string $typeCode, ?string $serviceCode): bool
+    {
+        $key = sl_normalize_code($typeCode) . '::' . sl_normalize_code($serviceCode);
+        return in_array($key, sl_manual_accounting_cases(), true);
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Matching intelligent sur account_label
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('sl_normalize_match_text')) {
+    function sl_normalize_match_text(?string $value): string
+    {
+        $value = (string)($value ?? '');
+        $value = mb_strtoupper($value, 'UTF-8');
+
+        $replaceFrom = [
+            'À','Á','Â','Ã','Ä','Å',
+            'È','É','Ê','Ë',
+            'Ì','Í','Î','Ï',
+            'Ò','Ó','Ô','Õ','Ö',
+            'Ù','Ú','Û','Ü',
+            'Ý',
+            'Ç',
+            'Œ','Æ',
+            '’', "'", '`', '´',
+            '-', '_', '/', '\\', '.', ',', ';', ':', '(', ')', '[', ']', '{', '}'
+        ];
+
+        $replaceTo = [
+            'A','A','A','A','A','A',
+            'E','E','E','E',
+            'I','I','I','I',
+            'O','O','O','O','O',
+            'U','U','U','U',
+            'Y',
+            'C',
+            'OE','AE',
+            ' ', ' ', ' ', ' ',
+            ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' '
+        ];
+
+        $value = str_replace($replaceFrom, $replaceTo, $value);
+        $value = preg_replace('/[^A-Z0-9 ]+/', ' ', $value);
+        $value = preg_replace('/\s+/', ' ', $value);
+
+        return trim((string)$value);
+    }
+}
+
+if (!function_exists('sl_match_all_tokens_in_label')) {
+    function sl_match_all_tokens_in_label(string $label, array $tokens): bool
+    {
+        $normalizedLabel = sl_normalize_match_text($label);
+
+        foreach ($tokens as $token) {
+            $normalizedToken = sl_normalize_match_text((string)$token);
+            if ($normalizedToken === '') {
+                continue;
+            }
+
+            if (mb_strpos($normalizedLabel, $normalizedToken) === false) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('sl_load_candidate_service_accounts')) {
+    function sl_load_candidate_service_accounts(PDO $pdo, ?int $serviceId): array
+    {
+        if (!$serviceId || !tableExists($pdo, 'service_accounts')) {
+            return [];
+        }
+
+        $rows = [];
+
+        if (tableExists($pdo, 'ref_services')) {
+            $stmt = $pdo->prepare("
+                SELECT
+                    sa.*,
+                    rs.code AS ref_service_code,
+                    rs.label AS ref_service_label
+                FROM ref_services rs
+                LEFT JOIN service_accounts sa ON sa.id = rs.service_account_id
+                WHERE rs.id = ?
+            ");
+            $stmt->execute([$serviceId]);
+            $linked = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($linked && !empty($linked['account_code'])) {
+                $rows[] = $linked;
+            }
+        }
+
+        $stmtAll = $pdo->prepare("
+            SELECT *
+            FROM service_accounts
+            WHERE COALESCE(is_active,1) = 1
+              AND COALESCE(is_postable,0) = 1
+            ORDER BY account_code ASC
+        ");
+        $stmtAll->execute();
+        $all = $stmtAll->fetchAll(PDO::FETCH_ASSOC);
+
+        foreach ($all as $row) {
+            $accountCode = (string)($row['account_code'] ?? '');
+            $exists = false;
+            foreach ($rows as $existing) {
+                if ((string)($existing['account_code'] ?? '') === $accountCode) {
+                    $exists = true;
+                    break;
+                }
+            }
+            if (!$exists) {
+                $rows[] = $row;
+            }
+        }
+
+        return $rows;
+    }
+}
+
+if (!function_exists('sl_find_service_account_by_label_rule')) {
+    function sl_find_service_account_by_label_rule(PDO $pdo, ?int $serviceId, array $tokens): ?array
+    {
+        $candidates = sl_load_candidate_service_accounts($pdo, $serviceId);
+        if (!$candidates) {
+            return null;
+        }
+
+        foreach ($candidates as $row) {
+            $label = (string)($row['account_label'] ?? '');
+            if ($label !== '' && sl_match_all_tokens_in_label($label, $tokens)) {
+                return $row;
+            }
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('sl_find_service_account_for_avi')) {
+    function sl_find_service_account_for_avi(PDO $pdo, ?int $serviceId, string $destinationCountry, string $commercialCountry): ?array
+    {
+        return sl_find_service_account_by_label_rule($pdo, $serviceId, [
+            'AVI',
+            $destinationCountry,
+            $commercialCountry,
+        ]);
+    }
+}
+
+if (!function_exists('sl_find_service_account_for_ats')) {
+    function sl_find_service_account_for_ats(PDO $pdo, ?int $serviceId, string $commercialCountry): ?array
+    {
+        return sl_find_service_account_by_label_rule($pdo, $serviceId, [
+            'ATS',
+            $commercialCountry,
+        ]);
+    }
+}
+
+if (!function_exists('sl_find_service_account_for_management_by_label')) {
+    function sl_find_service_account_for_management_by_label(PDO $pdo, ?int $serviceId, string $commercialCountry): ?array
+    {
+        return sl_find_service_account_by_label_rule($pdo, $serviceId, [
+            'GESTION',
+            $commercialCountry,
+        ]);
+    }
+}
+
+if (!function_exists('sl_find_service_account_for_transfer_by_label')) {
+    function sl_find_service_account_for_transfer_by_label(PDO $pdo, ?int $serviceId, string $commercialCountry): ?array
+    {
+        return sl_find_service_account_by_label_rule($pdo, $serviceId, [
+            'TRANSFERT',
+            $commercialCountry,
+        ]);
+    }
+}
+
+if (!function_exists('sl_find_service_account_for_placement_by_label')) {
+    function sl_find_service_account_for_placement_by_label(PDO $pdo, ?int $serviceId, string $commercialCountry): ?array
+    {
+        return sl_find_service_account_by_label_rule($pdo, $serviceId, [
+            'CA PLACEMENT',
+            $commercialCountry,
+        ]);
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Ancien moteur comptable compatible
 |--------------------------------------------------------------------------
 */
 
@@ -783,6 +1187,317 @@ if (!function_exists('resolveAccountingOperation')) {
         ];
     }
 }
+
+/*
+|--------------------------------------------------------------------------
+| Moteur comptable V2
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('sl_build_operation_hash')) {
+    function sl_build_operation_hash(array $payload, string $debitAccountCode, string $creditAccountCode): string
+    {
+        $parts = [
+            (string)($payload['operation_date'] ?? ''),
+            (string)round((float)($payload['amount'] ?? 0), 2),
+            sl_normalize_code((string)($payload['currency_code'] ?? '')),
+            (string)($payload['client_id'] ?? ''),
+            sl_normalize_code((string)($payload['operation_type_code'] ?? '')),
+            (string)($payload['service_id'] ?? ''),
+            trim((string)($payload['reference'] ?? '')),
+            trim((string)$debitAccountCode),
+            trim((string)$creditAccountCode),
+        ];
+
+        return hash('sha256', implode('|', $parts));
+    }
+}
+
+if (!function_exists('sl_find_duplicate_operation')) {
+    function sl_find_duplicate_operation(PDO $pdo, string $operationHash, ?int $excludeOperationId = null): ?array
+    {
+        if (!tableExists($pdo, 'operations') || !columnExists($pdo, 'operations', 'operation_hash') || $operationHash === '') {
+            return null;
+        }
+
+        $sql = "
+            SELECT *
+            FROM operations
+            WHERE operation_hash = ?
+        ";
+        $params = [$operationHash];
+
+        if ($excludeOperationId !== null && $excludeOperationId > 0) {
+            $sql .= " AND id <> ?";
+            $params[] = $excludeOperationId;
+        }
+
+        $sql .= " ORDER BY id DESC LIMIT 1";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    }
+}
+
+if (!function_exists('resolveAccountingOperationV2')) {
+    function resolveAccountingOperationV2(PDO $pdo, array $payload): array
+    {
+        $operationTypeCode = sl_normalize_code((string)($payload['operation_type_code'] ?? ''));
+        $serviceCode = sl_normalize_code((string)($payload['service_code'] ?? ''));
+        $serviceId = isset($payload['service_id']) ? (int)$payload['service_id'] : null;
+        $clientId = isset($payload['client_id']) ? (int)$payload['client_id'] : null;
+        $linkedBankAccountId = isset($payload['linked_bank_account_id']) ? (int)$payload['linked_bank_account_id'] : null;
+
+        if ($operationTypeCode === '') {
+            throw new RuntimeException('Type d’opération manquant.');
+        }
+
+        if ($serviceCode === '') {
+            throw new RuntimeException('Type de service manquant.');
+        }
+
+        if (!sl_service_allowed_for_type($operationTypeCode, $serviceCode)) {
+            throw new RuntimeException('Le type de service ne correspond pas au type d’opération.');
+        }
+
+        $clientContext = null;
+        if ($clientId) {
+            $clientContext = getClientAccountingContext($pdo, $clientId);
+            if (!$clientContext) {
+                throw new RuntimeException('Client introuvable.');
+            }
+        }
+
+        $serviceInfo = null;
+        if ($serviceId) {
+            $serviceInfo = resolveServiceAccountFromServiceId($pdo, $serviceId);
+        }
+
+        $linkedBankAccount = null;
+        if ($linkedBankAccountId > 0 && tableExists($pdo, 'bank_accounts')) {
+            $stmt = $pdo->prepare("SELECT * FROM bank_accounts WHERE id = ? LIMIT 1");
+            $stmt->execute([$linkedBankAccountId]);
+            $linkedBankAccount = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        }
+
+        $clientAccount = (string)($clientContext['generated_client_account'] ?? '');
+        $clientTreasury = (string)($clientContext['treasury_account_code'] ?? '');
+
+        $manualDebit = trim((string)($payload['manual_debit_account_code'] ?? ''));
+        $manualCredit = trim((string)($payload['manual_credit_account_code'] ?? ''));
+        $manualMode = sl_is_manual_accounting_case($operationTypeCode, $serviceCode);
+
+        $debit = null;
+        $credit = null;
+        $analytic = null;
+
+        if ($manualMode) {
+            if ($manualDebit === '' || $manualCredit === '') {
+                throw new RuntimeException('Le compte source et le compte destination sont obligatoires pour ce cas.');
+            }
+
+            $debit = $manualDebit;
+            $credit = $manualCredit;
+        } else {
+            switch ($operationTypeCode . '::' . $serviceCode) {
+                case 'VERSEMENT::VERSEMENT':
+                    if (!$clientContext) {
+                        throw new RuntimeException('Client obligatoire pour un versement.');
+                    }
+                    $debit = $clientTreasury;
+                    $credit = $clientAccount;
+                    break;
+
+                case 'VIREMENT::INTERNE':
+                    $source = trim((string)($payload['source_treasury_code'] ?? ''));
+                    $target = trim((string)($payload['target_treasury_code'] ?? ''));
+                    if ($source === '' || $target === '') {
+                        throw new RuntimeException('Les comptes 512 source et cible sont obligatoires.');
+                    }
+                    if ($source === $target) {
+                        throw new RuntimeException('Les comptes 512 source et cible doivent être différents.');
+                    }
+                    $debit = $source;
+                    $credit = $target;
+                    break;
+
+                case 'VIREMENT::MENSUEL':
+                case 'VIREMENT::REGULIER':
+                case 'VIREMENT::EXCEPTIONEL':
+                    if (!$clientContext) {
+                        throw new RuntimeException('Client obligatoire pour ce virement.');
+                    }
+                    $debit = $clientAccount;
+                    $credit = $clientTreasury;
+                    break;
+
+                case 'REGULARISATION::POSITIVE':
+                    if (!$clientContext) {
+                        throw new RuntimeException('Client obligatoire pour une régularisation positive.');
+                    }
+                    $debit = $clientTreasury;
+                    $credit = $clientAccount;
+                    break;
+
+                case 'REGULARISATION::NEGATIVE':
+                    if (!$clientContext) {
+                        throw new RuntimeException('Client obligatoire pour une régularisation négative.');
+                    }
+                    $debit = $clientAccount;
+                    $credit = $clientTreasury;
+                    break;
+
+                case 'CA_PLACEMENT::CA_PLACEMENT':
+                    if (!$clientContext || !$serviceId) {
+                        throw new RuntimeException('Client et service obligatoires.');
+                    }
+
+                    $serviceAccount = sl_find_service_account_for_placement_by_label(
+                        $pdo,
+                        $serviceId,
+                        (string)($clientContext['country_commercial'] ?? '')
+                    );
+
+                    if (!$serviceAccount) {
+                        throw new RuntimeException('Aucun compte 706 trouvé pour CA PLACEMENT + pays commercial.');
+                    }
+
+                    $debit = $clientAccount;
+                    $credit = (string)$serviceAccount['account_code'];
+                    $analytic = [
+                        'account_code' => $serviceAccount['account_code'],
+                        'account_label' => $serviceAccount['account_label'] ?? null,
+                    ];
+                    break;
+
+                case 'FRAIS_GESTION::GESTION':
+                    if (!$clientContext || !$serviceId) {
+                        throw new RuntimeException('Client et service obligatoires.');
+                    }
+
+                    $serviceAccount = sl_find_service_account_for_management_by_label(
+                        $pdo,
+                        $serviceId,
+                        (string)($clientContext['country_commercial'] ?? '')
+                    );
+
+                    if (!$serviceAccount) {
+                        throw new RuntimeException('Aucun compte 706 trouvé pour FRAIS DE GESTION + pays commercial.');
+                    }
+
+                    $debit = $clientAccount;
+                    $credit = (string)$serviceAccount['account_code'];
+                    $analytic = [
+                        'account_code' => $serviceAccount['account_code'],
+                        'account_label' => $serviceAccount['account_label'] ?? null,
+                    ];
+                    break;
+
+                case 'FRAIS_SERVICE::AVI':
+                    if (!$clientContext || !$serviceId) {
+                        throw new RuntimeException('Client et service obligatoires.');
+                    }
+
+                    $serviceAccount = sl_find_service_account_for_avi(
+                        $pdo,
+                        $serviceId,
+                        (string)($clientContext['country_destination'] ?? ''),
+                        (string)($clientContext['country_commercial'] ?? '')
+                    );
+
+                    if (!$serviceAccount) {
+                        throw new RuntimeException('Aucun compte 706 trouvé pour AVI + pays destination + pays commercial.');
+                    }
+
+                    $debit = $clientAccount;
+                    $credit = (string)$serviceAccount['account_code'];
+                    $analytic = [
+                        'account_code' => $serviceAccount['account_code'],
+                        'account_label' => $serviceAccount['account_label'] ?? null,
+                    ];
+                    break;
+
+                case 'FRAIS_SERVICE::ATS':
+                    if (!$clientContext || !$serviceId) {
+                        throw new RuntimeException('Client et service obligatoires.');
+                    }
+
+                    $serviceAccount = sl_find_service_account_for_ats(
+                        $pdo,
+                        $serviceId,
+                        (string)($clientContext['country_commercial'] ?? '')
+                    );
+
+                    if (!$serviceAccount) {
+                        throw new RuntimeException('Aucun compte 706 trouvé pour ATS + pays commercial.');
+                    }
+
+                    $debit = $clientAccount;
+                    $credit = (string)$serviceAccount['account_code'];
+                    $analytic = [
+                        'account_code' => $serviceAccount['account_code'],
+                        'account_label' => $serviceAccount['account_label'] ?? null,
+                    ];
+                    break;
+
+                case 'COMMISSION_DE_TRANSFERT::COMMISSION_DE_TRANSFERT':
+                    if (!$clientContext || !$serviceId) {
+                        throw new RuntimeException('Client et service obligatoires.');
+                    }
+
+                    $serviceAccount = sl_find_service_account_for_transfer_by_label(
+                        $pdo,
+                        $serviceId,
+                        (string)($clientContext['country_commercial'] ?? '')
+                    );
+
+                    if (!$serviceAccount) {
+                        throw new RuntimeException('Aucun compte 706 trouvé pour TRANSFERT + pays commercial.');
+                    }
+
+                    $debit = $clientAccount;
+                    $credit = (string)$serviceAccount['account_code'];
+                    $analytic = [
+                        'account_code' => $serviceAccount['account_code'],
+                        'account_label' => $serviceAccount['account_label'] ?? null,
+                    ];
+                    break;
+
+                default:
+                    throw new RuntimeException('Règle comptable non définie pour ce couple type/service.');
+            }
+        }
+
+        if ($debit === '' || $credit === '') {
+            throw new RuntimeException('Impossible de déterminer les comptes débit/crédit.');
+        }
+
+        $operationHash = sl_build_operation_hash($payload, $debit, $credit);
+
+        return [
+            'debit_account_code' => $debit,
+            'credit_account_code' => $credit,
+            'analytic_account' => $analytic,
+            'client_context' => $clientContext,
+            'service_info' => $serviceInfo,
+            'linked_bank_account' => $linkedBankAccount,
+            'is_manual_accounting' => $manualMode ? 1 : 0,
+            'operation_hash' => $operationHash,
+            'preview_lines' => [
+                ['side' => 'DEBIT', 'account' => $debit],
+                ['side' => 'CREDIT', 'account' => $credit],
+            ],
+        ];
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Effets comptables / soldes
+|--------------------------------------------------------------------------
+*/
 
 if (!function_exists('updateBankAccountBalanceDelta')) {
     function updateBankAccountBalanceDelta(PDO $pdo, int $bankAccountId, float $delta): void
@@ -907,6 +1622,12 @@ if (!function_exists('applyAccountingBalanceEffects')) {
     }
 }
 
+/*
+|--------------------------------------------------------------------------
+| Création / mise à jour opération
+|--------------------------------------------------------------------------
+*/
+
 if (!function_exists('createOperationWithAccounting')) {
     function createOperationWithAccounting(PDO $pdo, array $payload): int
     {
@@ -967,6 +1688,145 @@ if (!function_exists('createOperationWithAccounting')) {
         return $operationId;
     }
 }
+
+if (!function_exists('createOperationWithAccountingV2')) {
+    function createOperationWithAccountingV2(PDO $pdo, array $payload, ?int $excludeOperationId = null): int
+    {
+        $resolved = resolveAccountingOperationV2($pdo, $payload);
+
+        $duplicate = sl_find_duplicate_operation($pdo, (string)$resolved['operation_hash'], $excludeOperationId);
+        if ($duplicate) {
+            throw new RuntimeException('Doublon détecté : une opération strictement identique existe déjà.');
+        }
+
+        $clientId = isset($payload['client_id']) ? (int)$payload['client_id'] : null;
+        $bankAccountId = null;
+
+        if (!empty($resolved['linked_bank_account']['id'])) {
+            $bankAccountId = (int)$resolved['linked_bank_account']['id'];
+        } elseif ($clientId) {
+            $bankAccount = findPrimaryBankAccountForClient($pdo, $clientId);
+            $bankAccountId = $bankAccount['id'] ?? null;
+        }
+
+        $serviceId = isset($payload['service_id']) ? (int)$payload['service_id'] : null;
+        $operationTypeId = isset($payload['operation_type_id']) ? (int)$payload['operation_type_id'] : null;
+
+        if ($excludeOperationId !== null && $excludeOperationId > 0) {
+            $updateMap = [
+                'client_id' => $clientId,
+                'service_id' => $serviceId,
+                'operation_type_id' => $operationTypeId,
+                'linked_bank_account_id' => $bankAccountId,
+                'bank_account_id' => $bankAccountId,
+                'operation_date' => $payload['operation_date'] ?? date('Y-m-d'),
+                'amount' => (float)($payload['amount'] ?? 0),
+                'currency_code' => $payload['currency_code'] ?? null,
+                'operation_type_code' => $payload['operation_type_code'] ?? null,
+                'label' => $payload['label'] ?? null,
+                'reference' => $payload['reference'] ?? null,
+                'notes' => $payload['notes'] ?? null,
+                'source_type' => $payload['source_type'] ?? null,
+                'debit_account_code' => $resolved['debit_account_code'],
+                'credit_account_code' => $resolved['credit_account_code'],
+                'service_account_code' => $resolved['analytic_account']['account_code'] ?? null,
+                'operation_hash' => $resolved['operation_hash'],
+                'is_manual_accounting' => (int)$resolved['is_manual_accounting'],
+            ];
+
+            $fields = [];
+            $params = [];
+            foreach ($updateMap as $column => $value) {
+                if (tableExists($pdo, 'operations') && columnExists($pdo, 'operations', $column)) {
+                    $fields[] = $column . ' = ?';
+                    $params[] = $value;
+                }
+            }
+            if (columnExists($pdo, 'operations', 'updated_at')) {
+                $fields[] = 'updated_at = NOW()';
+            }
+
+            $params[] = $excludeOperationId;
+
+            $stmt = $pdo->prepare("
+                UPDATE operations
+                SET " . implode(', ', $fields) . "
+                WHERE id = ?
+            ");
+            $stmt->execute($params);
+
+            if (function_exists('recomputeAllBalances')) {
+                recomputeAllBalances($pdo);
+            }
+
+            return $excludeOperationId;
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'client_id' => $clientId,
+            'service_id' => $serviceId,
+            'operation_type_id' => $operationTypeId,
+            'linked_bank_account_id' => $bankAccountId,
+            'bank_account_id' => $bankAccountId,
+            'operation_date' => $payload['operation_date'] ?? date('Y-m-d'),
+            'amount' => (float)($payload['amount'] ?? 0),
+            'currency_code' => $payload['currency_code'] ?? null,
+            'operation_type_code' => $payload['operation_type_code'] ?? null,
+            'operation_kind' => $payload['operation_kind'] ?? null,
+            'label' => $payload['label'] ?? null,
+            'reference' => $payload['reference'] ?? null,
+            'notes' => $payload['notes'] ?? null,
+            'source_type' => $payload['source_type'] ?? null,
+            'debit_account_code' => $resolved['debit_account_code'],
+            'credit_account_code' => $resolved['credit_account_code'],
+            'service_account_code' => $resolved['analytic_account']['account_code'] ?? null,
+            'operation_hash' => $resolved['operation_hash'],
+            'is_manual_accounting' => (int)$resolved['is_manual_accounting'],
+            'created_by' => isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'operations', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'operations', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+        if (columnExists($pdo, 'operations', 'updated_at')) {
+            $columns[] = 'updated_at';
+            $values[] = 'NOW()';
+        }
+
+        $stmt = $pdo->prepare("
+            INSERT INTO operations (" . implode(', ', $columns) . ")
+            VALUES (" . implode(', ', $values) . ")
+        ");
+        $stmt->execute($params);
+
+        $operationId = (int)$pdo->lastInsertId();
+
+        if (function_exists('recomputeAllBalances')) {
+            recomputeAllBalances($pdo);
+        }
+
+        return $operationId;
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Virement interne / recalcul global
+|--------------------------------------------------------------------------
+*/
 
 if (!function_exists('createInternalTreasuryMovement')) {
     function createInternalTreasuryMovement(PDO $pdo, array $payload): int
@@ -1067,8 +1927,8 @@ if (!function_exists('recomputeAllBalances')) {
                 $totals = $stmtBank->fetch(PDO::FETCH_ASSOC) ?: [];
 
                 $newBalance = (float)$account['initial_balance']
-                    + (float)($totals['total_debit'] ?? 0)
-                    - (float)($totals['total_credit'] ?? 0);
+                    + (float)($totals['total_credit'] ?? 0)
+                    - (float)($totals['total_debit'] ?? 0);
 
                 $stmtUpdateBank->execute([$newBalance, (int)$account['id']]);
                 $report['bank_accounts']++;
@@ -1125,7 +1985,7 @@ if (!function_exists('recomputeAllBalances')) {
                     $movOut = (float)($mov['total_out'] ?? 0);
                 }
 
-                $newBalance = (float)$account['opening_balance'] + $opsDebit - $opsCredit + $movIn - $movOut;
+                $newBalance = (float)$account['opening_balance'] - $opsDebit + $opsCredit + $movIn - $movOut;
                 $stmtUpdateTreasury->execute([$newBalance, (int)$account['id']]);
                 $report['treasury_accounts']++;
             }
@@ -1161,104 +2021,5 @@ if (!function_exists('recomputeAllBalances')) {
         }
 
         return $report;
-    }
-}
-
-/*
-|--------------------------------------------------------------------------
-| Génération / catalogues métiers
-|--------------------------------------------------------------------------
-*/
-
-if (!function_exists('generateClientCode')) {
-    function generateClientCode(PDO $pdo): string
-    {
-        do {
-            $code = str_pad((string)random_int(1, 999999999), 9, '0', STR_PAD_LEFT);
-
-            if (!tableExists($pdo, 'clients') || !columnExists($pdo, 'clients', 'client_code')) {
-                return $code;
-            }
-
-            $stmt = $pdo->prepare("
-                SELECT COUNT(*)
-                FROM clients
-                WHERE client_code = ?
-            ");
-            $stmt->execute([$code]);
-            $exists = (int)$stmt->fetchColumn() > 0;
-        } while ($exists);
-
-        return $code;
-    }
-}
-
-if (!function_exists('studely_destination_countries')) {
-    function studely_destination_countries(): array
-    {
-        return [
-            'Allemagne',
-            'Belgique',
-            'France',
-            'Espagne',
-            'Italie',
-            'Autres destinations',
-        ];
-    }
-}
-
-if (!function_exists('studely_commercial_countries')) {
-    function studely_commercial_countries(): array
-    {
-        return [
-            'France','Allemagne','Belgique','Cameroun','Sénégal','Côte d\'Ivoire','Benin',
-            'Burkina Faso','Congo Brazzaville','Congo Kinshasa','Gabon','Tchad','Mali','Togo',
-            'Mexique','Inde','Algérie','Guinée','Tunisie','Maroc','Niger','Afrique de l\'est','Autres pays',
-        ];
-    }
-}
-
-if (!function_exists('studely_origin_countries')) {
-    function studely_origin_countries(): array
-    {
-        return [
-            'Afghanistan','Afrique du Sud','Albanie','Algérie','Allemagne','Andorre','Angola','Antigua-et-Barbuda',
-            'Arabie saoudite','Argentine','Arménie','Australie','Autriche','Azerbaïdjan','Bahamas','Bahreïn',
-            'Bangladesh','Barbade','Belgique','Belize','Bénin','Bhoutan','Biélorussie','Birmanie','Bolivie',
-            'Bosnie-Herzégovine','Botswana','Brésil','Brunei','Bulgarie','Burkina Faso','Burundi','Cap-Vert',
-            'Cambodge','Cameroun','Canada','République centrafricaine','Chili','Chine','Chypre','Colombie',
-            'Comores','Congo','République démocratique du Congo','Corée du Nord','Corée du Sud','Costa Rica',
-            'Côte d’Ivoire','Croatie','Cuba','Danemark','Djibouti','Dominique','Égypte','Émirats arabes unis',
-            'Équateur','Érythrée','Espagne','Estonie','Eswatini','États-Unis','Éthiopie','Fidji','Finlande',
-            'France','Gabon','Gambie','Géorgie','Ghana','Grèce','Grenade','Guatemala','Guinée','Guinée-Bissau',
-            'Guinée équatoriale','Guyana','Haïti','Honduras','Hongrie','Inde','Indonésie','Irak','Iran',
-            'Irlande','Islande','Israël','Italie','Jamaïque','Japon','Jordanie','Kazakhstan','Kenya',
-            'Kirghizistan','Kiribati','Koweït','Laos','Lesotho','Lettonie','Liban','Liberia','Libye',
-            'Liechtenstein','Lituanie','Luxembourg','Macédoine du Nord','Madagascar','Malaisie','Malawi',
-            'Maldives','Mali','Malte','Maroc','Îles Marshall','Maurice','Mauritanie','Mexique','Micronésie',
-            'Moldavie','Monaco','Mongolie','Monténégro','Mozambique','Namibie','Nauru','Népal','Nicaragua',
-            'Niger','Nigeria','Norvège','Nouvelle-Zélande','Oman','Ouganda','Ouzbékistan','Pakistan',
-            'Palaos','Palestine','Panama','Papouasie-Nouvelle-Guinée','Paraguay','Pays-Bas','Pérou',
-            'Philippines','Pologne','Portugal','Qatar','Roumanie','Royaume-Uni','Russie','Rwanda',
-            'Saint-Christophe-et-Niévès','Saint-Marin','Saint-Vincent-et-les-Grenadines','Sainte-Lucie',
-            'Salomon','Salvador','Samoa','Sao Tomé-et-Principe','Sénégal','Serbie','Seychelles',
-            'Sierra Leone','Singapour','Slovaquie','Slovénie','Somalie','Soudan','Soudan du Sud',
-            'Sri Lanka','Suède','Suisse','Suriname','Syrie','Tadjikistan','Tanzanie','Tchad','Tchéquie',
-            'Thaïlande','Timor oriental','Togo','Tonga','Trinité-et-Tobago','Tunisie','Turkménistan',
-            'Turquie','Tuvalu','Ukraine','Uruguay','Vanuatu','Vatican','Venezuela','Vietnam','Yémen',
-            'Zambie','Zimbabwe',
-        ];
-    }
-}
-
-if (!function_exists('studely_client_types')) {
-    function studely_client_types(): array
-    {
-        return [
-            'Etudiant',
-            'Particulier',
-            'Entreprise',
-            'Partenaire',
-        ];
     }
 }

@@ -13,78 +13,11 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'operations_create');
 }
 
-if (!function_exists('sl_normalize_code')) {
-    function sl_normalize_code(?string $value): string
-    {
-        $value = strtoupper(trim((string)$value));
-        $value = str_replace(
-            ['É', 'È', 'Ê', 'Ë', 'À', 'Â', 'Ä', 'Î', 'Ï', 'Ô', 'Ö', 'Ù', 'Û', 'Ü', 'Ç', ' ', '-', '/', '\''],
-            ['E', 'E', 'E', 'E', 'A', 'A', 'A', 'I', 'I', 'O', 'O', 'U', 'U', 'U', 'C', '_', '_', '_', ''],
-            $value
-        );
-        $value = preg_replace('/[^A-Z0-9_]/', '', $value);
-        $value = preg_replace('/_+/', '_', $value);
-        return trim((string)$value, '_');
-    }
-}
-
-if (!function_exists('sl_operation_service_map')) {
-    function sl_operation_service_map(): array
-    {
-        return [
-            'VERSEMENT' => ['VERSEMENT'],
-            'VIREMENT' => ['INTERNE', 'MENSUEL', 'EXCEPTIONEL', 'REGULIER'],
-            'REGULARISATION' => ['POSITIVE', 'NEGATIVE'],
-            'FRAIS_SERVICE' => ['AVI', 'ATS'],
-            'FRAIS_GESTION' => ['GESTION'],
-            'COMMISSION_DE_TRANSFERT' => ['COMMISSION_DE_TRANSFERT'],
-            'CA_PLACEMENT' => ['CA_PLACEMENT'],
-            'CA_DIVERS' => ['CA_DIVERS'],
-            'CA_LOGEMENT' => ['CA_LOGEMENT'],
-            'CA_COURTAGE_PRET' => ['CA_COURTAGE_PRET'],
-            'FRAIS_DEBOURDS_MICROFINANCE' => ['FRAIS_DEBOURDS_MICROFINANCE'],
-        ];
-    }
-}
-
-if (!function_exists('sl_service_allowed_for_type')) {
-    function sl_service_allowed_for_type(?string $typeCode, ?string $serviceCode): bool
-    {
-        $map = sl_operation_service_map();
-        $typeCode = sl_normalize_code($typeCode);
-        $serviceCode = sl_normalize_code($serviceCode);
-
-        if ($typeCode === '' || $serviceCode === '' || !isset($map[$typeCode])) {
-            return false;
-        }
-
-        return in_array($serviceCode, $map[$typeCode], true);
-    }
-}
-
-if (!function_exists('opOld')) {
-    function opOld(string $key, mixed $default = ''): string
-    {
-        return e((string)($_POST[$key] ?? $default));
-    }
-}
-
-if (!function_exists('opFindById')) {
-    function opFindById(array $rows, int $id): ?array
-    {
-        foreach ($rows as $row) {
-            if ((int)($row['id'] ?? 0) === $id) {
-                return $row;
-            }
-        }
-        return null;
-    }
-}
-
 $operationTypes = tableExists($pdo, 'ref_operation_types')
     ? $pdo->query("
-        SELECT id, code, label, direction, is_active
+        SELECT id, code, label, is_active
         FROM ref_operation_types
+        WHERE COALESCE(is_active,1)=1
         ORDER BY label ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
@@ -92,32 +25,12 @@ $operationTypes = tableExists($pdo, 'ref_operation_types')
 $services = tableExists($pdo, 'ref_services')
     ? $pdo->query("
         SELECT
-            rs.id,
-            rs.code,
-            rs.label,
-            rs.operation_type_id,
-            rs.service_account_id,
-            rs.treasury_account_id,
-            rs.is_active,
-
+            rs.*,
             rot.code AS operation_type_code,
-            rot.label AS operation_type_label,
-            rot.is_active AS operation_type_active,
-
-            sa.account_code AS service_account_code,
-            sa.account_label AS service_account_label,
-            sa.operation_type_label AS service_account_operation_type_label,
-            sa.destination_country_label AS service_account_destination_country_label,
-            sa.commercial_country_label AS service_account_commercial_country_label,
-            sa.is_postable AS service_account_postable,
-            sa.is_active AS service_account_active,
-
-            ta.account_code AS treasury_account_code,
-            ta.account_label AS treasury_account_label
+            rot.label AS operation_type_label
         FROM ref_services rs
         LEFT JOIN ref_operation_types rot ON rot.id = rs.operation_type_id
-        LEFT JOIN service_accounts sa ON sa.id = rs.service_account_id
-        LEFT JOIN treasury_accounts ta ON ta.id = rs.treasury_account_id
+        WHERE COALESCE(rs.is_active,1)=1
         ORDER BY rs.label ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
@@ -128,47 +41,62 @@ $clients = tableExists($pdo, 'clients')
             c.id,
             c.client_code,
             c.full_name,
+            c.country_commercial,
+            c.country_destination,
             c.generated_client_account,
             c.initial_treasury_account_id,
-            c.client_status,
-            c.is_active,
             ta.account_code AS treasury_account_code,
             ta.account_label AS treasury_account_label
         FROM clients c
         LEFT JOIN treasury_accounts ta ON ta.id = c.initial_treasury_account_id
+        WHERE COALESCE(c.is_active,1)=1
         ORDER BY c.client_code ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
 
 $treasuryAccounts = tableExists($pdo, 'treasury_accounts')
     ? $pdo->query("
-        SELECT id, account_code, account_label, is_active
+        SELECT id, account_code, account_label
         FROM treasury_accounts
+        WHERE COALESCE(is_active,1)=1
         ORDER BY account_code ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
 
 $serviceAccounts = tableExists($pdo, 'service_accounts')
     ? $pdo->query("
-        SELECT
-            sa.id,
-            sa.account_code,
-            sa.account_label,
-            sa.operation_type_label,
-            sa.destination_country_label,
-            sa.commercial_country_label,
-            sa.is_postable,
-            sa.is_active
-        FROM service_accounts sa
-        WHERE COALESCE(sa.is_active,1) = 1
-          AND COALESCE(sa.is_postable,0) = 1
-        ORDER BY sa.account_code ASC
+        SELECT id, account_code, account_label
+        FROM service_accounts
+        WHERE COALESCE(is_active,1)=1
+          AND COALESCE(is_postable,0)=1
+        ORDER BY account_code ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
 
-$successMessage = '';
-$errorMessage = '';
+$currencies = function_exists('sl_get_currency_options') ? sl_get_currency_options($pdo) : [];
+
+if (!function_exists('sl_create_find_by_id')) {
+    function sl_create_find_by_id(array $rows, int $id): ?array
+    {
+        foreach ($rows as $row) {
+            if ((int)($row['id'] ?? 0) === $id) {
+                return $row;
+            }
+        }
+        return null;
+    }
+}
+
+if (!function_exists('sl_create_post')) {
+    function sl_create_post(string $key, mixed $default = ''): string
+    {
+        return e((string)($_POST[$key] ?? $default));
+    }
+}
+
 $preview = null;
+$errorMessage = '';
+$successMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
@@ -177,209 +105,116 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $operationDate = trim((string)($_POST['operation_date'] ?? date('Y-m-d')));
+        $amount = (float)($_POST['amount'] ?? 0);
+        $currencyCode = trim((string)($_POST['currency_code'] ?? 'EUR'));
+        $clientId = ($_POST['client_id'] ?? '') !== '' ? (int)$_POST['client_id'] : null;
         $operationTypeId = (int)($_POST['operation_type_id'] ?? 0);
         $serviceId = ($_POST['service_id'] ?? '') !== '' ? (int)$_POST['service_id'] : null;
-        $clientId = ($_POST['client_id'] ?? '') !== '' ? (int)$_POST['client_id'] : null;
-        $sourceTreasuryId = ($_POST['source_treasury_account_id'] ?? '') !== '' ? (int)$_POST['source_treasury_account_id'] : null;
-        $targetTreasuryId = ($_POST['target_treasury_account_id'] ?? '') !== '' ? (int)$_POST['target_treasury_account_id'] : null;
-        $amount = (float)($_POST['amount'] ?? 0);
+        $linkedBankAccountId = ($_POST['linked_bank_account_id'] ?? '') !== '' ? (int)$_POST['linked_bank_account_id'] : null;
         $reference = trim((string)($_POST['reference'] ?? ''));
         $label = trim((string)($_POST['label'] ?? ''));
         $notes = trim((string)($_POST['notes'] ?? ''));
+        $sourceAccountCode = trim((string)($_POST['source_account_code'] ?? ''));
+        $destinationAccountCode = trim((string)($_POST['destination_account_code'] ?? ''));
         $actionMode = trim((string)($_POST['action_mode'] ?? 'preview'));
-
-        if ($operationTypeId <= 0) {
-            throw new RuntimeException('Type d’opération obligatoire.');
-        }
-
-        if ($amount <= 0) {
-            throw new RuntimeException('Montant invalide.');
-        }
 
         if ($operationDate === '') {
             throw new RuntimeException('Date obligatoire.');
         }
+        if ($amount <= 0) {
+            throw new RuntimeException('Montant invalide.');
+        }
+        if ($operationTypeId <= 0) {
+            throw new RuntimeException('Type d’opération obligatoire.');
+        }
+        if ($serviceId === null) {
+            throw new RuntimeException('Type de service obligatoire.');
+        }
 
-        $selectedType = opFindById($operationTypes, $operationTypeId);
+        $selectedType = sl_create_find_by_id($operationTypes, $operationTypeId);
+        $selectedService = sl_create_find_by_id($services, $serviceId);
+
         if (!$selectedType) {
             throw new RuntimeException('Type d’opération introuvable.');
         }
-
-        if ((int)($selectedType['is_active'] ?? 0) !== 1) {
-            throw new RuntimeException('Le type d’opération sélectionné est archivé.');
+        if (!$selectedService) {
+            throw new RuntimeException('Service introuvable.');
         }
 
-        $selectedService = null;
-        if ($serviceId !== null) {
-            $selectedService = opFindById($services, $serviceId);
-            if (!$selectedService) {
-                throw new RuntimeException('Service introuvable.');
-            }
+        $typeCode = sl_normalize_code((string)($selectedType['code'] ?? ''));
+        $serviceCode = sl_normalize_code((string)($selectedService['code'] ?? ''));
 
-            if ((int)($selectedService['is_active'] ?? 0) !== 1) {
-                throw new RuntimeException('Le service sélectionné est archivé.');
-            }
-
-            if (!sl_service_allowed_for_type($selectedType['code'] ?? '', $selectedService['code'] ?? '')) {
-                throw new RuntimeException('Le service sélectionné ne correspond pas au type d’opération choisi.');
-            }
-
-            if ((int)($selectedService['operation_type_active'] ?? 0) !== 1) {
-                throw new RuntimeException('Le type parent du service est archivé.');
-            }
-
-            if (!empty($selectedService['service_account_id'])) {
-                if ((int)($selectedService['service_account_active'] ?? 0) !== 1) {
-                    throw new RuntimeException('Le compte 706 du service est archivé.');
-                }
-
-                if ((int)($selectedService['service_account_postable'] ?? 0) !== 1) {
-                    throw new RuntimeException('Le compte 706 du service n’est pas mouvementable.');
-                }
-            }
+        if (!sl_service_allowed_for_type($typeCode, $serviceCode)) {
+            throw new RuntimeException('Service incompatible avec le type d’opération.');
         }
 
-        $selectedClient = null;
-        if ($clientId !== null) {
-            $selectedClient = opFindById($clients, $clientId);
-            if (!$selectedClient) {
-                throw new RuntimeException('Client introuvable.');
-            }
-
-            if ((int)($selectedClient['is_active'] ?? 0) !== 1) {
-                throw new RuntimeException('Le client sélectionné est archivé.');
-            }
-        }
-
-        $selectedSourceTreasury = null;
-        if ($sourceTreasuryId !== null) {
-            $selectedSourceTreasury = opFindById($treasuryAccounts, $sourceTreasuryId);
-            if (!$selectedSourceTreasury) {
-                throw new RuntimeException('Compte interne source introuvable.');
-            }
-            if ((int)($selectedSourceTreasury['is_active'] ?? 0) !== 1) {
-                throw new RuntimeException('Le compte interne source est archivé.');
-            }
-        }
-
-        $selectedTargetTreasury = null;
-        if ($targetTreasuryId !== null) {
-            $selectedTargetTreasury = opFindById($treasuryAccounts, $targetTreasuryId);
-            if (!$selectedTargetTreasury) {
-                throw new RuntimeException('Compte interne cible introuvable.');
-            }
-            if ((int)($selectedTargetTreasury['is_active'] ?? 0) !== 1) {
-                throw new RuntimeException('Le compte interne cible est archivé.');
-            }
-        }
-
-        $typeCode = sl_normalize_code((string)$selectedType['code']);
-        $isInternalTransfer = ($typeCode === 'VIREMENT' && $selectedService && sl_normalize_code($selectedService['code'] ?? '') === 'INTERNE');
-        $requiresClient = !$isInternalTransfer;
-        $requiresService = true;
-
-        if ($requiresClient && !$selectedClient) {
+        $requiresClient = !($typeCode === 'VIREMENT' && $serviceCode === 'INTERNE');
+        if ($requiresClient && !$clientId) {
             throw new RuntimeException('Le client est obligatoire pour cette opération.');
         }
 
-        if ($requiresService && !$selectedService) {
-            throw new RuntimeException('Le service est obligatoire pour ce type d’opération.');
+        $manualCases = [
+            'VIREMENT::INTERNE',
+            'CA_DIVERS::CA_DIVERS',
+            'CA_DEBOURDS_ASSURANCE::CA_DEBOURDS_ASSURANCE',
+            'FRAIS_DEBOURDS_MICROFINANCE::FRAIS_DEBOURDS_MICROFINANCE',
+            'CA_COURTAGE_PRET::CA_COURTAGE_PRET',
+            'CA_LOGEMENT::CA_LOGEMENT',
+        ];
+
+        $manualKey = $typeCode . '::' . $serviceCode;
+        $isManualCase = in_array($manualKey, $manualCases, true);
+
+        if ($isManualCase) {
+            if ($sourceAccountCode === '' || $destinationAccountCode === '') {
+                throw new RuntimeException('Le compte source et le compte destination sont obligatoires pour ce cas.');
+            }
         }
 
-        if ($isInternalTransfer) {
-            if (!$selectedSourceTreasury || !$selectedTargetTreasury) {
-                throw new RuntimeException('Les comptes source et cible sont obligatoires pour un virement interne.');
+        $payload = [
+            'operation_date' => $operationDate,
+            'amount' => $amount,
+            'currency_code' => $currencyCode !== '' ? $currencyCode : 'EUR',
+            'client_id' => $clientId,
+            'service_id' => $serviceId,
+            'service_code' => $serviceCode,
+            'operation_type_id' => $operationTypeId,
+            'operation_type_code' => $typeCode,
+            'linked_bank_account_id' => $linkedBankAccountId,
+            'reference' => $reference !== '' ? $reference : null,
+            'label' => $label !== '' ? $label : trim(($selectedType['label'] ?? '') . ' - ' . ($selectedService['label'] ?? '')),
+            'notes' => $notes !== '' ? $notes : null,
+            'source_type' => 'manual',
+            'operation_kind' => 'manual',
+            'source_treasury_code' => ($typeCode === 'VIREMENT' && $serviceCode === 'INTERNE') ? $sourceAccountCode : '',
+            'target_treasury_code' => ($typeCode === 'VIREMENT' && $serviceCode === 'INTERNE') ? $destinationAccountCode : '',
+            'manual_debit_account_code' => $isManualCase ? $sourceAccountCode : '',
+            'manual_credit_account_code' => $isManualCase ? $destinationAccountCode : '',
+        ];
+
+        $preview = resolveAccountingOperationV2($pdo, $payload);
+
+        if ($actionMode === 'save') {
+            $pdo->beginTransaction();
+
+            $operationId = createOperationWithAccountingV2($pdo, $payload);
+
+            if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+                logUserAction(
+                    $pdo,
+                    (int)$_SESSION['user_id'],
+                    'create_operation',
+                    'operations',
+                    'operation',
+                    $operationId,
+                    'Création d’une opération corrigée'
+                );
             }
 
-            if ((int)$selectedSourceTreasury['id'] === (int)$selectedTargetTreasury['id']) {
-                throw new RuntimeException('Les comptes source et cible doivent être différents.');
-            }
-
-            if ($selectedClient) {
-                throw new RuntimeException('Un virement interne ne doit pas être rattaché à un client.');
-            }
-
-            $preview = [
-                'debit_account_code' => $selectedSourceTreasury['account_code'],
-                'credit_account_code' => $selectedTargetTreasury['account_code'],
-                'analytic_account' => null,
-            ];
-
-            if ($actionMode === 'save') {
-                $pdo->beginTransaction();
-
-                $movementId = createInternalTreasuryMovement($pdo, [
-                    'source_treasury_account_id' => (int)$selectedSourceTreasury['id'],
-                    'target_treasury_account_id' => (int)$selectedTargetTreasury['id'],
-                    'amount' => $amount,
-                    'operation_date' => $operationDate,
-                    'reference' => $reference !== '' ? $reference : null,
-                    'label' => $label !== '' ? $label : ($selectedType['label'] . ' - ' . ($selectedService['label'] ?? '')),
-                ]);
-
-                if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
-                    logUserAction(
-                        $pdo,
-                        (int)$_SESSION['user_id'],
-                        'create_internal_transfer',
-                        'operations',
-                        'treasury_movement',
-                        $movementId,
-                        'Création d’un virement interne'
-                    );
-                }
-
-                $pdo->commit();
-                $successMessage = 'Virement interne enregistré.';
-                $_POST = [];
-                $preview = null;
-            }
-        } else {
-            $resolvedSourceTreasuryCode = $selectedSourceTreasury['account_code']
-                ?? $selectedService['treasury_account_code']
-                ?? $selectedClient['treasury_account_code']
-                ?? null;
-
-            $payload = [
-                'operation_type_code' => $typeCode,
-                'operation_type_id' => (int)$selectedType['id'],
-                'service_id' => $selectedService['id'] ?? null,
-                'client_id' => $selectedClient['id'] ?? null,
-                'amount' => $amount,
-                'operation_date' => $operationDate,
-                'reference' => $reference !== '' ? $reference : null,
-                'label' => $label !== '' ? $label : trim(($selectedType['label'] ?? '') . ' - ' . ($selectedService['label'] ?? '')),
-                'notes' => $notes !== '' ? $notes : null,
-                'source_type' => 'manual',
-                'operation_kind' => 'manual',
-                'source_treasury_code' => $resolvedSourceTreasuryCode,
-                'target_treasury_code' => $selectedTargetTreasury['account_code'] ?? null,
-            ];
-
-            $preview = resolveAccountingOperation($pdo, $payload);
-
-            if ($actionMode === 'save') {
-                $pdo->beginTransaction();
-
-                $operationId = createOperationWithAccounting($pdo, $payload);
-
-                if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
-                    logUserAction(
-                        $pdo,
-                        (int)$_SESSION['user_id'],
-                        'create_operation',
-                        'operations',
-                        'operation',
-                        $operationId,
-                        'Création d’une opération avec filtrage dynamique type/service'
-                    );
-                }
-
-                $pdo->commit();
-                $successMessage = 'Opération enregistrée.';
-                $_POST = [];
-                $preview = null;
-            }
+            $pdo->commit();
+            $successMessage = 'Opération enregistrée.';
+            $_POST = [];
+            $preview = null;
         }
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
@@ -390,289 +225,268 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $pageTitle = 'Créer une opération';
-$pageSubtitle = 'Le service affiché dépend du type d’opération choisi.';
+$pageSubtitle = 'Type, service, client, comptes et aperçu comptable avant validation.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
-    <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
+<?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
+<div class="main">
+    <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-    <div class="main">
-        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
+    <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
+    <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
 
-        <?php if ($successMessage !== ''): ?>
-            <div class="success"><?= e($successMessage) ?></div>
-        <?php endif; ?>
+    <div class="dashboard-grid-2">
+        <div class="form-card">
+            <form method="POST">
+                <?= csrf_input() ?>
 
-        <?php if ($errorMessage !== ''): ?>
-            <div class="error"><?= e($errorMessage) ?></div>
-        <?php endif; ?>
-
-        <div class="dashboard-grid-2">
-            <div class="form-card">
-                <form method="POST">
-                    <?= csrf_input() ?>
-
-                    <div class="dashboard-grid-2">
-                        <div>
-                            <label>Date</label>
-                            <input type="date" name="operation_date" value="<?= opOld('operation_date', date('Y-m-d')) ?>">
-                        </div>
-
-                        <div>
-                            <label>Montant</label>
-                            <input type="number" step="0.01" name="amount" value="<?= opOld('amount') ?>" required>
-                        </div>
-
-                        <div>
-                            <label>Type d’opération</label>
-                            <select name="operation_type_id" id="operation_type_id" required>
-                                <option value="">Choisir</option>
-                                <?php foreach ($operationTypes as $type): ?>
-                                    <option value="<?= (int)$type['id'] ?>" data-type-code="<?= e(sl_normalize_code($type['code'] ?? '')) ?>" <?= opOld('operation_type_id') == $type['id'] ? 'selected' : '' ?>>
-                                        <?= e($type['label']) ?> (<?= e($type['code']) ?>)<?= (int)$type['is_active'] !== 1 ? ' [archivé]' : '' ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label>Service</label>
-                            <select name="service_id" id="service_id">
-                                <option value="">Choisir d’abord un type</option>
-                                <?php foreach ($services as $service): ?>
-                                    <option
-                                        value="<?= (int)$service['id'] ?>"
-                                        data-operation-type-id="<?= (int)($service['operation_type_id'] ?? 0) ?>"
-                                        data-operation-type-code="<?= e(sl_normalize_code($service['operation_type_code'] ?? '')) ?>"
-                                        data-service-code="<?= e(sl_normalize_code($service['code'] ?? '')) ?>"
-                                        <?= opOld('service_id') == $service['id'] ? 'selected' : '' ?>
-                                    >
-                                        <?= e(($service['label'] ?? '') . ' (' . ($service['code'] ?? '') . ')') ?>
-                                        <?php
-                                        $meta = [];
-                                        if (!empty($service['service_account_code'])) {
-                                            $meta[] = $service['service_account_code'];
-                                        }
-                                        if (!empty($service['service_account_destination_country_label'])) {
-                                            $meta[] = 'Destination: ' . $service['service_account_destination_country_label'];
-                                        }
-                                        if (!empty($service['service_account_commercial_country_label'])) {
-                                            $meta[] = 'Commercial: ' . $service['service_account_commercial_country_label'];
-                                        }
-                                        if ($meta) {
-                                            echo ' [' . e(implode(' | ', $meta)) . ']';
-                                        }
-                                        ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label>Client</label>
-                            <select name="client_id" id="client_id">
-                                <option value="">Aucun</option>
-                                <?php foreach ($clients as $client): ?>
-                                    <option value="<?= (int)$client['id'] ?>" <?= opOld('client_id') == $client['id'] ? 'selected' : '' ?>>
-                                        <?= e(($client['client_code'] ?? '') . ' - ' . ($client['full_name'] ?? '')) ?>
-                                        <?= (int)($client['is_active'] ?? 0) !== 1 ? ' [archivé]' : '' ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label>Référence</label>
-                            <input type="text" name="reference" value="<?= opOld('reference') ?>">
-                        </div>
-
-                        <div>
-                            <label>Compte interne source</label>
-                            <select name="source_treasury_account_id" id="source_treasury_account_id">
-                                <option value="">Auto / Aucun</option>
-                                <?php foreach ($treasuryAccounts as $acc): ?>
-                                    <option value="<?= (int)$acc['id'] ?>" <?= opOld('source_treasury_account_id') == $acc['id'] ? 'selected' : '' ?>>
-                                        <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?><?= (int)$acc['is_active'] !== 1 ? ' [archivé]' : '' ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label>Compte interne cible</label>
-                            <select name="target_treasury_account_id" id="target_treasury_account_id">
-                                <option value="">Aucun</option>
-                                <?php foreach ($treasuryAccounts as $acc): ?>
-                                    <option value="<?= (int)$acc['id'] ?>" <?= opOld('target_treasury_account_id') == $acc['id'] ? 'selected' : '' ?>>
-                                        <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?><?= (int)$acc['is_active'] !== 1 ? ' [archivé]' : '' ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
+                <div class="dashboard-grid-2">
+                    <div>
+                        <label>Date</label>
+                        <input type="date" name="operation_date" value="<?= sl_create_post('operation_date', date('Y-m-d')) ?>" required>
                     </div>
 
                     <div>
-                        <label>Libellé</label>
-                        <input type="text" name="label" value="<?= opOld('label') ?>">
+                        <label>Montant</label>
+                        <input type="number" step="0.01" name="amount" value="<?= sl_create_post('amount') ?>" required>
                     </div>
 
                     <div>
-                        <label>Notes / motif</label>
-                        <textarea name="notes" rows="4"><?= opOld('notes') ?></textarea>
+                        <label>Devise</label>
+                        <select name="currency_code" required>
+                            <?php foreach ($currencies as $currency): ?>
+                                <option value="<?= e($currency['code']) ?>" <?= sl_create_post('currency_code', 'EUR') === $currency['code'] ? 'selected' : '' ?>>
+                                    <?= e($currency['code'] . ' - ' . $currency['label']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
 
-                    <div class="btn-group">
-                        <button type="submit" name="action_mode" value="preview" class="btn btn-secondary">Prévisualiser</button>
-                        <button type="submit" name="action_mode" value="save" class="btn btn-success">Créer</button>
+                    <div id="client-wrapper">
+                        <label>Client</label>
+                        <select name="client_id" id="client_id">
+                            <option value="">Choisir</option>
+                            <?php foreach ($clients as $client): ?>
+                                <option
+                                    value="<?= (int)$client['id'] ?>"
+                                    data-country-commercial="<?= e($client['country_commercial'] ?? '') ?>"
+                                    data-country-destination="<?= e($client['country_destination'] ?? '') ?>"
+                                    data-client-account="<?= e($client['generated_client_account'] ?? '') ?>"
+                                    data-treasury-account="<?= e($client['treasury_account_code'] ?? '') ?>"
+                                    <?= sl_create_post('client_id') == $client['id'] ? 'selected' : '' ?>
+                                >
+                                    <?= e(($client['client_code'] ?? '') . ' - ' . ($client['full_name'] ?? '')) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
-                </form>
-            </div>
 
-            <div class="card">
-                <h3>Aperçu comptable</h3>
+                    <div>
+                        <label>Type opération</label>
+                        <select name="operation_type_id" id="operation_type_id" required>
+                            <option value="">Choisir</option>
+                            <?php foreach ($operationTypes as $type): ?>
+                                <option value="<?= (int)$type['id'] ?>" data-type-code="<?= e(sl_normalize_code($type['code'] ?? '')) ?>" <?= sl_create_post('operation_type_id') == $type['id'] ? 'selected' : '' ?>>
+                                    <?= e($type['label']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
 
-                <?php if ($preview): ?>
-                    <div class="stat-row">
-                        <span class="metric-label">Débit</span>
-                        <span class="metric-value"><?= e($preview['debit_account_code'] ?? '—') ?></span>
+                    <div>
+                        <label>Type service</label>
+                        <select name="service_id" id="service_id" required>
+                            <option value="">Choisir d’abord un type</option>
+                            <?php foreach ($services as $service): ?>
+                                <option
+                                    value="<?= (int)$service['id'] ?>"
+                                    data-type-id="<?= (int)($service['operation_type_id'] ?? 0) ?>"
+                                    data-type-code="<?= e(sl_normalize_code($service['operation_type_code'] ?? '')) ?>"
+                                    data-service-code="<?= e(sl_normalize_code($service['code'] ?? '')) ?>"
+                                    <?= sl_create_post('service_id') == $service['id'] ? 'selected' : '' ?>
+                                >
+                                    <?= e($service['label']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
-                    <div class="stat-row">
-                        <span class="metric-label">Crédit</span>
-                        <span class="metric-value"><?= e($preview['credit_account_code'] ?? '—') ?></span>
+
+                    <div id="linked-bank-account-wrapper">
+                        <label>Compte bancaire lié</label>
+                        <input type="number" name="linked_bank_account_id" id="linked_bank_account_id" value="<?= sl_create_post('linked_bank_account_id') ?>">
                     </div>
-                    <div class="stat-row">
-                        <span class="metric-label">Analytique</span>
-                        <span class="metric-value"><?= e($preview['analytic_account']['account_code'] ?? '—') ?></span>
+
+                    <div>
+                        <label>Référence / Intitulé</label>
+                        <input type="text" name="reference" value="<?= sl_create_post('reference') ?>">
                     </div>
-                <?php else: ?>
-                    <div class="dashboard-note">
-                        Le moteur affichera ici le débit, le crédit et l’analytique avant écriture.
+
+                    <div style="grid-column: 1 / -1;">
+                        <label>Note / Motif</label>
+                        <textarea name="notes" rows="4"><?= sl_create_post('notes') ?></textarea>
                     </div>
-                <?php endif; ?>
-            </div>
+
+                    <div id="source-account-wrapper">
+                        <label>Compte source (débit)</label>
+                        <select name="source_account_code" id="source_account_code">
+                            <option value="">Choisir</option>
+                            <?php foreach ($treasuryAccounts as $acc): ?>
+                                <option value="<?= e($acc['account_code']) ?>" <?= sl_create_post('source_account_code') === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
+                                    <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                            <?php foreach ($serviceAccounts as $acc): ?>
+                                <option value="<?= e($acc['account_code']) ?>" <?= sl_create_post('source_account_code') === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
+                                    <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div id="destination-account-wrapper">
+                        <label>Compte destination (crédit)</label>
+                        <select name="destination_account_code" id="destination_account_code">
+                            <option value="">Choisir</option>
+                            <?php foreach ($treasuryAccounts as $acc): ?>
+                                <option value="<?= e($acc['account_code']) ?>" <?= sl_create_post('destination_account_code') === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
+                                    <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                            <?php foreach ($serviceAccounts as $acc): ?>
+                                <option value="<?= e($acc['account_code']) ?>" <?= sl_create_post('destination_account_code') === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
+                                    <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Compte débité calculé</label>
+                        <input type="text" value="<?= e($preview['debit_account_code'] ?? '') ?>" readonly>
+                    </div>
+
+                    <div>
+                        <label>Compte crédité calculé</label>
+                        <input type="text" value="<?= e($preview['credit_account_code'] ?? '') ?>" readonly>
+                    </div>
+                </div>
+
+                <div style="margin-top:16px;">
+                    <label>Libellé libre</label>
+                    <input type="text" name="label" value="<?= sl_create_post('label') ?>">
+                </div>
+
+                <div class="btn-group" style="margin-top:20px;">
+                    <button type="submit" name="action_mode" value="preview" class="btn btn-secondary">Prévisualiser</button>
+                    <button type="submit" name="action_mode" value="save" class="btn btn-success">Créer</button>
+                </div>
+            </form>
         </div>
 
-        <div class="table-card" style="margin-top:20px;">
-            <h3 class="section-title">Comptes 706 finaux disponibles</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Compte</th>
-                        <th>Intitulé</th>
-                        <th>Type</th>
-                        <th>Destination</th>
-                        <th>Commercial</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($serviceAccounts as $account): ?>
-                        <tr>
-                            <td><?= e($account['account_code'] ?? '') ?></td>
-                            <td><?= e($account['account_label'] ?? '') ?></td>
-                            <td><?= e($account['operation_type_label'] ?? '') ?></td>
-                            <td><?= e($account['destination_country_label'] ?? '') ?></td>
-                            <td><?= e($account['commercial_country_label'] ?? '') ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-
-                    <?php if (!$serviceAccounts): ?>
-                        <tr><td colspan="5">Aucun compte 706 final disponible.</td></tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
+        <div class="card">
+            <h3>Aperçu Comptable</h3>
+            <?php if ($preview): ?>
+                <div class="stat-row"><span class="metric-label">Débit</span><span class="metric-value"><?= e($preview['debit_account_code'] ?? '') ?></span></div>
+                <div class="stat-row"><span class="metric-label">Crédit</span><span class="metric-value"><?= e($preview['credit_account_code'] ?? '') ?></span></div>
+                <div class="stat-row"><span class="metric-label">Mode manuel</span><span class="metric-value"><?= !empty($preview['is_manual_accounting']) ? 'Oui' : 'Non' ?></span></div>
+                <div class="stat-row"><span class="metric-label">Hash anti-doublon</span><span class="metric-value"><?= e($preview['operation_hash'] ?? '') ?></span></div>
+            <?php else: ?>
+                <div class="dashboard-note">Résumé de l’opération avant validation.</div>
+            <?php endif; ?>
         </div>
-
-        <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            const map = <?= json_encode(sl_operation_service_map(), JSON_UNESCAPED_UNICODE) ?>;
-            const typeSelect = document.getElementById('operation_type_id');
-            const serviceSelect = document.getElementById('service_id');
-            const clientSelect = document.getElementById('client_id');
-            const sourceSelect = document.getElementById('source_treasury_account_id');
-            const targetSelect = document.getElementById('target_treasury_account_id');
-
-            if (!typeSelect || !serviceSelect) {
-                return;
-            }
-
-            const originalServiceOptions = Array.from(serviceSelect.querySelectorAll('option')).map(option => option.cloneNode(true));
-
-            function getSelectedTypeCode() {
-                const selected = typeSelect.options[typeSelect.selectedIndex];
-                return selected ? (selected.getAttribute('data-type-code') || '') : '';
-            }
-
-            function refreshServices() {
-                const selectedTypeId = typeSelect.value;
-                const selectedTypeCode = getSelectedTypeCode();
-                const currentValue = serviceSelect.value;
-
-                serviceSelect.innerHTML = '';
-
-                const placeholder = document.createElement('option');
-                placeholder.value = '';
-                placeholder.textContent = selectedTypeId ? 'Choisir' : 'Choisir d’abord un type';
-                serviceSelect.appendChild(placeholder);
-
-                let stillValid = false;
-
-                originalServiceOptions.forEach(option => {
-                    if (option.value === '') {
-                        return;
-                    }
-
-                    const serviceTypeId = option.getAttribute('data-operation-type-id') || '';
-                    const serviceCode = option.getAttribute('data-service-code') || '';
-
-                    const allowedCodes = map[selectedTypeCode] || [];
-                    const byTypeId = selectedTypeId !== '' && serviceTypeId === selectedTypeId;
-                    const byCode = selectedTypeCode !== '' && allowedCodes.includes(serviceCode);
-
-                    if (byTypeId || byCode) {
-                        const cloned = option.cloneNode(true);
-                        if (cloned.value === currentValue) {
-                            stillValid = true;
-                        }
-                        serviceSelect.appendChild(cloned);
-                    }
-                });
-
-                serviceSelect.value = stillValid ? currentValue : '';
-                refreshFieldVisibility();
-            }
-
-            function refreshFieldVisibility() {
-                const selectedTypeCode = getSelectedTypeCode();
-                const selectedService = serviceSelect.options[serviceSelect.selectedIndex];
-                const selectedServiceCode = selectedService ? (selectedService.getAttribute('data-service-code') || '') : '';
-                const isInternal = selectedTypeCode === 'VIREMENT' && selectedServiceCode === 'INTERNE';
-
-                if (clientSelect) {
-                    clientSelect.closest('div').style.display = isInternal ? 'none' : '';
-                    if (isInternal) {
-                        clientSelect.value = '';
-                    }
-                }
-
-                if (targetSelect) {
-                    targetSelect.closest('div').style.display = isInternal ? '' : '';
-                }
-
-                if (sourceSelect) {
-                    sourceSelect.closest('div').style.display = '';
-                }
-            }
-
-            typeSelect.addEventListener('change', refreshServices);
-            serviceSelect.addEventListener('change', refreshFieldVisibility);
-
-            refreshServices();
-        });
-        </script>
-
-        <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const map = <?= json_encode(sl_operation_service_map(), JSON_UNESCAPED_UNICODE) ?>;
+        const typeSelect = document.getElementById('operation_type_id');
+        const serviceSelect = document.getElementById('service_id');
+        const clientWrapper = document.getElementById('client-wrapper');
+        const linkedBankWrapper = document.getElementById('linked-bank-account-wrapper');
+        const sourceWrapper = document.getElementById('source-account-wrapper');
+        const destinationWrapper = document.getElementById('destination-account-wrapper');
+
+        if (!typeSelect || !serviceSelect) return;
+
+        const originalServiceOptions = Array.from(serviceSelect.querySelectorAll('option')).map(option => option.cloneNode(true));
+
+        function getSelectedTypeCode() {
+            const selected = typeSelect.options[typeSelect.selectedIndex];
+            return selected ? (selected.getAttribute('data-type-code') || '') : '';
+        }
+
+        function getSelectedServiceCode() {
+            const selected = serviceSelect.options[serviceSelect.selectedIndex];
+            return selected ? (selected.getAttribute('data-service-code') || '') : '';
+        }
+
+        function refreshServices() {
+            const typeCode = getSelectedTypeCode();
+            const currentValue = serviceSelect.value;
+
+            serviceSelect.innerHTML = '';
+
+            const placeholder = document.createElement('option');
+            placeholder.value = '';
+            placeholder.textContent = typeCode ? 'Choisir' : 'Choisir d’abord un type';
+            serviceSelect.appendChild(placeholder);
+
+            const allowedCodes = map[typeCode] || [];
+            let stillValid = false;
+
+            originalServiceOptions.forEach(option => {
+                if (option.value === '') return;
+                const serviceCode = option.getAttribute('data-service-code') || '';
+                if (allowedCodes.includes(serviceCode)) {
+                    const cloned = option.cloneNode(true);
+                    if (cloned.value === currentValue) stillValid = true;
+                    serviceSelect.appendChild(cloned);
+                }
+            });
+
+            serviceSelect.value = stillValid ? currentValue : '';
+            refreshVisibility();
+        }
+
+        function refreshVisibility() {
+            const typeCode = getSelectedTypeCode();
+            const serviceCode = getSelectedServiceCode();
+            const key = typeCode + '::' + serviceCode;
+
+            const manualCases = [
+                'VIREMENT::INTERNE',
+                'CA_DIVERS::CA_DIVERS',
+                'CA_DEBOURDS_ASSURANCE::CA_DEBOURDS_ASSURANCE',
+                'FRAIS_DEBOURDS_MICROFINANCE::FRAIS_DEBOURDS_MICROFINANCE',
+                'CA_COURTAGE_PRET::CA_COURTAGE_PRET',
+                'CA_LOGEMENT::CA_LOGEMENT'
+            ];
+
+            const needsLinkedBank =
+                (typeCode === 'VIREMENT' && serviceCode !== 'INTERNE' && serviceCode !== '') ||
+                typeCode === 'VERSEMENT' ||
+                typeCode === 'REGULARISATION';
+
+            const isManual = manualCases.includes(key);
+            const isInternal = key === 'VIREMENT::INTERNE';
+
+            linkedBankWrapper.style.display = needsLinkedBank ? '' : 'none';
+            sourceWrapper.style.display = isManual ? '' : (isInternal ? '' : 'none');
+            destinationWrapper.style.display = isManual ? '' : (isInternal ? '' : 'none');
+            clientWrapper.style.display = isInternal ? 'none' : '';
+        }
+
+        typeSelect.addEventListener('change', refreshServices);
+        serviceSelect.addEventListener('change', refreshVisibility);
+
+        refreshServices();
+    });
+    </script>
+
+    <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
+</div>
 </div>
 
 <?php require_once __DIR__ . '/../../includes/document_end.php'; ?>
