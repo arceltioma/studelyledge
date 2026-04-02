@@ -2023,3 +2023,416 @@ if (!function_exists('recomputeAllBalances')) {
         return $report;
     }
 }
+
+if (!function_exists('sl_table_has_columns')) {
+    function sl_table_has_columns(PDO $pdo, string $table, array $columns): bool
+    {
+        if (!tableExists($pdo, $table)) {
+            return false;
+        }
+
+        foreach ($columns as $column) {
+            if (!columnExists($pdo, $table, $column)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('createNotification')) {
+    function createNotification(
+        PDO $pdo,
+        string $type,
+        string $message,
+        string $level = 'info',
+        ?string $linkUrl = null,
+        ?string $entityType = null,
+        ?int $entityId = null,
+        ?int $createdBy = null
+    ): void {
+        if (!tableExists($pdo, 'notifications')) {
+            return;
+        }
+
+        $allowedLevels = ['info', 'success', 'warning', 'danger'];
+        if (!in_array($level, $allowedLevels, true)) {
+            $level = 'info';
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'type' => $type,
+            'message' => $message,
+            'level' => $level,
+            'link_url' => $linkUrl,
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'created_by' => $createdBy,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'notifications', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'notifications', 'is_read')) {
+            $columns[] = 'is_read';
+            $values[] = '?';
+            $params[] = 0;
+        }
+
+        if (columnExists($pdo, 'notifications', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (!$columns) {
+            return;
+        }
+
+        $stmt = $pdo->prepare("
+            INSERT INTO notifications (" . implode(', ', $columns) . ")
+            VALUES (" . implode(', ', $values) . ")
+        ");
+        $stmt->execute($params);
+    }
+}
+
+if (!function_exists('getUnreadNotifications')) {
+    function getUnreadNotifications(PDO $pdo, int $limit = 8): array
+    {
+        if (!tableExists($pdo, 'notifications')) {
+            return [];
+        }
+
+        $limit = max(1, min($limit, 50));
+
+        $orderBy = columnExists($pdo, 'notifications', 'created_at') ? 'created_at DESC' : 'id DESC';
+
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM notifications
+            WHERE COALESCE(is_read, 0) = 0
+            ORDER BY {$orderBy}
+            LIMIT {$limit}
+        ");
+        $stmt->execute();
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+
+if (!function_exists('countUnreadNotifications')) {
+    function countUnreadNotifications(PDO $pdo): int
+    {
+        if (!tableExists($pdo, 'notifications')) {
+            return 0;
+        }
+
+        $stmt = $pdo->query("
+            SELECT COUNT(*)
+            FROM notifications
+            WHERE COALESCE(is_read, 0) = 0
+        ");
+
+        return (int)$stmt->fetchColumn();
+    }
+}
+
+if (!function_exists('markNotificationRead')) {
+    function markNotificationRead(PDO $pdo, int $notificationId): void
+    {
+        if ($notificationId <= 0 || !tableExists($pdo, 'notifications')) {
+            return;
+        }
+
+        $sql = "UPDATE notifications SET is_read = 1";
+        if (columnExists($pdo, 'notifications', 'updated_at')) {
+            $sql .= ", updated_at = NOW()";
+        }
+        $sql .= " WHERE id = ?";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$notificationId]);
+    }
+}
+
+if (!function_exists('markAllNotificationsRead')) {
+    function markAllNotificationsRead(PDO $pdo): void
+    {
+        if (!tableExists($pdo, 'notifications')) {
+            return;
+        }
+
+        $sql = "UPDATE notifications SET is_read = 1 WHERE COALESCE(is_read, 0) = 0";
+        if (columnExists($pdo, 'notifications', 'updated_at')) {
+            $sql = "UPDATE notifications SET is_read = 1, updated_at = NOW() WHERE COALESCE(is_read, 0) = 0";
+        }
+
+        $pdo->exec($sql);
+    }
+}
+
+if (!function_exists('createAuditTrail')) {
+    function createAuditTrail(
+        PDO $pdo,
+        string $entityType,
+        int $entityId,
+        string $fieldName,
+        $oldValue,
+        $newValue,
+        ?int $userId = null
+    ): void {
+        if (!tableExists($pdo, 'audit_trail')) {
+            return;
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'field_name' => $fieldName,
+            'old_value' => $oldValue !== null ? (string)$oldValue : null,
+            'new_value' => $newValue !== null ? (string)$newValue : null,
+            'user_id' => $userId,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'audit_trail', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'audit_trail', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (!$columns) {
+            return;
+        }
+
+        $stmt = $pdo->prepare("
+            INSERT INTO audit_trail (" . implode(', ', $columns) . ")
+            VALUES (" . implode(', ', $values) . ")
+        ");
+        $stmt->execute($params);
+    }
+}
+
+if (!function_exists('auditEntityChanges')) {
+    function auditEntityChanges(PDO $pdo, string $entityType, int $entityId, array $before, array $after, ?int $userId = null): void
+    {
+        $keys = array_unique(array_merge(array_keys($before), array_keys($after)));
+
+        foreach ($keys as $key) {
+            $oldValue = $before[$key] ?? null;
+            $newValue = $after[$key] ?? null;
+
+            if ((string)$oldValue !== (string)$newValue) {
+                createAuditTrail($pdo, $entityType, $entityId, (string)$key, $oldValue, $newValue, $userId);
+            }
+        }
+    }
+}
+
+if (!function_exists('getEntityTimeline')) {
+    function getEntityTimeline(PDO $pdo, string $entityType, int $entityId, int $limit = 50): array
+    {
+        $items = [];
+        $limit = max(1, min($limit, 200));
+
+        if (tableExists($pdo, 'audit_trail')) {
+            $stmt = $pdo->prepare("
+                SELECT
+                    'audit' AS source_type,
+                    created_at,
+                    field_name AS title,
+                    old_value,
+                    new_value,
+                    user_id,
+                    NULL AS details
+                FROM audit_trail
+                WHERE entity_type = ?
+                  AND entity_id = ?
+                ORDER BY created_at DESC
+                LIMIT {$limit}
+            ");
+            $stmt->execute([$entityType, $entityId]);
+            $items = array_merge($items, $stmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+        }
+
+        if (tableExists($pdo, 'user_logs') && sl_table_has_columns($pdo, 'user_logs', ['entity_type', 'entity_id'])) {
+            $stmt = $pdo->prepare("
+                SELECT
+                    'log' AS source_type,
+                    created_at,
+                    action AS title,
+                    NULL AS old_value,
+                    NULL AS new_value,
+                    user_id,
+                    details
+                FROM user_logs
+                WHERE entity_type = ?
+                  AND entity_id = ?
+                ORDER BY created_at DESC
+                LIMIT {$limit}
+            ");
+            $stmt->execute([$entityType, $entityId]);
+            $items = array_merge($items, $stmt->fetchAll(PDO::FETCH_ASSOC) ?: []);
+        }
+
+        usort($items, static function ($a, $b) {
+            return strcmp((string)($b['created_at'] ?? ''), (string)($a['created_at'] ?? ''));
+        });
+
+        return array_slice($items, 0, $limit);
+    }
+}
+
+if (!function_exists('globalSearch')) {
+    function globalSearch(PDO $pdo, string $query, int $limitPerType = 8): array
+    {
+        $query = trim($query);
+        if ($query === '') {
+            return [
+                'clients' => [],
+                'operations' => [],
+                'treasury' => [],
+                'services' => [],
+            ];
+        }
+
+        $like = '%' . $query . '%';
+        $limitPerType = max(1, min($limitPerType, 20));
+
+        $results = [
+            'clients' => [],
+            'operations' => [],
+            'treasury' => [],
+            'services' => [],
+        ];
+
+        if (tableExists($pdo, 'clients')) {
+            $conditions = [];
+            if (columnExists($pdo, 'clients', 'client_code')) {
+                $conditions[] = 'client_code LIKE ?';
+            }
+            if (columnExists($pdo, 'clients', 'full_name')) {
+                $conditions[] = 'full_name LIKE ?';
+            }
+            if (columnExists($pdo, 'clients', 'email')) {
+                $conditions[] = 'email LIKE ?';
+            }
+
+            if ($conditions) {
+                $params = array_fill(0, count($conditions), $like);
+                $stmt = $pdo->prepare("
+                    SELECT id,
+                           " . (columnExists($pdo, 'clients', 'client_code') ? 'client_code' : "'' AS client_code") . ",
+                           " . (columnExists($pdo, 'clients', 'full_name') ? 'full_name' : "'' AS full_name") . "
+                    FROM clients
+                    WHERE " . implode(' OR ', $conditions) . "
+                    ORDER BY id DESC
+                    LIMIT {$limitPerType}
+                ");
+                $stmt->execute($params);
+                $results['clients'] = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            }
+        }
+
+        if (tableExists($pdo, 'operations')) {
+            $conditions = [];
+            if (columnExists($pdo, 'operations', 'reference')) {
+                $conditions[] = 'reference LIKE ?';
+            }
+            if (columnExists($pdo, 'operations', 'label')) {
+                $conditions[] = 'label LIKE ?';
+            }
+            if (columnExists($pdo, 'operations', 'operation_type_code')) {
+                $conditions[] = 'operation_type_code LIKE ?';
+            }
+
+            if ($conditions) {
+                $params = array_fill(0, count($conditions), $like);
+                $stmt = $pdo->prepare("
+                    SELECT id,
+                           " . (columnExists($pdo, 'operations', 'reference') ? 'reference' : "'' AS reference") . ",
+                           " . (columnExists($pdo, 'operations', 'label') ? 'label' : "'' AS label") . ",
+                           " . (columnExists($pdo, 'operations', 'operation_date') ? 'operation_date' : "NULL AS operation_date") . "
+                    FROM operations
+                    WHERE " . implode(' OR ', $conditions) . "
+                    ORDER BY id DESC
+                    LIMIT {$limitPerType}
+                ");
+                $stmt->execute($params);
+                $results['operations'] = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            }
+        }
+
+        if (tableExists($pdo, 'treasury_accounts')) {
+            $conditions = [];
+            if (columnExists($pdo, 'treasury_accounts', 'account_code')) {
+                $conditions[] = 'account_code LIKE ?';
+            }
+            if (columnExists($pdo, 'treasury_accounts', 'account_label')) {
+                $conditions[] = 'account_label LIKE ?';
+            }
+
+            if ($conditions) {
+                $params = array_fill(0, count($conditions), $like);
+                $stmt = $pdo->prepare("
+                    SELECT id,
+                           " . (columnExists($pdo, 'treasury_accounts', 'account_code') ? 'account_code' : "'' AS account_code") . ",
+                           " . (columnExists($pdo, 'treasury_accounts', 'account_label') ? 'account_label' : "'' AS account_label") . "
+                    FROM treasury_accounts
+                    WHERE " . implode(' OR ', $conditions) . "
+                    ORDER BY id DESC
+                    LIMIT {$limitPerType}
+                ");
+                $stmt->execute($params);
+                $results['treasury'] = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            }
+        }
+
+        if (tableExists($pdo, 'ref_services')) {
+            $conditions = [];
+            if (columnExists($pdo, 'ref_services', 'code')) {
+                $conditions[] = 'code LIKE ?';
+            }
+            if (columnExists($pdo, 'ref_services', 'label')) {
+                $conditions[] = 'label LIKE ?';
+            }
+
+            if ($conditions) {
+                $params = array_fill(0, count($conditions), $like);
+                $stmt = $pdo->prepare("
+                    SELECT id,
+                           " . (columnExists($pdo, 'ref_services', 'code') ? 'code' : "'' AS code") . ",
+                           " . (columnExists($pdo, 'ref_services', 'label') ? 'label' : "'' AS label") . "
+                    FROM ref_services
+                    WHERE " . implode(' OR ', $conditions) . "
+                    ORDER BY id DESC
+                    LIMIT {$limitPerType}
+                ");
+                $stmt->execute($params);
+                $results['services'] = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            }
+        }
+
+        return $results;
+    }
+}
