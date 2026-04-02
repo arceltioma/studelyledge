@@ -7,132 +7,82 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
 if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'operations_view_page');
+    studelyEnforceAccess($pdo, 'operations_delete_page');
 } else {
-    enforcePagePermission($pdo, 'operations_view');
+    enforcePagePermission($pdo, 'operations_delete');
 }
-
-$canEdit = function_exists('studelyCanAccess')
-    ? studelyCanAccess($pdo, 'operations_edit_page')
-    : currentUserCan($pdo, 'operations_create');
-
-$canDelete = function_exists('studelyCanAccess')
-    ? studelyCanAccess($pdo, 'operations_delete_page')
-    : currentUserCan($pdo, 'operations_create');
 
 $id = (int)($_GET['id'] ?? 0);
 if ($id <= 0) {
-    exit('Opération invalide.');
+    $_SESSION['error_message'] = 'Opération invalide.';
+    header('Location: ' . APP_URL . 'modules/operations/operations_list.php');
+    exit;
 }
 
-$stmt = $pdo->prepare("
-    SELECT
-        o.*,
-        c.client_code,
-        c.full_name
-    FROM operations o
-    LEFT JOIN clients c ON c.id = o.client_id
-    WHERE o.id = ?
-    LIMIT 1
-");
+if (!tableExists($pdo, 'operations')) {
+    $_SESSION['error_message'] = 'Table operations introuvable.';
+    header('Location: ' . APP_URL . 'modules/operations/operations_list.php');
+    exit;
+}
+
+$stmt = $pdo->prepare("SELECT * FROM operations WHERE id = ? LIMIT 1");
 $stmt->execute([$id]);
 $operation = $stmt->fetch(PDO::FETCH_ASSOC);
 
 if (!$operation) {
-    exit('Opération introuvable.');
+    $_SESSION['error_message'] = 'Opération introuvable.';
+    header('Location: ' . APP_URL . 'modules/operations/operations_list.php');
+    exit;
 }
 
-$pageTitle = 'Voir une opération';
-$pageSubtitle = 'Lecture détaillée d’une écriture comptable.';
-require_once __DIR__ . '/../../includes/document_start.php';
-?>
+try {
+    $pdo->beginTransaction();
 
-<div class="layout">
-    <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
+    if (columnExists($pdo, 'operations', 'is_active')) {
+        $sql = "UPDATE operations SET is_active = 0";
+        if (columnExists($pdo, 'operations', 'updated_at')) {
+            $sql .= ", updated_at = NOW()";
+        }
+        $sql .= " WHERE id = ?";
 
-    <div class="main">
-        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
-        <?php if (function_exists('render_app_header_bar')): ?>
-            <?php render_app_header_bar($pageTitle, $pageSubtitle); ?>
-        <?php endif; ?>
+        $stmtDelete = $pdo->prepare($sql);
+        $stmtDelete->execute([$id]);
 
-        <div class="page-title">
-            <div>
-                <h1>Opération #<?= (int)$operation['id'] ?></h1>
-                <p class="muted"><?= e($operation['label'] ?? '') ?></p>
-            </div>
+        $action = 'archive_operation';
+        $message = 'Opération archivée avec succès.';
+    } else {
+        $stmtDelete = $pdo->prepare("DELETE FROM operations WHERE id = ?");
+        $stmtDelete->execute([$id]);
 
-            <div class="btn-group">
-                <?php if ($canEdit): ?>
-                    <a class="btn btn-success" href="<?= APP_URL ?>modules/operations/operation_edit.php?id=<?= (int)$operation['id'] ?>">Modifier</a>
-                <?php endif; ?>
+        $action = 'delete_operation';
+        $message = 'Opération supprimée avec succès.';
+    }
 
-                <?php if ($canDelete): ?>
-                    <a class="btn btn-danger" href="<?= APP_URL ?>modules/operations/operation_delete.php?id=<?= (int)$operation['id'] ?>">Supprimer</a>
-                <?php endif; ?>
+    if (function_exists('recomputeAllBalances')) {
+        recomputeAllBalances($pdo);
+    }
 
-                <a class="btn btn-outline" href="<?= APP_URL ?>modules/operations/operations_list.php">Retour</a>
-            </div>
-        </div>
+    if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+        logUserAction(
+            $pdo,
+            (int)$_SESSION['user_id'],
+            $action,
+            'operations',
+            'operation',
+            $id,
+            'Suppression / archivage d’une opération'
+        );
+    }
 
-        <div class="dashboard-grid-2">
-            <div class="form-card">
-                <h3 class="section-title">Informations générales</h3>
+    $pdo->commit();
 
-                <div class="detail-grid">
-                    <div class="detail-row">
-                        <span class="detail-label">Date</span>
-                        <span class="detail-value"><?= e($operation['operation_date'] ?? '') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Client</span>
-                        <span class="detail-value"><?= e(trim((string)($operation['client_code'] ?? '') . ' - ' . (string)($operation['full_name'] ?? ''))) ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Libellé</span>
-                        <span class="detail-value"><?= e($operation['label'] ?? '') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Référence</span>
-                        <span class="detail-value"><?= e($operation['reference'] ?? '') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Montant</span>
-                        <span class="detail-value"><?= number_format((float)($operation['amount'] ?? 0), 2, ',', ' ') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Type opération</span>
-                        <span class="detail-value"><?= e($operation['operation_type_code'] ?? '') ?></span>
-                    </div>
-                </div>
-            </div>
+    $_SESSION['success_message'] = $message;
+} catch (Throwable $e) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
+    $_SESSION['error_message'] = $e->getMessage();
+}
 
-            <div class="dashboard-panel">
-                <h3 class="section-title">Écriture comptable</h3>
-
-                <div class="detail-grid">
-                    <div class="detail-row">
-                        <span class="detail-label">Compte débit</span>
-                        <span class="detail-value"><?= e($operation['debit_account_code'] ?? '') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Compte crédit</span>
-                        <span class="detail-value"><?= e($operation['credit_account_code'] ?? '') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Compte 706 analytique</span>
-                        <span class="detail-value"><?= e($operation['service_account_code'] ?? '') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Notes</span>
-                        <span class="detail-value"><?= nl2br(e($operation['notes'] ?? '')) ?></span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
-    </div>
-</div>
-
-<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>
+header('Location: ' . APP_URL . 'modules/operations/operations_list.php');
+exit;

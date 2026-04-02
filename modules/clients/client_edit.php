@@ -174,7 +174,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
         <?php endif; ?>
 
         <div class="form-card">
-            <h1>Modifier le client</h1>
 
             <form method="POST">
                 <?= csrf_input() ?>

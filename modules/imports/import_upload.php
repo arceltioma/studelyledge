@@ -7,25 +7,220 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-enforcePagePermission($pdo, 'imports_upload');
-
-function iu_normalize_header(string $value): string
-{
-    $value = trim($value);
-    $value = mb_strtolower($value, 'UTF-8');
-    $value = str_replace([' ', '-', '/'], '_', $value);
-    return $value;
+if (function_exists('studelyEnforceAccess')) {
+    studelyEnforceAccess($pdo, 'imports_upload_page');
+} else {
+    enforcePagePermission($pdo, 'imports_upload');
 }
 
-function iu_csv_cell(array $row, int|false $index): string
-{
-    if ($index === false) {
-        return '';
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+$pageTitle = 'Import intelligent des opérations';
+$pageSubtitle = 'Upload du fichier puis vérification du mapping avant prévisualisation';
+
+const SL_IMPORT_SESSION_KEY = 'studelyledger_operations_import_preview_v3';
+
+$vendorAutoload = dirname(__DIR__, 2) . '/vendor/autoload.php';
+if (is_file($vendorAutoload)) {
+    require_once $vendorAutoload;
+}
+
+if (!function_exists('sl_import_ai_normalize')) {
+    function sl_import_ai_normalize(string $value): string
+    {
+        $value = trim($value);
+        $value = mb_strtolower($value, 'UTF-8');
+        $value = str_replace(
+            ['é','è','ê','ë','à','â','ä','î','ï','ô','ö','ù','û','ü','ç','œ','æ','/','\\','-','.'],
+            ['e','e','e','e','a','a','a','i','i','o','o','u','u','u','c','oe','ae',' ',' ',' ',' '],
+            $value
+        );
+        $value = preg_replace('/\s+/', '_', $value);
+        $value = preg_replace('/[^a-z0-9_]/', '', $value);
+        return trim($value, '_');
     }
-    return trim((string)($row[$index] ?? ''));
 }
 
-$successMessage = '';
+if (!function_exists('sl_import_ai_guess_field')) {
+    function sl_import_ai_guess_field(string $header): string
+    {
+        $normalized = sl_import_ai_normalize($header);
+
+        $dictionary = [
+            'date' => 'operation_date',
+            'date_operation' => 'operation_date',
+            'operation_date' => 'operation_date',
+            'booking_date' => 'operation_date',
+            'value_date' => 'operation_date',
+
+            'montant' => 'amount',
+            'amount' => 'amount',
+            'somme' => 'amount',
+            'valeur' => 'amount',
+
+            'devise' => 'currency_code',
+            'currency' => 'currency_code',
+            'currency_code' => 'currency_code',
+
+            'client' => 'client_code',
+            'code_client' => 'client_code',
+            'client_code' => 'client_code',
+            'reference_client' => 'client_code',
+
+            'type' => 'operation_type',
+            'type_operation' => 'operation_type',
+            'operation_type' => 'operation_type',
+            'nature_operation' => 'operation_type',
+
+            'service' => 'service',
+            'type_service' => 'service',
+            'service_code' => 'service',
+            'service_label' => 'service',
+
+            'reference' => 'reference',
+            'numero_reference' => 'reference',
+            'ref' => 'reference',
+
+            'libelle' => 'label',
+            'intitule' => 'label',
+            'label' => 'label',
+            'description' => 'label',
+
+            'note' => 'notes',
+            'notes' => 'notes',
+            'motif' => 'notes',
+            'commentaire' => 'notes',
+            'comment' => 'notes',
+
+            'compte_source' => 'source_account_code',
+            'source_account' => 'source_account_code',
+            'source_account_code' => 'source_account_code',
+            'debit_account' => 'source_account_code',
+
+            'compte_destination' => 'destination_account_code',
+            'destination_account' => 'destination_account_code',
+            'destination_account_code' => 'destination_account_code',
+            'credit_account' => 'destination_account_code',
+
+            'compte_bancaire_lie' => 'linked_bank_account_id',
+            'linked_bank_account_id' => 'linked_bank_account_id',
+            'bank_account_id' => 'linked_bank_account_id',
+        ];
+
+        return $dictionary[$normalized] ?? '';
+    }
+}
+
+if (!function_exists('sl_import_ai_detect_delimiter')) {
+    function sl_import_ai_detect_delimiter(string $line): string
+    {
+        $delimiters = [',', ';', "\t", '|'];
+        $bestDelimiter = ';';
+        $bestCount = -1;
+
+        foreach ($delimiters as $delimiter) {
+            $count = substr_count($line, $delimiter);
+            if ($count > $bestCount) {
+                $bestCount = $count;
+                $bestDelimiter = $delimiter;
+            }
+        }
+
+        return $bestDelimiter;
+    }
+}
+
+if (!function_exists('sl_import_ai_read_csv_raw')) {
+    function sl_import_ai_read_csv_raw(string $filePath): array
+    {
+        $handle = fopen($filePath, 'r');
+        if (!$handle) {
+            throw new RuntimeException('Impossible de lire le fichier uploadé.');
+        }
+
+        $firstLine = fgets($handle);
+        if ($firstLine === false) {
+            fclose($handle);
+            throw new RuntimeException('Le fichier est vide.');
+        }
+
+        $delimiter = sl_import_ai_detect_delimiter($firstLine);
+        rewind($handle);
+
+        $headers = fgetcsv($handle, 0, $delimiter);
+        if (!$headers) {
+            fclose($handle);
+            throw new RuntimeException('Entêtes CSV introuvables.');
+        }
+
+        $headers = array_map(static fn($h) => trim((string)$h), $headers);
+
+        $rows = [];
+        $lineNumber = 1;
+
+        while (($data = fgetcsv($handle, 0, $delimiter)) !== false) {
+            $lineNumber++;
+
+            if ($data === [null] || count(array_filter($data, static fn($v) => trim((string)$v) !== '')) === 0) {
+                continue;
+            }
+
+            $row = [];
+            foreach ($headers as $index => $header) {
+                $row[$header] = isset($data[$index]) ? trim((string)$data[$index]) : '';
+            }
+            $row['_line_number'] = $lineNumber;
+            $rows[] = $row;
+        }
+
+        fclose($handle);
+
+        return ['headers' => $headers, 'rows' => $rows];
+    }
+}
+
+if (!function_exists('sl_import_ai_read_xlsx_raw')) {
+    function sl_import_ai_read_xlsx_raw(string $filePath): array
+    {
+        if (!class_exists(\PhpOffice\PhpSpreadsheet\IOFactory::class)) {
+            throw new RuntimeException('Le support XLSX nécessite PhpSpreadsheet. Installe-le via Composer.');
+        }
+
+        $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
+        $sheet = $spreadsheet->getActiveSheet();
+        $raw = $sheet->toArray(null, true, true, true);
+
+        if (!$raw || count($raw) < 2) {
+            throw new RuntimeException('Le fichier XLSX est vide ou inexploitable.');
+        }
+
+        $headerRow = array_shift($raw);
+        $headers = array_map(static fn($h) => trim((string)$h), array_values($headerRow));
+
+        $rows = [];
+        $lineNumber = 1;
+        foreach ($raw as $line) {
+            $lineNumber++;
+            $values = array_values($line);
+
+            if (count(array_filter($values, static fn($v) => trim((string)$v) !== '')) === 0) {
+                continue;
+            }
+
+            $row = [];
+            foreach ($headers as $index => $header) {
+                $row[$header] = isset($values[$index]) ? trim((string)$values[$index]) : '';
+            }
+            $row['_line_number'] = $lineNumber;
+            $rows[] = $row;
+        }
+
+        return ['headers' => $headers, 'rows' => $rows];
+    }
+}
+
 $errorMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -34,278 +229,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Jeton CSRF invalide.');
         }
 
-        if (!isset($_FILES['import_file']) || $_FILES['import_file']['error'] !== UPLOAD_ERR_OK) {
-            throw new RuntimeException('Merci de sélectionner un fichier CSV valide.');
+        if (!isset($_FILES['import_file']) || !is_array($_FILES['import_file'])) {
+            throw new RuntimeException('Aucun fichier reçu.');
         }
 
         $file = $_FILES['import_file'];
-        $originalName = trim((string)($file['name'] ?? ''));
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            throw new RuntimeException('Erreur lors de l’upload du fichier.');
+        }
+
+        $originalName = (string)($file['name'] ?? 'import.csv');
+        $tmpPath = (string)($file['tmp_name'] ?? '');
+
+        if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
+            throw new RuntimeException('Fichier uploadé invalide.');
+        }
+
         $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
-
-        if ($extension !== 'csv') {
-            throw new RuntimeException('Seuls les fichiers CSV sont acceptés pour cet import.');
+        if (!in_array($extension, ['csv', 'txt', 'xlsx'], true)) {
+            throw new RuntimeException('Formats supportés : CSV, TXT, XLSX.');
         }
 
-        $uploadDir = APP_ROOT . 'uploads/imports/';
-        if (!is_dir($uploadDir) && !mkdir($uploadDir, 0777, true) && !is_dir($uploadDir)) {
-            throw new RuntimeException('Impossible de créer le dossier d’upload.');
+        if ((int)($file['size'] ?? 0) > 10 * 1024 * 1024) {
+            throw new RuntimeException('Le fichier dépasse 10 Mo.');
         }
 
-        $storedName = 'import_' . date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.csv';
-        $targetPath = $uploadDir . $storedName;
+        $parsed = $extension === 'xlsx'
+            ? sl_import_ai_read_xlsx_raw($tmpPath)
+            : sl_import_ai_read_csv_raw($tmpPath);
 
-        if (!move_uploaded_file($file['tmp_name'], $targetPath)) {
-            throw new RuntimeException('Impossible d’enregistrer le fichier importé.');
+        if (empty($parsed['rows'])) {
+            throw new RuntimeException('Aucune ligne exploitable trouvée.');
         }
 
-        $handle = fopen($targetPath, 'r');
-        if (!$handle) {
-            throw new RuntimeException('Impossible de lire le fichier CSV.');
+        $suggestedMapping = [];
+        foreach ($parsed['headers'] as $header) {
+            $suggestedMapping[$header] = sl_import_ai_guess_field($header);
         }
 
-        $header = fgetcsv($handle, 0, ';');
-        if (!$header || count($header) < 5) {
-            fclose($handle);
-            throw new RuntimeException('Le fichier CSV doit contenir une ligne d’en-tête exploitable avec au moins 5 colonnes.');
-        }
-
-        $normalizedHeader = array_map(
-            fn($value) => iu_normalize_header((string)$value),
-            $header
-        );
-
-        $mapping = [
-            'client_code'                => array_search('client_code', $normalizedHeader, true),
-            'operation_date'             => array_search('operation_date', $normalizedHeader, true),
-            'operation_type'             => array_search('operation_type', $normalizedHeader, true),
-            'label'                      => array_search('label', $normalizedHeader, true),
-            'amount'                     => array_search('amount', $normalizedHeader, true),
-            'reference'                  => array_search('reference', $normalizedHeader, true),
-            'source_type'                => array_search('source_type', $normalizedHeader, true),
-            'service_code'               => array_search('service_code', $normalizedHeader, true),
-            'treasury_account_code'      => array_search('treasury_account_code', $normalizedHeader, true),
-            'target_treasury_account_code' => array_search('target_treasury_account_code', $normalizedHeader, true),
+        $_SESSION[SL_IMPORT_SESSION_KEY] = [
+            'file_name' => $originalName,
+            'uploaded_at' => date('Y-m-d H:i:s'),
+            'raw_headers' => $parsed['headers'],
+            'raw_rows' => $parsed['rows'],
+            'suggested_mapping' => $suggestedMapping,
+            'import_rules' => [
+                'auto_mapping' => true,
+                'extension' => $extension,
+            ],
         ];
 
-        foreach (['client_code', 'operation_date', 'operation_type', 'label', 'amount'] as $requiredField) {
-            if ($mapping[$requiredField] === false) {
-                fclose($handle);
-                throw new RuntimeException("Colonne obligatoire absente dans le CSV : {$requiredField}");
-            }
-        }
-
-        if (!tableExists($pdo, 'import_batches') || !tableExists($pdo, 'import_rows')) {
-            fclose($handle);
-            throw new RuntimeException('Les tables import_batches et import_rows sont requises pour cet import.');
-        }
-
-        $pdo->beginTransaction();
-
-        $batchColumns = ['file_name', 'status'];
-        $batchValues = ['?', '?'];
-        $batchParams = [$originalName, 'pending'];
-
-        if (columnExists($pdo, 'import_batches', 'stored_file_name')) {
-            $batchColumns[] = 'stored_file_name';
-            $batchValues[] = '?';
-            $batchParams[] = $storedName;
-        }
-
-        if (columnExists($pdo, 'import_batches', 'stored_file_path')) {
-            $batchColumns[] = 'stored_file_path';
-            $batchValues[] = '?';
-            $batchParams[] = $targetPath;
-        }
-
-        if (columnExists($pdo, 'import_batches', 'imported_at')) {
-            $batchColumns[] = 'imported_at';
-            $batchValues[] = 'NOW()';
-        }
-
-        if (columnExists($pdo, 'import_batches', 'created_at')) {
-            $batchColumns[] = 'created_at';
-            $batchValues[] = 'NOW()';
-        }
-
-        if (columnExists($pdo, 'import_batches', 'total_rows')) {
-            $batchColumns[] = 'total_rows';
-            $batchValues[] = '0';
-        }
-
-        if (columnExists($pdo, 'import_batches', 'ready_rows')) {
-            $batchColumns[] = 'ready_rows';
-            $batchValues[] = '0';
-        }
-
-        if (columnExists($pdo, 'import_batches', 'valid_rows')) {
-            $batchColumns[] = 'valid_rows';
-            $batchValues[] = '0';
-        }
-
-        if (columnExists($pdo, 'import_batches', 'rejected_rows')) {
-            $batchColumns[] = 'rejected_rows';
-            $batchValues[] = '0';
-        }
-
-        if (columnExists($pdo, 'import_batches', 'imported_rows')) {
-            $batchColumns[] = 'imported_rows';
-            $batchValues[] = '0';
-        }
-
-        $stmtBatch = $pdo->prepare("
-            INSERT INTO import_batches (" . implode(', ', $batchColumns) . ")
-            VALUES (" . implode(', ', $batchValues) . ")
-        ");
-        $stmtBatch->execute($batchParams);
-        $batchId = (int)$pdo->lastInsertId();
-
-        $rowColumns = [
-            'batch_id',
-            'row_number',
-            'client_code',
-            'operation_date',
-            'operation_type',
-            'label',
-            'amount',
-            'reference',
-            'source_type',
-            'status',
-            'raw_data'
-        ];
-        $rowValues = ['?', '?', '?', '?', '?', '?', '?', '?', '?', '?', '?'];
-
-        if (columnExists($pdo, 'import_rows', 'created_at')) {
-            $rowColumns[] = 'created_at';
-            $rowValues[] = 'NOW()';
-        }
-
-        $stmtRow = $pdo->prepare("
-            INSERT INTO import_rows (" . implode(', ', $rowColumns) . ")
-            VALUES (" . implode(', ', $rowValues) . ")
-        ");
-
-        $rowNumber = 1;
-        $insertedRows = 0;
-
-        while (($row = fgetcsv($handle, 0, ';')) !== false) {
-            $rowNumber++;
-
-            if (count(array_filter($row, fn($v) => trim((string)$v) !== '')) === 0) {
-                continue;
-            }
-
-            $clientCode = iu_csv_cell($row, $mapping['client_code']);
-            $operationDate = iu_csv_cell($row, $mapping['operation_date']);
-            $operationType = strtoupper(iu_csv_cell($row, $mapping['operation_type']));
-            $label = iu_csv_cell($row, $mapping['label']);
-            $amountRaw = str_replace(',', '.', iu_csv_cell($row, $mapping['amount']));
-            $reference = iu_csv_cell($row, $mapping['reference']);
-            $sourceType = iu_csv_cell($row, $mapping['source_type']);
-
-            $serviceCode = iu_csv_cell($row, $mapping['service_code']);
-            $treasuryCode = iu_csv_cell($row, $mapping['treasury_account_code']);
-            $targetTreasuryCode = iu_csv_cell($row, $mapping['target_treasury_account_code']);
-
-            $rawData = json_encode([
-                'header' => $normalizedHeader,
-                'row' => [
-                    'client_code' => $clientCode,
-                    'operation_date' => $operationDate,
-                    'operation_type' => $operationType,
-                    'label' => $label,
-                    'amount' => $amountRaw,
-                    'reference' => $reference,
-                    'source_type' => $sourceType !== '' ? $sourceType : 'import',
-                    'service_code' => $serviceCode,
-                    'treasury_account_code' => $treasuryCode,
-                    'target_treasury_account_code' => $targetTreasuryCode,
-                ],
-            ], JSON_UNESCAPED_UNICODE);
-
-            $stmtRow->execute([
-                $batchId,
-                $rowNumber,
-                $clientCode !== '' ? $clientCode : null,
-                $operationDate !== '' ? $operationDate : null,
-                $operationType !== '' ? $operationType : null,
-                $label !== '' ? $label : null,
-                is_numeric($amountRaw) ? (float)$amountRaw : null,
-                $reference !== '' ? $reference : null,
-                $sourceType !== '' ? $sourceType : 'import',
-                'pending',
-                $rawData
-            ]);
-
-            $insertedRows++;
-        }
-
-        fclose($handle);
-
-        $batchUpdates = [];
-        $batchParamsUpdate = [];
-
-        if (columnExists($pdo, 'import_batches', 'total_rows')) {
-            $batchUpdates[] = 'total_rows = ?';
-            $batchParamsUpdate[] = $insertedRows;
-        }
-        if (columnExists($pdo, 'import_batches', 'ready_rows')) {
-            $batchUpdates[] = 'ready_rows = 0';
-        }
-        if (columnExists($pdo, 'import_batches', 'valid_rows')) {
-            $batchUpdates[] = 'valid_rows = 0';
-        }
-        if (columnExists($pdo, 'import_batches', 'rejected_rows')) {
-            $batchUpdates[] = 'rejected_rows = 0';
-        }
-        if (columnExists($pdo, 'import_batches', 'imported_rows')) {
-            $batchUpdates[] = 'imported_rows = 0';
-        }
-        if (columnExists($pdo, 'import_batches', 'updated_at')) {
-            $batchUpdates[] = 'updated_at = NOW()';
-        }
-
-        if ($batchUpdates) {
-            $batchParamsUpdate[] = $batchId;
-            $stmtUpdateBatch = $pdo->prepare("
-                UPDATE import_batches
-                SET " . implode(', ', $batchUpdates) . "
-                WHERE id = ?
-            ");
-            $stmtUpdateBatch->execute($batchParamsUpdate);
-        }
-
-        if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
-            logUserAction(
-                $pdo,
-                (int)$_SESSION['user_id'],
-                'upload_import_file',
-                'imports',
-                'import_batch',
-                $batchId,
-                "Upload du fichier {$originalName} avec {$insertedRows} ligne(s)"
-            );
-        }
-
-        $pdo->commit();
-
-        header('Location: ' . APP_URL . 'modules/imports/import_preview.php?batch_id=' . $batchId);
+        header('Location: ' . APP_URL . 'modules/imports/import_mapping.php');
         exit;
     } catch (Throwable $e) {
-        if ($pdo->inTransaction()) {
-            $pdo->rollBack();
-        }
         $errorMessage = $e->getMessage();
     }
 }
 
-$pageTitle = 'Importer un fichier';
-$pageSubtitle = 'Déposer un CSV source avant prévisualisation, contrôle, correction éventuelle et validation finale.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
-
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
@@ -313,66 +298,31 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
 
-        <div class="page-title">
-            <div class="btn-group">
-                <?php if (function_exists('currentUserCan') && currentUserCan($pdo, 'imports_journal')): ?>
-                    <a href="<?= e(APP_URL) ?>modules/imports/import_journal.php" class="btn btn-outline">Journal des imports</a>
-                <?php endif; ?>
-            </div>
-        </div>
-
         <div class="dashboard-grid-2">
             <div class="form-card">
-                <h3 class="section-title">Déposer un CSV</h3>
-
+                <h3>Uploader un fichier</h3>
                 <form method="POST" enctype="multipart/form-data">
                     <?= csrf_input() ?>
 
-                    <label for="import_file">Fichier CSV</label>
-                    <input type="file" name="import_file" id="import_file" accept=".csv" required>
-
-                    <div class="dashboard-note">
-                        Colonnes minimales attendues :
-                        <code>client_code</code>,
-                        <code>operation_date</code>,
-                        <code>operation_type</code>,
-                        <code>label</code>,
-                        <code>amount</code>.
-                        <br>
-                        Colonnes optionnelles recommandées :
-                        <code>reference</code>,
-                        <code>source_type</code>,
-                        <code>service_code</code>,
-                        <code>treasury_account_code</code>,
-                        <code>target_treasury_account_code</code>.
+                    <div>
+                        <label for="import_file">Fichier CSV / TXT / XLSX</label>
+                        <input type="file" id="import_file" name="import_file" accept=".csv,.txt,.xlsx" required>
                     </div>
 
-                    <div class="btn-group">
-                        <button type="submit" class="btn btn-primary">Prévisualiser l’import</button>
+                    <div class="btn-group" style="margin-top:20px;">
+                        <button type="submit" class="btn btn-success">Continuer vers le mapping</button>
+                        <a href="<?= e(APP_URL) ?>modules/imports/import_journal.php" class="btn btn-outline">Journal imports</a>
                     </div>
                 </form>
             </div>
 
             <div class="card">
-                <h3>Format attendu</h3>
-
-                <div class="stat-row">
-                    <span class="metric-label">Type</span>
-                    <span class="metric-value">CSV</span>
-                </div>
-
-                <div class="stat-row">
-                    <span class="metric-label">Séparateur</span>
-                    <span class="metric-value">;</span>
-                </div>
-
-                <div class="stat-row">
-                    <span class="metric-label">Flux</span>
-                    <span class="metric-value">upload → preview → rejets/corrections → validation</span>
-                </div>
-
-                <div class="dashboard-note">
-                    L’upload ne crée aucune écriture comptable. Il enregistre seulement un batch et ses lignes pour que la prévisualisation applique ensuite le moteur métier central avant toute validation.
+                <h3>Étapes</h3>
+                <div class="sl-data-list">
+                    <div class="sl-data-list__row"><span>1. Upload</span><strong>Fichier brut</strong></div>
+                    <div class="sl-data-list__row"><span>2. Mapping</span><strong>Correction colonnes</strong></div>
+                    <div class="sl-data-list__row"><span>3. Prévisualisation</span><strong>Validation métier</strong></div>
+                    <div class="sl-data-list__row"><span>4. Import</span><strong>Insertion transactionnelle</strong></div>
                 </div>
             </div>
         </div>

@@ -12,29 +12,52 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'operations_view');
 }
 
-$canEdit = function_exists('studelyCanAccess')
-    ? studelyCanAccess($pdo, 'operations_edit_page')
-    : currentUserCan($pdo, 'operations_create');
-
-$canDelete = function_exists('studelyCanAccess')
-    ? studelyCanAccess($pdo, 'operations_delete_page')
-    : currentUserCan($pdo, 'operations_create');
-
 $id = (int)($_GET['id'] ?? 0);
 if ($id <= 0) {
     exit('Opération invalide.');
 }
 
-$stmt = $pdo->prepare("
+if (!tableExists($pdo, 'operations')) {
+    exit('Table operations introuvable.');
+}
+
+$selectParts = ['o.*'];
+$joinClients = '';
+$joinServices = '';
+$joinTypes = '';
+
+if (tableExists($pdo, 'clients') && columnExists($pdo, 'operations', 'client_id')) {
+    $joinClients = 'LEFT JOIN clients c ON c.id = o.client_id';
+    $selectParts[] = columnExists($pdo, 'clients', 'client_code') ? 'c.client_code' : "NULL AS client_code";
+    $selectParts[] = columnExists($pdo, 'clients', 'full_name') ? 'c.full_name AS client_full_name' : "NULL AS client_full_name";
+    $selectParts[] = columnExists($pdo, 'clients', 'country_commercial') ? 'c.country_commercial' : "NULL AS country_commercial";
+    $selectParts[] = columnExists($pdo, 'clients', 'country_destination') ? 'c.country_destination' : "NULL AS country_destination";
+}
+
+if (tableExists($pdo, 'ref_services') && columnExists($pdo, 'operations', 'service_id')) {
+    $joinServices = 'LEFT JOIN ref_services rs ON rs.id = o.service_id';
+    $selectParts[] = columnExists($pdo, 'ref_services', 'code') ? 'rs.code AS service_code_ref' : "NULL AS service_code_ref";
+    $selectParts[] = columnExists($pdo, 'ref_services', 'label') ? 'rs.label AS service_label' : "NULL AS service_label";
+}
+
+if (tableExists($pdo, 'ref_operation_types') && columnExists($pdo, 'operations', 'operation_type_id')) {
+    $joinTypes = 'LEFT JOIN ref_operation_types rot ON rot.id = o.operation_type_id';
+    $selectParts[] = columnExists($pdo, 'ref_operation_types', 'code') ? 'rot.code AS operation_type_code_ref' : "NULL AS operation_type_code_ref";
+    $selectParts[] = columnExists($pdo, 'ref_operation_types', 'label') ? 'rot.label AS operation_type_label' : "NULL AS operation_type_label";
+}
+
+$sql = "
     SELECT
-        o.*,
-        c.client_code,
-        c.full_name
+        " . implode(",\n        ", $selectParts) . "
     FROM operations o
-    LEFT JOIN clients c ON c.id = o.client_id
+    {$joinClients}
+    {$joinServices}
+    {$joinTypes}
     WHERE o.id = ?
     LIMIT 1
-");
+";
+
+$stmt = $pdo->prepare($sql);
 $stmt->execute([$id]);
 $operation = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -43,7 +66,19 @@ if (!$operation) {
 }
 
 $pageTitle = 'Voir une opération';
-$pageSubtitle = 'Lecture détaillée d’une écriture comptable.';
+$pageSubtitle = 'Consultation détaillée et comptable de l’opération';
+
+$canEdit = currentUserCan($pdo, 'operations_edit') || currentUserCan($pdo, 'operations_manage') || currentUserCan($pdo, 'admin_manage');
+$canDelete = currentUserCan($pdo, 'operations_delete') || currentUserCan($pdo, 'operations_manage') || currentUserCan($pdo, 'admin_manage');
+
+$clientDisplay = trim((string)(
+    (($operation['client_code'] ?? '') !== '' ? ($operation['client_code'] . ' - ') : '') .
+    ($operation['client_full_name'] ?? '')
+));
+
+$operationTypeDisplay = trim((string)($operation['operation_type_label'] ?? $operation['operation_type_code_ref'] ?? $operation['operation_type_code'] ?? ''));
+$serviceDisplay = trim((string)($operation['service_label'] ?? $operation['service_code_ref'] ?? $operation['service_code'] ?? ''));
+
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -52,82 +87,131 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
-        <?php if (function_exists('render_app_header_bar')): ?>
-            <?php render_app_header_bar($pageTitle, $pageSubtitle); ?>
-        <?php endif; ?>
 
-        <div class="page-title">
-            <div>
-                <h1>Opération #<?= (int)$operation['id'] ?></h1>
-                <p class="muted"><?= e($operation['label'] ?? '') ?></p>
-            </div>
+        <div class="page-hero">
 
             <div class="btn-group">
+                <a href="<?= e(APP_URL) ?>modules/operations/operations_list.php" class="btn btn-outline">Retour</a>
+
                 <?php if ($canEdit): ?>
-                    <a class="btn btn-success" href="<?= APP_URL ?>modules/operations/operation_edit.php?id=<?= (int)$operation['id'] ?>">Modifier</a>
+                    <a href="<?= e(APP_URL) ?>modules/operations/operation_edit.php?id=<?= (int)$id ?>" class="btn btn-success">Modifier</a>
                 <?php endif; ?>
 
                 <?php if ($canDelete): ?>
-                    <a class="btn btn-danger" href="<?= APP_URL ?>modules/operations/operation_delete.php?id=<?= (int)$operation['id'] ?>">Supprimer</a>
+                    <a
+                        href="<?= e(APP_URL) ?>modules/operations/operation_delete.php?id=<?= (int)$id ?>"
+                        class="btn btn-danger"
+                        onclick="return confirm('Confirmer la suppression ou l’archivage de cette opération ?');"
+                    >
+                        Supprimer
+                    </a>
                 <?php endif; ?>
-
-                <a class="btn btn-outline" href="<?= APP_URL ?>modules/operations/operations_list.php">Retour</a>
             </div>
         </div>
 
         <div class="dashboard-grid-2">
-            <div class="form-card">
-                <h3 class="section-title">Informations générales</h3>
+            <div class="card">
+                <h3>Informations générales</h3>
 
-                <div class="detail-grid">
-                    <div class="detail-row">
-                        <span class="detail-label">Date</span>
-                        <span class="detail-value"><?= e($operation['operation_date'] ?? '') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Client</span>
-                        <span class="detail-value"><?= e(trim((string)($operation['client_code'] ?? '') . ' - ' . (string)($operation['full_name'] ?? ''))) ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Libellé</span>
-                        <span class="detail-value"><?= e($operation['label'] ?? '') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Référence</span>
-                        <span class="detail-value"><?= e($operation['reference'] ?? '') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Montant</span>
-                        <span class="detail-value"><?= number_format((float)($operation['amount'] ?? 0), 2, ',', ' ') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Type opération</span>
-                        <span class="detail-value"><?= e($operation['operation_type_code'] ?? '') ?></span>
-                    </div>
-                </div>
+                <div class="stat-row"><span class="metric-label">ID</span><span class="metric-value"><?= (int)($operation['id'] ?? 0) ?></span></div>
+
+                <?php if (array_key_exists('operation_date', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Date</span><span class="metric-value"><?= e((string)($operation['operation_date'] ?? '')) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('amount', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Montant</span><span class="metric-value"><?= e(number_format((float)($operation['amount'] ?? 0), 2, ',', ' ')) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('currency_code', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Devise</span><span class="metric-value"><?= e((string)($operation['currency_code'] ?? '')) ?></span></div>
+                <?php endif; ?>
+
+                <div class="stat-row"><span class="metric-label">Type opération</span><span class="metric-value"><?= e($operationTypeDisplay) ?></span></div>
+                <div class="stat-row"><span class="metric-label">Service</span><span class="metric-value"><?= e($serviceDisplay) ?></span></div>
+                <div class="stat-row"><span class="metric-label">Client</span><span class="metric-value"><?= e($clientDisplay !== '' ? $clientDisplay : 'N/A') ?></span></div>
+
+                <?php if (!empty($operation['country_commercial'])): ?>
+                    <div class="stat-row"><span class="metric-label">Pays commercial</span><span class="metric-value"><?= e((string)$operation['country_commercial']) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (!empty($operation['country_destination'])): ?>
+                    <div class="stat-row"><span class="metric-label">Pays destination</span><span class="metric-value"><?= e((string)$operation['country_destination']) ?></span></div>
+                <?php endif; ?>
             </div>
 
-            <div class="dashboard-panel">
-                <h3 class="section-title">Écriture comptable</h3>
+            <div class="card">
+                <h3>Aperçu comptable</h3>
 
-                <div class="detail-grid">
-                    <div class="detail-row">
-                        <span class="detail-label">Compte débit</span>
-                        <span class="detail-value"><?= e($operation['debit_account_code'] ?? '') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Compte crédit</span>
-                        <span class="detail-value"><?= e($operation['credit_account_code'] ?? '') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Compte 706 analytique</span>
-                        <span class="detail-value"><?= e($operation['service_account_code'] ?? '') ?></span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Notes</span>
-                        <span class="detail-value"><?= nl2br(e($operation['notes'] ?? '')) ?></span>
-                    </div>
-                </div>
+                <?php if (array_key_exists('debit_account_code', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Compte débité</span><span class="metric-value"><?= e((string)($operation['debit_account_code'] ?? '')) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('credit_account_code', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Compte crédité</span><span class="metric-value"><?= e((string)($operation['credit_account_code'] ?? '')) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('service_account_code', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Compte de service</span><span class="metric-value"><?= e((string)($operation['service_account_code'] ?? '')) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('is_manual_accounting', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Mode manuel</span><span class="metric-value"><?= ((int)($operation['is_manual_accounting'] ?? 0) === 1) ? 'Oui' : 'Non' ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('operation_hash', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Hash anti-doublon</span><span class="metric-value"><?= e((string)($operation['operation_hash'] ?? '')) ?></span></div>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <div class="dashboard-grid-2" style="margin-top:20px;">
+            <div class="card">
+                <h3>Libellés & contenu</h3>
+
+                <?php if (array_key_exists('label', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Libellé</span><span class="metric-value"><?= e((string)($operation['label'] ?? '')) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('reference', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Référence</span><span class="metric-value"><?= e((string)($operation['reference'] ?? '')) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('notes', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Notes / motif</span><span class="metric-value"><?= nl2br(e((string)($operation['notes'] ?? ''))) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('source_type', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Source</span><span class="metric-value"><?= e((string)($operation['source_type'] ?? '')) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('operation_kind', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Nature</span><span class="metric-value"><?= e((string)($operation['operation_kind'] ?? '')) ?></span></div>
+                <?php endif; ?>
+            </div>
+
+            <div class="card">
+                <h3>Métadonnées</h3>
+
+                <?php if (array_key_exists('created_by', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Créé par</span><span class="metric-value"><?= e((string)($operation['created_by'] ?? '')) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('created_at', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Créé le</span><span class="metric-value"><?= e((string)($operation['created_at'] ?? '')) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('updated_at', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Mis à jour le</span><span class="metric-value"><?= e((string)($operation['updated_at'] ?? '')) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('linked_bank_account_id', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Compte bancaire lié</span><span class="metric-value"><?= e((string)($operation['linked_bank_account_id'] ?? '')) ?></span></div>
+                <?php endif; ?>
+
+                <?php if (array_key_exists('bank_account_id', $operation)): ?>
+                    <div class="stat-row"><span class="metric-label">Compte bancaire interne</span><span class="metric-value"><?= e((string)($operation['bank_account_id'] ?? '')) ?></span></div>
+                <?php endif; ?>
             </div>
         </div>
 

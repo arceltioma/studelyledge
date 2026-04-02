@@ -53,7 +53,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
         <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
 
         <div class="form-card">
-            <h1>Nouvelle question</h1>
 
             <form method="POST">
                 <?= csrf_input() ?>

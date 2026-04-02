@@ -61,10 +61,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <div class="page-title">
-            <div>
-                <h1>Liste des clients</h1>
-                <p class="muted">Identité, coordonnées, rattachement financier et accès rapide.</p>
-            </div>
 
             <div class="btn-group">
                 <?php if (function_exists('studelyCanAccess') ? studelyCanAccess($pdo, 'clients_create_page') : currentUserCan($pdo, 'clients_create')): ?>

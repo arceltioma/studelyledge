@@ -78,11 +78,6 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
                         class="sidebar-logo"
                     >
                 </div>
-
-                <div class="sidebar-brand-text">
-                    <strong>Studely Ledger</strong>
-                    <span>Console financière</span>
-                </div>
             </div>
         </div>
 

@@ -18,9 +18,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
-        <?php if (function_exists('render_app_header_bar')): ?>
-            <?php render_app_header_bar($pageTitle, $pageSubtitle); ?>
-        <?php endif; ?>
 
         <div class="dashboard-grid-2">
             <div class="card clickable" onclick="location.href='<?= APP_URL ?>modules/statements/account_statements.php'">

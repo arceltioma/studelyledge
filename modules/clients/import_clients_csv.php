@@ -1,696 +1,456 @@
 <?php
-declare(strict_types=1);
-
-require_once __DIR__ . '/../../config/app.php';
-
-if (!defined('APP_ROOT')) {
-    define('APP_ROOT', dirname(__DIR__, 2) . DIRECTORY_SEPARATOR);
-}
-
 require_once __DIR__ . '/../../config/database.php';
 $pdo = getPDO();
 
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
-
-require_once __DIR__ . '/../../vendor/autoload.php';
-
-use Dompdf\Dompdf;
-use Dompdf\Options;
+require_once __DIR__ . '/../../config/security.php';
 
 if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'statements_export_page');
+    studelyEnforceAccess($pdo, 'clients_create_page');
 } else {
-    enforcePagePermission($pdo, 'clients_view');
+    enforcePagePermission($pdo, 'clients_create');
 }
 
-@ini_set('display_errors', '0');
-@ini_set('html_errors', '0');
-error_reporting(E_ALL);
-
-if (!function_exists('pdfSafeText')) {
-    function pdfSafeText(?string $value): string
-    {
-        return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8');
-    }
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
 }
 
-if (!function_exists('pdfMoney')) {
-    function pdfMoney(float $value, string $currency = 'EUR'): string
+$pageTitle = 'Import clients CSV';
+$pageSubtitle = 'Import sécurisé de clients avec contrôle des doublons';
+
+$successMessage = '';
+$errorMessage = '';
+$previewRows = [];
+$importedCount = 0;
+$duplicateCount = 0;
+$errorCount = 0;
+
+if (!function_exists('sl_clients_import_normalize_header')) {
+    function sl_clients_import_normalize_header(string $value): string
     {
-        return number_format($value, 2, ',', ' ') . ' ' . $currency;
-    }
-}
+        $value = trim($value);
+        $value = mb_strtolower($value, 'UTF-8');
+        $value = str_replace(
+            ['é','è','ê','ë','à','â','ä','î','ï','ô','ö','ù','û','ü','ç','œ','æ','/','\\','-','.'],
+            ['e','e','e','e','a','a','a','i','i','o','o','u','u','u','c','oe','ae',' ',' ',' ',' '],
+            $value
+        );
+        $value = preg_replace('/\s+/', '_', $value);
+        $value = preg_replace('/[^a-z0-9_]/', '', $value);
+        $value = trim($value, '_');
 
-if (!function_exists('pdfDateFr')) {
-    function pdfDateFr(?string $date): string
-    {
-        if (!$date) {
-            return '—';
-        }
-
-        $ts = strtotime($date);
-        if (!$ts) {
-            return (string)$date;
-        }
-
-        return date('d/m/Y', $ts);
-    }
-}
-
-if (!function_exists('pdfLoadLogoDataUri')) {
-    function pdfLoadLogoDataUri(): string
-    {
-        $rootPath = defined('APP_ROOT')
-            ? APP_ROOT
-            : dirname(__DIR__, 2) . DIRECTORY_SEPARATOR;
-
-        $candidates = [
-            $rootPath . 'assets/img/logo.png',
-            $rootPath . 'assets/img/logo-sidebar.png',
-            '/mnt/data/logo.png',
-            '/mnt/data/Logo.jpeg',
+        $aliases = [
+            'code_client' => 'client_code',
+            'client_code' => 'client_code',
+            'nom' => 'last_name',
+            'prenom' => 'first_name',
+            'full_name' => 'full_name',
+            'email' => 'email',
+            'telephone' => 'phone',
+            'phone' => 'phone',
+            'adresse' => 'postal_address',
+            'adresse_postale' => 'postal_address',
+            'postal_address' => 'postal_address',
+            'pays_commercial' => 'country_commercial',
+            'country_commercial' => 'country_commercial',
+            'pays_destination' => 'country_destination',
+            'country_destination' => 'country_destination',
+            'type_client' => 'client_type',
+            'client_type' => 'client_type',
         ];
 
-        foreach ($candidates as $path) {
-            if (is_file($path)) {
-                $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
-                $mime = match ($ext) {
-                    'jpg', 'jpeg' => 'image/jpeg',
-                    'webp' => 'image/webp',
-                    default => 'image/png',
-                };
+        return $aliases[$value] ?? $value;
+    }
+}
 
-                $content = @file_get_contents($path);
-                if ($content !== false) {
-                    return 'data:' . $mime . ';base64,' . base64_encode($content);
-                }
+if (!function_exists('sl_clients_import_detect_delimiter')) {
+    function sl_clients_import_detect_delimiter(string $line): string
+    {
+        $delimiters = [',', ';', "\t", '|'];
+        $bestDelimiter = ';';
+        $bestCount = -1;
+
+        foreach ($delimiters as $delimiter) {
+            $count = substr_count($line, $delimiter);
+            if ($count > $bestCount) {
+                $bestCount = $count;
+                $bestDelimiter = $delimiter;
             }
         }
 
-        return '';
+        return $bestDelimiter;
     }
 }
 
-if (!function_exists('pdfCleanOutputBuffers')) {
-    function pdfCleanOutputBuffers(): void
+if (!function_exists('sl_clients_import_read_rows')) {
+    function sl_clients_import_read_rows(string $filePath): array
     {
-        while (ob_get_level() > 0) {
-            @ob_end_clean();
+        $handle = fopen($filePath, 'r');
+        if (!$handle) {
+            throw new RuntimeException('Impossible de lire le fichier.');
         }
+
+        $firstLine = fgets($handle);
+        if ($firstLine === false) {
+            fclose($handle);
+            throw new RuntimeException('Le fichier est vide.');
+        }
+
+        $delimiter = sl_clients_import_detect_delimiter($firstLine);
+        rewind($handle);
+
+        $headers = fgetcsv($handle, 0, $delimiter);
+        if (!$headers) {
+            fclose($handle);
+            throw new RuntimeException('Entêtes introuvables.');
+        }
+
+        $headers = array_map(static fn($h) => sl_clients_import_normalize_header((string)$h), $headers);
+
+        $rows = [];
+        $lineNumber = 1;
+
+        while (($data = fgetcsv($handle, 0, $delimiter)) !== false) {
+            $lineNumber++;
+
+            if ($data === [null] || count(array_filter($data, static fn($v) => trim((string)$v) !== '')) === 0) {
+                continue;
+            }
+
+            $row = [];
+            foreach ($headers as $index => $header) {
+                $row[$header] = isset($data[$index]) ? trim((string)$data[$index]) : '';
+            }
+
+            $row['_line_number'] = $lineNumber;
+            $rows[] = $row;
+        }
+
+        fclose($handle);
+
+        return $rows;
     }
 }
 
-if (!function_exists('pdfSendBinaryFile')) {
-    function pdfSendBinaryFile(string $filePath, string $contentType, string $downloadName): void
+if (!function_exists('sl_clients_import_build_full_name')) {
+    function sl_clients_import_build_full_name(array $row): string
     {
-        if (!is_file($filePath)) {
-            http_response_code(500);
-            exit('Fichier de sortie introuvable.');
+        $fullName = trim((string)($row['full_name'] ?? ''));
+        if ($fullName !== '') {
+            return $fullName;
         }
 
-        pdfCleanOutputBuffers();
+        $firstName = trim((string)($row['first_name'] ?? ''));
+        $lastName = trim((string)($row['last_name'] ?? ''));
 
-        header('Content-Description: File Transfer');
-        header('Content-Type: ' . $contentType);
-        header('Content-Disposition: attachment; filename="' . basename($downloadName) . '"');
-        header('Content-Transfer-Encoding: binary');
-        header('Expires: 0');
-        header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
-        header('Pragma: public');
-        header('Content-Length: ' . (string)filesize($filePath));
-
-        readfile($filePath);
-        exit;
+        return trim($firstName . ' ' . $lastName);
     }
 }
 
-if (!function_exists('pdfFieldEnabled')) {
-    function pdfFieldEnabled(array $fields, string $field): bool
+if (!function_exists('sl_clients_import_find_duplicate')) {
+    function sl_clients_import_find_duplicate(PDO $pdo, string $clientCode, string $email, string $fullName): ?array
     {
-        return in_array('all', $fields, true) || in_array($field, $fields, true);
-    }
-}
-
-if (!function_exists('findClientStatementOperations')) {
-    function findClientStatementOperations(PDO $pdo, int $clientId, string $dateFrom = '', string $dateTo = ''): array
-    {
-        $sql = "
-            SELECT
-                o.*,
-                ba.account_name,
-                ba.account_number
-            FROM operations o
-            LEFT JOIN bank_accounts ba ON ba.id = o.bank_account_id
-            WHERE o.client_id = ?
-        ";
-        $params = [$clientId];
-
-        if ($dateFrom !== '') {
-            $sql .= " AND o.operation_date >= ?";
-            $params[] = $dateFrom;
+        if (!tableExists($pdo, 'clients')) {
+            return null;
         }
 
-        if ($dateTo !== '') {
-            $sql .= " AND o.operation_date <= ?";
-            $params[] = $dateTo;
+        $sql = "SELECT * FROM clients WHERE 1=0";
+        $params = [];
+        $conditions = [];
+
+        if ($clientCode !== '' && columnExists($pdo, 'clients', 'client_code')) {
+            $conditions[] = "client_code = ?";
+            $params[] = $clientCode;
         }
 
-        $sql .= " ORDER BY o.operation_date ASC, o.id ASC";
+        if ($email !== '' && columnExists($pdo, 'clients', 'email')) {
+            $conditions[] = "email = ?";
+            $params[] = $email;
+        }
 
+        if ($fullName !== '' && columnExists($pdo, 'clients', 'full_name')) {
+            $conditions[] = "full_name = ?";
+            $params[] = $fullName;
+        }
+
+        if (!$conditions) {
+            return null;
+        }
+
+        $sql = "SELECT * FROM clients WHERE " . implode(' OR ', $conditions) . " LIMIT 1";
         $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
 
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
     }
 }
 
-if (!function_exists('findClientOpeningBalanceBeforeDate')) {
-    function findClientOpeningBalanceBeforeDate(PDO $pdo, int $clientId, string $accountNumber, float $initialBalance, string $dateFrom = ''): float
-    {
-        if ($dateFrom === '' || $accountNumber === '') {
-            return $initialBalance;
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+            throw new RuntimeException('Jeton CSRF invalide.');
         }
 
-        $stmt = $pdo->prepare("
-            SELECT
-                COALESCE(SUM(CASE WHEN debit_account_code = ? THEN amount ELSE 0 END), 0) AS total_debit,
-                COALESCE(SUM(CASE WHEN credit_account_code = ? THEN amount ELSE 0 END), 0) AS total_credit
-            FROM operations
-            WHERE client_id = ?
-              AND operation_date < ?
-        ");
-        $stmt->execute([$accountNumber, $accountNumber, $clientId, $dateFrom]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+        if (!isset($_FILES['clients_file']) || !is_array($_FILES['clients_file'])) {
+            throw new RuntimeException('Aucun fichier reçu.');
+        }
 
-        $totalDebit = (float)($row['total_debit'] ?? 0);
-        $totalCredit = (float)($row['total_credit'] ?? 0);
+        $file = $_FILES['clients_file'];
 
-        return $initialBalance - $totalDebit + $totalCredit;
-    }
-}
+        if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            throw new RuntimeException('Erreur lors de l’upload du fichier.');
+        }
 
-if (!function_exists('classifyClientOperationAmounts')) {
-    function classifyClientOperationAmounts(array $operation, string $clientAccountNumber): array
-    {
-        $amount = (float)($operation['amount'] ?? 0);
-        $debitCode = (string)($operation['debit_account_code'] ?? '');
-        $creditCode = (string)($operation['credit_account_code'] ?? '');
-        $legacyType = strtolower(trim((string)($operation['operation_type'] ?? '')));
+        $originalName = (string)($file['name'] ?? 'clients.csv');
+        $tmpPath = (string)($file['tmp_name'] ?? '');
 
-        $debit = 0.0;
-        $credit = 0.0;
+        if ($tmpPath === '' || !is_uploaded_file($tmpPath)) {
+            throw new RuntimeException('Fichier uploadé invalide.');
+        }
 
-        if ($debitCode !== '' || $creditCode !== '') {
-            if ($debitCode === $clientAccountNumber) {
-                $debit = $amount;
-            } elseif ($creditCode === $clientAccountNumber) {
-                $credit = $amount;
+        $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+        if (!in_array($extension, ['csv', 'txt'], true)) {
+            throw new RuntimeException('Format non supporté. Utilisez CSV ou TXT.');
+        }
+
+        $rows = sl_clients_import_read_rows($tmpPath);
+        if (!$rows) {
+            throw new RuntimeException('Aucune ligne exploitable trouvée.');
+        }
+
+        $pdo->beginTransaction();
+
+        foreach ($rows as $row) {
+            $line = (int)($row['_line_number'] ?? 0);
+
+            try {
+                $clientCode = trim((string)($row['client_code'] ?? ''));
+                $fullName = sl_clients_import_build_full_name($row);
+                $email = trim((string)($row['email'] ?? ''));
+                $phone = trim((string)($row['phone'] ?? ''));
+                $postalAddress = trim((string)($row['postal_address'] ?? ''));
+                $countryCommercial = trim((string)($row['country_commercial'] ?? ''));
+                $countryDestination = trim((string)($row['country_destination'] ?? ''));
+                $clientType = trim((string)($row['client_type'] ?? ''));
+
+                if ($fullName === '') {
+                    throw new RuntimeException('Nom complet manquant.');
+                }
+
+                if ($clientCode === '' && function_exists('generateClientCode')) {
+                    $clientCode = generateClientCode($pdo);
+                }
+
+                $duplicate = sl_clients_import_find_duplicate($pdo, $clientCode, $email, $fullName);
+                if ($duplicate) {
+                    $duplicateCount++;
+                    $previewRows[] = [
+                        'line' => $line,
+                        'status' => 'duplicate',
+                        'client_code' => $clientCode,
+                        'full_name' => $fullName,
+                        'email' => $email,
+                        'message' => 'Client déjà existant',
+                    ];
+                    continue;
+                }
+
+                $columns = [];
+                $values = [];
+                $params = [];
+
+                $map = [
+                    'client_code' => $clientCode,
+                    'full_name' => $fullName,
+                    'email' => $email !== '' ? $email : null,
+                    'phone' => $phone !== '' ? $phone : null,
+                    'postal_address' => $postalAddress !== '' ? $postalAddress : null,
+                    'country_commercial' => $countryCommercial !== '' ? $countryCommercial : null,
+                    'country_destination' => $countryDestination !== '' ? $countryDestination : null,
+                    'client_type' => $clientType !== '' ? $clientType : null,
+                    'is_active' => columnExists($pdo, 'clients', 'is_active') ? 1 : null,
+                ];
+
+                foreach ($map as $column => $value) {
+                    if ($value === null && $column === 'is_active') {
+                        continue;
+                    }
+                    if (columnExists($pdo, 'clients', $column)) {
+                        $columns[] = $column;
+                        $values[] = '?';
+                        $params[] = $value;
+                    }
+                }
+
+                if (columnExists($pdo, 'clients', 'created_at')) {
+                    $columns[] = 'created_at';
+                    $values[] = 'NOW()';
+                }
+
+                if (columnExists($pdo, 'clients', 'updated_at')) {
+                    $columns[] = 'updated_at';
+                    $values[] = 'NOW()';
+                }
+
+                if (!$columns) {
+                    throw new RuntimeException('Aucune colonne insérable trouvée.');
+                }
+
+                $sql = "
+                    INSERT INTO clients (" . implode(', ', $columns) . ")
+                    VALUES (" . implode(', ', $values) . ")
+                ";
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
+
+                $newId = (int)$pdo->lastInsertId();
+                $importedCount++;
+
+                if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+                    logUserAction(
+                        $pdo,
+                        (int)$_SESSION['user_id'],
+                        'import_client_csv',
+                        'clients',
+                        'client',
+                        $newId,
+                        'Import CSV d’un client'
+                    );
+                }
+
+                $previewRows[] = [
+                    'line' => $line,
+                    'status' => 'ok',
+                    'client_code' => $clientCode,
+                    'full_name' => $fullName,
+                    'email' => $email,
+                    'message' => 'Importé',
+                ];
+            } catch (Throwable $e) {
+                $errorCount++;
+                $previewRows[] = [
+                    'line' => $line,
+                    'status' => 'error',
+                    'client_code' => trim((string)($row['client_code'] ?? '')),
+                    'full_name' => sl_clients_import_build_full_name($row),
+                    'email' => trim((string)($row['email'] ?? '')),
+                    'message' => $e->getMessage(),
+                ];
             }
-        } else {
-            if ($legacyType === 'debit') {
-                $debit = $amount;
-            } elseif ($legacyType === 'credit') {
-                $credit = $amount;
-            }
         }
 
-        return [
-            'debit' => $debit,
-            'credit' => $credit,
-        ];
-    }
-}
-
-if (!function_exists('renderClientProfilePdfHtml')) {
-    function renderClientProfilePdfHtml(array $client, ?array $clientBank, ?array $treasury, string $logoDataUri, array $fields): string
-    {
-        $currency = (string)($client['currency'] ?? 'EUR');
-        $initialBalance = (float)($clientBank['initial_balance'] ?? 0);
-        $currentBalance = (float)($clientBank['balance'] ?? 0);
-        $postalAddress = $client['postal_address'] ?? '';
-
-        ob_start();
-        ?>
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <style>
-        @page { margin: 24px 28px; }
-        body { font-family: DejaVu Sans, sans-serif; color: #1f2937; font-size: 12px; margin: 0; }
-        .header { border-bottom: 3px solid #1d4ed8; padding-bottom: 14px; margin-bottom: 18px; }
-        .header-table { width: 100%; border-collapse: collapse; }
-        .header-table td { vertical-align: middle; }
-        .logo { width: 120px; }
-        .brand-title { font-size: 24px; font-weight: 700; color: #1d2549; margin: 0 0 4px 0; }
-        .brand-subtitle { font-size: 12px; color: #64748b; margin: 0; }
-        .doc-badge { display: inline-block; padding: 6px 12px; background: #eff6ff; color: #1d4ed8; border-radius: 999px; font-weight: 700; font-size: 11px; }
-        .hero { background: linear-gradient(135deg, #f8fbff 0%, #eef4ff 100%); border: 1px solid #dbeafe; border-radius: 16px; padding: 18px; margin-bottom: 18px; }
-        .hero-title { font-size: 20px; font-weight: 700; color: #0f172a; margin: 0 0 6px 0; }
-        .hero-sub { font-size: 12px; color: #64748b; margin: 0; }
-        .grid { width: 100%; border-collapse: separate; border-spacing: 12px; margin: 0 -12px 8px -12px; }
-        .card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 14px; }
-        .card-title { font-size: 13px; font-weight: 700; color: #1d2549; margin-bottom: 10px; }
-        .meta-table { width: 100%; border-collapse: collapse; }
-        .meta-table td { padding: 6px 0; border-bottom: 1px solid #eef2f7; }
-        .meta-table tr:last-child td { border-bottom: none; }
-        .label { color: #64748b; width: 42%; font-weight: 600; }
-        .value { color: #111827; font-weight: 700; text-align: right; }
-        .kpi { font-size: 24px; font-weight: 800; color: #1d2549; margin: 2px 0; }
-        .kpi-sub { font-size: 11px; color: #64748b; }
-        .footer { margin-top: 18px; padding-top: 10px; border-top: 1px solid #e5e7eb; color: #64748b; font-size: 10px; text-align: center; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <table class="header-table">
-            <tr>
-                <td style="width:140px;">
-                    <?php if ($logoDataUri !== ''): ?>
-                        <img src="<?= $logoDataUri ?>" class="logo" alt="Logo">
-                    <?php endif; ?>
-                </td>
-                <td>
-                    <div class="brand-title">Studely Ledger</div>
-                    <p class="brand-subtitle">Fiche client premium</p>
-                </td>
-                <td style="text-align:right;">
-                    <span class="doc-badge">FICHE CLIENT</span>
-                </td>
-            </tr>
-        </table>
-    </div>
-
-    <div class="hero">
-        <div class="hero-title"><?= pdfSafeText($client['full_name'] ?? trim((string)($client['first_name'] ?? '') . ' ' . (string)($client['last_name'] ?? ''))) ?></div>
-        <p class="hero-sub">
-            Code client : <strong><?= pdfSafeText($client['client_code'] ?? '') ?></strong>
-            <?php if (pdfFieldEnabled($fields, 'client_account')): ?>
-                • Compte client : <strong><?= pdfSafeText($client['generated_client_account'] ?? '') ?></strong>
-            <?php endif; ?>
-        </p>
-    </div>
-
-    <table class="grid">
-        <?php if (pdfFieldEnabled($fields, 'identity') || pdfFieldEnabled($fields, 'contact')): ?>
-        <tr>
-            <td class="card" style="width:50%;">
-                <div class="card-title">Identité & contact</div>
-                <table class="meta-table">
-                    <?php if (pdfFieldEnabled($fields, 'identity')): ?>
-                        <tr><td class="label">Prénom</td><td class="value"><?= pdfSafeText($client['first_name'] ?? '') ?></td></tr>
-                        <tr><td class="label">Nom</td><td class="value"><?= pdfSafeText($client['last_name'] ?? '') ?></td></tr>
-                        <tr><td class="label">Type client</td><td class="value"><?= pdfSafeText($client['client_type'] ?? '—') ?></td></tr>
-                        <tr><td class="label">Statut client</td><td class="value"><?= pdfSafeText($client['client_status'] ?? '—') ?></td></tr>
-                    <?php endif; ?>
-
-                    <?php if (pdfFieldEnabled($fields, 'contact')): ?>
-                        <tr><td class="label">Email</td><td class="value"><?= pdfSafeText($client['email'] ?? '—') ?></td></tr>
-                        <tr><td class="label">Téléphone</td><td class="value"><?= pdfSafeText($client['phone'] ?? '—') ?></td></tr>
-                        <tr><td class="label">Adresse postale</td><td class="value"><?= nl2br(pdfSafeText($postalAddress !== '' ? $postalAddress : '—')) ?></td></tr>
-                    <?php endif; ?>
-                </table>
-            </td>
-
-            <td class="card" style="width:50%;">
-                <div class="card-title">Cycle & rattachement</div>
-                <table class="meta-table">
-                    <?php if (pdfFieldEnabled($fields, 'countries')): ?>
-                        <tr><td class="label">Pays d’origine</td><td class="value"><?= pdfSafeText($client['country_origin'] ?? '—') ?></td></tr>
-                        <tr><td class="label">Pays de destination</td><td class="value"><?= pdfSafeText($client['country_destination'] ?? '—') ?></td></tr>
-                        <tr><td class="label">Pays commercial</td><td class="value"><?= pdfSafeText($client['country_commercial'] ?? '—') ?></td></tr>
-                    <?php endif; ?>
-
-                    <?php if (pdfFieldEnabled($fields, 'treasury_account')): ?>
-                        <tr><td class="label">Compte 512 lié</td><td class="value"><?= pdfSafeText(trim((string)($treasury['account_code'] ?? '') . ' - ' . (string)($treasury['account_label'] ?? ''))) ?></td></tr>
-                    <?php endif; ?>
-
-                    <?php if (pdfFieldEnabled($fields, 'currency')): ?>
-                        <tr><td class="label">Devise</td><td class="value"><?= pdfSafeText($currency) ?></td></tr>
-                    <?php endif; ?>
-
-                    <tr><td class="label">Date édition</td><td class="value"><?= pdfDateFr(date('Y-m-d')) ?></td></tr>
-                </table>
-            </td>
-        </tr>
-        <?php endif; ?>
-    </table>
-
-    <?php if (pdfFieldEnabled($fields, 'balances')): ?>
-    <table class="grid">
-        <tr>
-            <td class="card" style="width:50%; text-align:center;">
-                <div class="card-title">Solde initial</div>
-                <div class="kpi"><?= pdfMoney($initialBalance, $currency) ?></div>
-                <div class="kpi-sub">Base d’ouverture du compte 411</div>
-            </td>
-            <td class="card" style="width:50%; text-align:center;">
-                <div class="card-title">Solde courant</div>
-                <div class="kpi"><?= pdfMoney($currentBalance, $currency) ?></div>
-                <div class="kpi-sub">Valeur dynamique actualisée</div>
-            </td>
-        </tr>
-    </table>
-    <?php endif; ?>
-
-    <div class="footer">
-        Document généré le <?= pdfDateFr(date('Y-m-d')) ?> • Studely Ledger
-    </div>
-</body>
-</html>
-        <?php
-        return (string)ob_get_clean();
-    }
-}
-
-if (!function_exists('renderClientStatementPdfHtml')) {
-    function renderClientStatementPdfHtml(
-        PDO $pdo,
-        array $client,
-        ?array $clientBank,
-        array $operations,
-        string $dateFrom,
-        string $dateTo,
-        string $logoDataUri
-    ): string {
-        $currency = (string)($client['currency'] ?? 'EUR');
-        $clientAccountNumber = (string)($client['generated_client_account'] ?? ($clientBank['account_number'] ?? ''));
-        $initialBalance = (float)($clientBank['initial_balance'] ?? 0);
-        $openingBalance = findClientOpeningBalanceBeforeDate(
-            $pdo,
-            (int)$client['id'],
-            $clientAccountNumber,
-            $initialBalance,
-            $dateFrom
-        );
-
-        $runningBalance = $openingBalance;
-        $totalDebit = 0.0;
-        $totalCredit = 0.0;
-        $statementRows = [];
-
-        foreach ($operations as $operation) {
-            $amounts = classifyClientOperationAmounts($operation, $clientAccountNumber);
-            $debit = (float)$amounts['debit'];
-            $credit = (float)$amounts['credit'];
-
-            $runningBalance = $runningBalance - $debit + $credit;
-            $totalDebit += $debit;
-            $totalCredit += $credit;
-
-            $statementRows[] = [
-                'operation_date' => $operation['operation_date'] ?? '',
-                'label' => $operation['label'] ?? '',
-                'reference' => $operation['reference'] ?? '',
-                'debit_account_code' => $operation['debit_account_code'] ?? '',
-                'credit_account_code' => $operation['credit_account_code'] ?? '',
-                'debit' => $debit,
-                'credit' => $credit,
-                'balance' => $runningBalance,
-            ];
+        $pdo->commit();
+        $successMessage = $importedCount . ' client(s) importé(s). ' . $duplicateCount . ' doublon(s). ' . $errorCount . ' erreur(s).';
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
         }
+        $errorMessage = $e->getMessage();
+    }
+}
 
-        $closingBalance = $runningBalance;
-        $periodText = ($dateFrom !== '' || $dateTo !== '')
-            ? ('Période : ' . ($dateFrom !== '' ? pdfDateFr($dateFrom) : 'Origine') . ' au ' . ($dateTo !== '' ? pdfDateFr($dateTo) : pdfDateFr(date('Y-m-d'))))
-            : 'Période : historique complet';
+require_once __DIR__ . '/../../includes/document_start.php';
+?>
 
-        ob_start();
-        ?>
-<!DOCTYPE html>
-<html lang="fr">
-<head>
-    <meta charset="UTF-8">
-    <style>
-        @page { margin: 22px 24px; }
-        body { font-family: DejaVu Sans, sans-serif; color: #1f2937; font-size: 11px; margin: 0; }
-        .header { border-bottom: 3px solid #0f766e; padding-bottom: 12px; margin-bottom: 14px; }
-        .header-table { width: 100%; border-collapse: collapse; }
-        .header-table td { vertical-align: middle; }
-        .logo { width: 118px; }
-        .brand-title { font-size: 24px; font-weight: 700; color: #0f172a; margin: 0 0 4px 0; }
-        .brand-subtitle { font-size: 12px; color: #64748b; margin: 0; }
-        .doc-badge { display: inline-block; padding: 6px 12px; background: #ecfeff; color: #0f766e; border-radius: 999px; font-weight: 700; font-size: 11px; }
-        .hero { background: linear-gradient(135deg, #f0fdfa 0%, #eff6ff 100%); border: 1px solid #c7f9f1; border-radius: 14px; padding: 14px 16px; margin-bottom: 14px; }
-        .hero-title { font-size: 18px; font-weight: 700; color: #111827; margin: 0 0 6px 0; }
-        .hero-sub { font-size: 11px; color: #64748b; margin: 0; }
-        .mini-grid { width: 100%; border-collapse: separate; border-spacing: 10px; margin: 0 -10px 8px -10px; }
-        .mini-card { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px; text-align: center; }
-        .mini-title { font-size: 11px; color: #64748b; margin-bottom: 6px; font-weight: 700; }
-        .mini-kpi { font-size: 18px; font-weight: 800; color: #111827; }
-        .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
-        .meta-table td { padding: 5px 0; }
-        .meta-left { width: 52%; color: #64748b; font-weight: 600; }
-        .meta-right { text-align: right; color: #111827; font-weight: 700; }
-        .statement-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-        .statement-table th { background: #eff6ff; color: #1d2549; border: 1px solid #dbeafe; padding: 8px 6px; font-size: 10px; text-transform: uppercase; }
-        .statement-table td { border: 1px solid #e5e7eb; padding: 7px 6px; vertical-align: top; }
-        .right { text-align: right; }
-        .debit { color: #b42318; font-weight: 700; }
-        .credit { color: #117a4f; font-weight: 700; }
-        .balance { color: #1d2549; font-weight: 700; }
-        .footer { margin-top: 14px; padding-top: 8px; border-top: 1px solid #e5e7eb; color: #64748b; font-size: 10px; text-align: center; }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <table class="header-table">
-            <tr>
-                <td style="width:140px;">
-                    <?php if ($logoDataUri !== ''): ?>
-                        <img src="<?= $logoDataUri ?>" class="logo" alt="Logo">
-                    <?php endif; ?>
-                </td>
-                <td>
-                    <div class="brand-title">Studely Ledger</div>
-                    <p class="brand-subtitle">Relevé de compte client</p>
-                </td>
-                <td style="text-align:right;">
-                    <span class="doc-badge">RELEVÉ DE COMPTE</span>
-                </td>
-            </tr>
-        </table>
-    </div>
+<div class="layout">
+    <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
-    <div class="hero">
-        <div class="hero-title"><?= pdfSafeText($client['full_name'] ?? trim((string)($client['first_name'] ?? '') . ' ' . (string)($client['last_name'] ?? ''))) ?></div>
-        <p class="hero-sub">
-            Client : <strong><?= pdfSafeText($client['client_code'] ?? '') ?></strong>
-            • Compte : <strong><?= pdfSafeText($clientAccountNumber) ?></strong>
-            • <?= pdfSafeText($periodText) ?>
-        </p>
-    </div>
+    <div class="main">
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-    <table class="meta-table">
-        <tr>
-            <td class="meta-left">Pays commercial</td>
-            <td class="meta-right"><?= pdfSafeText($client['country_commercial'] ?? '—') ?></td>
-        </tr>
-        <?php if (!empty($client['postal_address'])): ?>
-        <tr>
-            <td class="meta-left">Adresse postale</td>
-            <td class="meta-right"><?= pdfSafeText($client['postal_address']) ?></td>
-        </tr>
+        <?php if ($successMessage !== ''): ?>
+            <div class="success"><?= e($successMessage) ?></div>
         <?php endif; ?>
-        <tr>
-            <td class="meta-left">Devise</td>
-            <td class="meta-right"><?= pdfSafeText($currency) ?></td>
-        </tr>
-        <tr>
-            <td class="meta-left">Date d’édition</td>
-            <td class="meta-right"><?= pdfDateFr(date('Y-m-d')) ?></td>
-        </tr>
-    </table>
 
-    <table class="mini-grid">
-        <tr>
-            <td class="mini-card">
-                <div class="mini-title">Solde initial période</div>
-                <div class="mini-kpi"><?= pdfMoney($openingBalance, $currency) ?></div>
-            </td>
-            <td class="mini-card">
-                <div class="mini-title">Total débits</div>
-                <div class="mini-kpi debit"><?= pdfMoney($totalDebit, $currency) ?></div>
-            </td>
-            <td class="mini-card">
-                <div class="mini-title">Total crédits</div>
-                <div class="mini-kpi credit"><?= pdfMoney($totalCredit, $currency) ?></div>
-            </td>
-            <td class="mini-card">
-                <div class="mini-title">Solde final</div>
-                <div class="mini-kpi balance"><?= pdfMoney($closingBalance, $currency) ?></div>
-            </td>
-        </tr>
-    </table>
+        <?php if ($errorMessage !== ''): ?>
+            <div class="error"><?= e($errorMessage) ?></div>
+        <?php endif; ?>
 
-    <table class="statement-table">
-        <thead>
-            <tr>
-                <th style="width:62px;">Date</th>
-                <th>Libellé</th>
-                <th style="width:90px;">Référence</th>
-                <th style="width:72px;">Débit</th>
-                <th style="width:72px;">Crédit</th>
-                <th style="width:82px;">Solde</th>
-            </tr>
-        </thead>
-        <tbody>
-            <?php if (!$statementRows): ?>
-                <tr>
-                    <td colspan="6" style="text-align:center;">Aucune opération sur la période sélectionnée.</td>
-                </tr>
-            <?php else: ?>
-                <?php foreach ($statementRows as $row): ?>
-                    <tr>
-                        <td><?= pdfDateFr($row['operation_date']) ?></td>
-                        <td>
-                            <strong><?= pdfSafeText($row['label'] ?: 'Opération') ?></strong><br>
-                            <span style="color:#64748b; font-size:10px;">
-                                D: <?= pdfSafeText($row['debit_account_code']) ?> • C: <?= pdfSafeText($row['credit_account_code']) ?>
-                            </span>
-                        </td>
-                        <td><?= pdfSafeText($row['reference'] ?: '—') ?></td>
-                        <td class="right debit"><?= $row['debit'] > 0 ? pdfMoney($row['debit'], $currency) : '—' ?></td>
-                        <td class="right credit"><?= $row['credit'] > 0 ? pdfMoney($row['credit'], $currency) : '—' ?></td>
-                        <td class="right balance"><?= pdfMoney($row['balance'], $currency) ?></td>
-                    </tr>
-                <?php endforeach; ?>
-            <?php endif; ?>
-        </tbody>
-    </table>
+        <div class="dashboard-grid-2">
+            <div class="form-card">
+                <h3>Importer des clients</h3>
+                <form method="POST" enctype="multipart/form-data">
+                    <?= csrf_input() ?>
 
-    <div class="footer">
-        Relevé généré automatiquement par Studely Ledger • <?= pdfDateFr(date('Y-m-d')) ?>
+                    <div>
+                        <label for="clients_file">Fichier CSV / TXT</label>
+                        <input type="file" id="clients_file" name="clients_file" accept=".csv,.txt" required>
+                    </div>
+
+                    <div style="margin-top:18px;">
+                        <label>Entêtes reconnues</label>
+                        <div class="card" style="padding:14px;">
+                            <div class="muted">
+                                <strong>client_code</strong>,
+                                <strong>full_name</strong> ou <strong>first_name</strong> + <strong>last_name</strong>,
+                                <strong>email</strong>,
+                                <strong>phone</strong>,
+                                <strong>postal_address</strong>,
+                                <strong>country_commercial</strong>,
+                                <strong>country_destination</strong>,
+                                <strong>client_type</strong>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="btn-group" style="margin-top:20px;">
+                        <button type="submit" class="btn btn-success">Importer les clients</button>
+                        <a href="<?= e(APP_URL) ?>modules/clients/clients_list.php" class="btn btn-outline">Retour liste clients</a>
+                    </div>
+                </form>
+            </div>
+
+            <div class="card">
+                <h3>Exemple</h3>
+                <pre style="white-space:pre-wrap; margin:0;">client_code;full_name;email;phone;postal_address;country_commercial;country_destination;client_type
+000123456;Jean Dupont;jean@example.com;0600000000;12 rue Exemple, Paris;France;Allemagne;Etudiant</pre>
+            </div>
+        </div>
+
+        <?php if ($previewRows): ?>
+            <div class="card" style="margin-top:20px;">
+                <h3>Résultat détaillé</h3>
+                <div class="table-responsive">
+                    <table class="modern-table">
+                        <thead>
+                            <tr>
+                                <th>Ligne</th>
+                                <th>Statut</th>
+                                <th>Code client</th>
+                                <th>Nom</th>
+                                <th>Email</th>
+                                <th>Message</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($previewRows as $row): ?>
+                                <tr>
+                                    <td><?= (int)$row['line'] ?></td>
+                                    <td>
+                                        <?php if ($row['status'] === 'ok'): ?>
+                                            <span class="badge badge-success">OK</span>
+                                        <?php elseif ($row['status'] === 'duplicate'): ?>
+                                            <span class="badge badge-warning">Doublon</span>
+                                        <?php else: ?>
+                                            <span class="badge badge-danger">Erreur</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td><?= e((string)$row['client_code']) ?></td>
+                                    <td><?= e((string)$row['full_name']) ?></td>
+                                    <td><?= e((string)$row['email']) ?></td>
+                                    <td><?= e((string)$row['message']) ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
-</body>
-</html>
-        <?php
-        return (string)ob_get_clean();
-    }
-}
+</div>
 
-$singleMode = isset($_GET['single']) && (int)($_GET['single']) === 1;
-
-if ($singleMode) {
-    $clientIds = isset($_GET['client_id']) ? [(int)$_GET['client_id']] : [];
-    $documentKind = trim((string)($_GET['document_kind'] ?? 'statement'));
-    $dateFrom = trim((string)($_GET['date_from'] ?? ''));
-    $dateTo = trim((string)($_GET['date_to'] ?? ''));
-    $fields = $_GET['fields'] ?? ['all'];
-} else {
-    $clientIds = $_POST['client_ids'] ?? $_POST['clients'] ?? [];
-    $documentKind = trim((string)($_POST['document_kind'] ?? 'statement'));
-    $dateFrom = trim((string)($_POST['date_from'] ?? ''));
-    $dateTo = trim((string)($_POST['date_to'] ?? ''));
-    $fields = $_POST['fields'] ?? ['all'];
-}
-
-if (!is_array($clientIds)) {
-    $clientIds = [$clientIds];
-}
-if (!is_array($fields) || !$fields) {
-    $fields = ['all'];
-}
-
-$clientIds = array_values(array_filter(array_map('intval', $clientIds), fn ($v) => $v > 0));
-
-if (!$clientIds) {
-    exit('Aucun client sélectionné.');
-}
-
-$allowedDocumentKinds = ['statement', 'profile'];
-if (!in_array($documentKind, $allowedDocumentKinds, true)) {
-    $documentKind = 'statement';
-}
-
-$placeholders = implode(',', array_fill(0, count($clientIds), '?'));
-
-$clientSelect = [
-    'c.*',
-    'ta.account_code AS treasury_account_code',
-    'ta.account_label AS treasury_account_label'
-];
-
-$stmtClients = $pdo->prepare("
-    SELECT " . implode(', ', $clientSelect) . "
-    FROM clients c
-    LEFT JOIN treasury_accounts ta ON ta.id = c.initial_treasury_account_id
-    WHERE c.id IN ({$placeholders})
-    ORDER BY c.client_code ASC
-");
-$stmtClients->execute($clientIds);
-$clients = $stmtClients->fetchAll(PDO::FETCH_ASSOC);
-
-if (!$clients) {
-    exit('Aucun client trouvé.');
-}
-
-$options = new Options();
-$options->set('defaultFont', 'DejaVu Sans');
-$options->set('isRemoteEnabled', true);
-$options->set('isHtml5ParserEnabled', true);
-
-$tmpDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'studelyledger_export_' . uniqid('', true);
-if (!mkdir($tmpDir, 0777, true) && !is_dir($tmpDir)) {
-    exit('Impossible de créer le répertoire temporaire.');
-}
-
-$logoDataUri = pdfLoadLogoDataUri();
-$pdfFiles = [];
-
-foreach ($clients as $client) {
-    $clientId = (int)$client['id'];
-    $clientBank = findPrimaryBankAccountForClient($pdo, $clientId);
-    $treasury = !empty($client['initial_treasury_account_id'])
-        ? findTreasuryAccountById($pdo, (int)$client['initial_treasury_account_id'])
-        : null;
-
-    $operations = [];
-    if ($documentKind === 'statement') {
-        $operations = findClientStatementOperations($pdo, $clientId, $dateFrom, $dateTo);
-    }
-
-    $dompdf = new Dompdf($options);
-
-    if ($documentKind === 'profile') {
-        $html = renderClientProfilePdfHtml($client, $clientBank, $treasury, $logoDataUri, $fields);
-    } else {
-        $html = renderClientStatementPdfHtml($pdo, $client, $clientBank, $operations, $dateFrom, $dateTo, $logoDataUri);
-    }
-
-    $dompdf->loadHtml($html, 'UTF-8');
-    $dompdf->setPaper('A4', 'portrait');
-    $dompdf->render();
-
-    $prefix = $documentKind === 'statement' ? 'releve_' : 'fiche_';
-    $filename = $prefix . preg_replace('/[^A-Za-z0-9_\-]/', '_', (string)($client['client_code'] ?? 'client')) . '.pdf';
-    $targetPath = $tmpDir . DIRECTORY_SEPARATOR . $filename;
-
-    file_put_contents($targetPath, $dompdf->output());
-    $pdfFiles[] = $targetPath;
-}
-
-if (count($pdfFiles) === 1) {
-    $singlePdf = $pdfFiles[0];
-    pdfSendBinaryFile($singlePdf, 'application/pdf', basename($singlePdf));
-}
-
-if (!class_exists('ZipArchive')) {
-    exit("L'extension PHP ZipArchive n'est pas disponible. Active l'extension zip dans php.ini pour exporter plusieurs PDF.");
-}
-
-$zipPath = $tmpDir . DIRECTORY_SEPARATOR . 'exports_clients.zip';
-$zip = new ZipArchive();
-
-if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
-    exit('Impossible de créer l’archive ZIP.');
-}
-
-foreach ($pdfFiles as $pdfFile) {
-    $zip->addFile($pdfFile, basename($pdfFile));
-}
-$zip->close();
-
-pdfSendBinaryFile($zipPath, 'application/zip', 'exports_clients.zip');
+<?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

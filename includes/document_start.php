@@ -18,5 +18,5 @@ $pageTitleValue = $pageTitle ?? APP_NAME;
     <script src="<?= e(app_asset('assets/js/app.js')) ?>" defer></script>
     <script src="<?= e(app_asset('assets/js/charts.js')) ?>" defer></script>
 </head>
-<body>
+<body class="<?= str_contains($_SERVER['REQUEST_URI'] ?? '', '/modules/dashboard/dashboard.php') ? 'dashboard-no-jump' : '' ?>">    
 <div class="app-shell">

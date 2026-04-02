@@ -13,6 +13,9 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'operations_create');
 }
 
+$pageTitle = 'Créer une opération';
+$pageSubtitle = 'Création sécurisée avec aperçu comptable';
+
 $operationTypes = tableExists($pdo, 'ref_operation_types')
     ? $pdo->query("
         SELECT id, code, label, is_active
@@ -73,10 +76,12 @@ $serviceAccounts = tableExists($pdo, 'service_accounts')
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
 
-$currencies = function_exists('sl_get_currency_options') ? sl_get_currency_options($pdo) : [];
+$currencies = function_exists('sl_get_currency_options') ? sl_get_currency_options($pdo) : [
+    ['code' => 'EUR', 'label' => 'Euro']
+];
 
-if (!function_exists('sl_create_find_by_id')) {
-    function sl_create_find_by_id(array $rows, int $id): ?array
+if (!function_exists('sl_find_by_id')) {
+    function sl_find_by_id(array $rows, int $id): ?array
     {
         foreach ($rows as $row) {
             if ((int)($row['id'] ?? 0) === $id) {
@@ -84,13 +89,6 @@ if (!function_exists('sl_create_find_by_id')) {
             }
         }
         return null;
-    }
-}
-
-if (!function_exists('sl_create_post')) {
-    function sl_create_post(string $key, mixed $default = ''): string
-    {
-        return e((string)($_POST[$key] ?? $default));
     }
 }
 
@@ -131,8 +129,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Type de service obligatoire.');
         }
 
-        $selectedType = sl_create_find_by_id($operationTypes, $operationTypeId);
-        $selectedService = sl_create_find_by_id($services, $serviceId);
+        $selectedType = sl_find_by_id($operationTypes, $operationTypeId);
+        $selectedService = sl_find_by_id($services, $serviceId);
 
         if (!$selectedType) {
             throw new RuntimeException('Type d’opération introuvable.');
@@ -159,16 +157,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'CA_DEBOURDS_ASSURANCE::CA_DEBOURDS_ASSURANCE',
             'FRAIS_DEBOURDS_MICROFINANCE::FRAIS_DEBOURDS_MICROFINANCE',
             'CA_COURTAGE_PRET::CA_COURTAGE_PRET',
-            'CA_LOGEMENT::CA_LOGEMENT',
+            'CA_LOGEMENT::CA_LOGEMENT'
         ];
 
         $manualKey = $typeCode . '::' . $serviceCode;
         $isManualCase = in_array($manualKey, $manualCases, true);
 
-        if ($isManualCase) {
-            if ($sourceAccountCode === '' || $destinationAccountCode === '') {
-                throw new RuntimeException('Le compte source et le compte destination sont obligatoires pour ce cas.');
-            }
+        if ($isManualCase && ($sourceAccountCode === '' || $destinationAccountCode === '')) {
+            throw new RuntimeException('Le compte source et le compte destination sont obligatoires pour ce cas.');
         }
 
         $payload = [
@@ -197,7 +193,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($actionMode === 'save') {
             $pdo->beginTransaction();
 
-            $operationId = createOperationWithAccountingV2($pdo, $payload);
+            $newId = createOperationWithAccountingV2($pdo, $payload);
 
             if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
                 logUserAction(
@@ -206,15 +202,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'create_operation',
                     'operations',
                     'operation',
-                    $operationId,
-                    'Création d’une opération corrigée'
+                    $newId,
+                    'Création d’une opération'
                 );
             }
 
             $pdo->commit();
-            $successMessage = 'Opération enregistrée.';
+            $successMessage = 'Opération créée avec succès.';
             $_POST = [];
-            $preview = null;
         }
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
@@ -224,269 +219,271 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$pageTitle = 'Créer une opération';
-$pageSubtitle = 'Type, service, client, comptes et aperçu comptable avant validation.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
 <div class="layout">
-<?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
-<div class="main">
-    <?php require_once __DIR__ . '/../../includes/header.php'; ?>
+    <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
-    <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
-    <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
+    <div class="main">
+        <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-    <div class="dashboard-grid-2">
-        <div class="form-card">
-            <form method="POST">
-                <?= csrf_input() ?>
+        <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
+        <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
 
-                <div class="dashboard-grid-2">
-                    <div>
-                        <label>Date</label>
-                        <input type="date" name="operation_date" value="<?= sl_create_post('operation_date', date('Y-m-d')) ?>" required>
+        <div class="dashboard-grid-2">
+            <div class="form-card">
+                <form method="POST">
+                    <?= csrf_input() ?>
+
+                    <div class="dashboard-grid-2">
+                        <div>
+                            <label>Date</label>
+                            <input type="date" name="operation_date" value="<?= e($_POST['operation_date'] ?? date('Y-m-d')) ?>" required>
+                        </div>
+
+                        <div>
+                            <label>Montant</label>
+                            <input type="number" step="0.01" name="amount" value="<?= e($_POST['amount'] ?? '') ?>" required>
+                        </div>
+
+                        <div>
+                            <label>Devise</label>
+                            <?php $selectedCurrency = (string)($_POST['currency_code'] ?? 'EUR'); ?>
+                            <select name="currency_code" required>
+                                <?php foreach ($currencies as $currency): ?>
+                                    <option value="<?= e($currency['code']) ?>" <?= $selectedCurrency === $currency['code'] ? 'selected' : '' ?>>
+                                        <?= e($currency['code'] . ' - ' . $currency['label']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div id="client-wrapper">
+                            <label>Client</label>
+                            <?php $selectedClient = (string)($_POST['client_id'] ?? ''); ?>
+                            <select name="client_id" id="client_id">
+                                <option value="">Choisir</option>
+                                <?php foreach ($clients as $client): ?>
+                                    <option
+                                        value="<?= (int)$client['id'] ?>"
+                                        data-country-commercial="<?= e($client['country_commercial'] ?? '') ?>"
+                                        data-country-destination="<?= e($client['country_destination'] ?? '') ?>"
+                                        data-client-account="<?= e($client['generated_client_account'] ?? '') ?>"
+                                        data-treasury-account="<?= e($client['treasury_account_code'] ?? '') ?>"
+                                        <?= $selectedClient == $client['id'] ? 'selected' : '' ?>
+                                    >
+                                        <?= e(($client['client_code'] ?? '') . ' - ' . ($client['full_name'] ?? '')) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Type opération</label>
+                            <?php $selectedTypeId = (string)($_POST['operation_type_id'] ?? ''); ?>
+                            <select name="operation_type_id" id="operation_type_id" required>
+                                <option value="">Choisir</option>
+                                <?php foreach ($operationTypes as $typeRow): ?>
+                                    <option value="<?= (int)$typeRow['id'] ?>" data-type-code="<?= e(sl_normalize_code($typeRow['code'] ?? '')) ?>" <?= $selectedTypeId == $typeRow['id'] ? 'selected' : '' ?>>
+                                        <?= e($typeRow['label']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Type service</label>
+                            <?php $selectedServiceId = (string)($_POST['service_id'] ?? ''); ?>
+                            <select name="service_id" id="service_id" required>
+                                <option value="">Choisir d’abord un type</option>
+                                <?php foreach ($services as $serviceRow): ?>
+                                    <option
+                                        value="<?= (int)$serviceRow['id'] ?>"
+                                        data-type-id="<?= (int)($serviceRow['operation_type_id'] ?? 0) ?>"
+                                        data-type-code="<?= e(sl_normalize_code($serviceRow['operation_type_code'] ?? '')) ?>"
+                                        data-service-code="<?= e(sl_normalize_code($serviceRow['code'] ?? '')) ?>"
+                                        <?= $selectedServiceId == $serviceRow['id'] ? 'selected' : '' ?>
+                                    >
+                                        <?= e($serviceRow['label']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div id="linked-bank-account-wrapper">
+                            <label>Compte bancaire lié</label>
+                            <input type="number" name="linked_bank_account_id" id="linked_bank_account_id" value="<?= e($_POST['linked_bank_account_id'] ?? '') ?>">
+                        </div>
+
+                        <div>
+                            <label>Référence / Intitulé</label>
+                            <input type="text" name="reference" value="<?= e($_POST['reference'] ?? '') ?>">
+                        </div>
+
+                        <div style="grid-column: 1 / -1;">
+                            <label>Note / Motif</label>
+                            <textarea name="notes" rows="4"><?= e($_POST['notes'] ?? '') ?></textarea>
+                        </div>
+
+                        <div id="source-account-wrapper">
+                            <label>Compte source (débit)</label>
+                            <?php $selectedSource = (string)($_POST['source_account_code'] ?? ''); ?>
+                            <select name="source_account_code" id="source_account_code">
+                                <option value="">Choisir</option>
+                                <?php foreach ($treasuryAccounts as $acc): ?>
+                                    <option value="<?= e($acc['account_code']) ?>" <?= $selectedSource === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
+                                        <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                                <?php foreach ($serviceAccounts as $acc): ?>
+                                    <option value="<?= e($acc['account_code']) ?>" <?= $selectedSource === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
+                                        <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div id="destination-account-wrapper">
+                            <label>Compte destination (crédit)</label>
+                            <?php $selectedDestination = (string)($_POST['destination_account_code'] ?? ''); ?>
+                            <select name="destination_account_code" id="destination_account_code">
+                                <option value="">Choisir</option>
+                                <?php foreach ($treasuryAccounts as $acc): ?>
+                                    <option value="<?= e($acc['account_code']) ?>" <?= $selectedDestination === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
+                                        <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                                <?php foreach ($serviceAccounts as $acc): ?>
+                                    <option value="<?= e($acc['account_code']) ?>" <?= $selectedDestination === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
+                                        <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Compte débité calculé</label>
+                            <input type="text" value="<?= e($preview['debit_account_code'] ?? '') ?>" readonly>
+                        </div>
+
+                        <div>
+                            <label>Compte crédité calculé</label>
+                            <input type="text" value="<?= e($preview['credit_account_code'] ?? '') ?>" readonly>
+                        </div>
                     </div>
 
-                    <div>
-                        <label>Montant</label>
-                        <input type="number" step="0.01" name="amount" value="<?= sl_create_post('amount') ?>" required>
+                    <div style="margin-top:16px;">
+                        <label>Libellé libre</label>
+                        <input type="text" name="label" value="<?= e($_POST['label'] ?? '') ?>">
                     </div>
 
-                    <div>
-                        <label>Devise</label>
-                        <select name="currency_code" required>
-                            <?php foreach ($currencies as $currency): ?>
-                                <option value="<?= e($currency['code']) ?>" <?= sl_create_post('currency_code', 'EUR') === $currency['code'] ? 'selected' : '' ?>>
-                                    <?= e($currency['code'] . ' - ' . $currency['label']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
+                    <div class="btn-group" style="margin-top:20px;">
+                        <button type="submit" name="action_mode" value="preview" class="btn btn-secondary">Prévisualiser</button>
+                        <button type="submit" name="action_mode" value="save" class="btn btn-success">Enregistrer</button>
+                        <a href="<?= e(APP_URL) ?>modules/operations/operations_list.php" class="btn btn-outline">Retour</a>
                     </div>
+                </form>
+            </div>
 
-                    <div id="client-wrapper">
-                        <label>Client</label>
-                        <select name="client_id" id="client_id">
-                            <option value="">Choisir</option>
-                            <?php foreach ($clients as $client): ?>
-                                <option
-                                    value="<?= (int)$client['id'] ?>"
-                                    data-country-commercial="<?= e($client['country_commercial'] ?? '') ?>"
-                                    data-country-destination="<?= e($client['country_destination'] ?? '') ?>"
-                                    data-client-account="<?= e($client['generated_client_account'] ?? '') ?>"
-                                    data-treasury-account="<?= e($client['treasury_account_code'] ?? '') ?>"
-                                    <?= sl_create_post('client_id') == $client['id'] ? 'selected' : '' ?>
-                                >
-                                    <?= e(($client['client_code'] ?? '') . ' - ' . ($client['full_name'] ?? '')) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label>Type opération</label>
-                        <select name="operation_type_id" id="operation_type_id" required>
-                            <option value="">Choisir</option>
-                            <?php foreach ($operationTypes as $type): ?>
-                                <option value="<?= (int)$type['id'] ?>" data-type-code="<?= e(sl_normalize_code($type['code'] ?? '')) ?>" <?= sl_create_post('operation_type_id') == $type['id'] ? 'selected' : '' ?>>
-                                    <?= e($type['label']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label>Type service</label>
-                        <select name="service_id" id="service_id" required>
-                            <option value="">Choisir d’abord un type</option>
-                            <?php foreach ($services as $service): ?>
-                                <option
-                                    value="<?= (int)$service['id'] ?>"
-                                    data-type-id="<?= (int)($service['operation_type_id'] ?? 0) ?>"
-                                    data-type-code="<?= e(sl_normalize_code($service['operation_type_code'] ?? '')) ?>"
-                                    data-service-code="<?= e(sl_normalize_code($service['code'] ?? '')) ?>"
-                                    <?= sl_create_post('service_id') == $service['id'] ? 'selected' : '' ?>
-                                >
-                                    <?= e($service['label']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div id="linked-bank-account-wrapper">
-                        <label>Compte bancaire lié</label>
-                        <input type="number" name="linked_bank_account_id" id="linked_bank_account_id" value="<?= sl_create_post('linked_bank_account_id') ?>">
-                    </div>
-
-                    <div>
-                        <label>Référence / Intitulé</label>
-                        <input type="text" name="reference" value="<?= sl_create_post('reference') ?>">
-                    </div>
-
-                    <div style="grid-column: 1 / -1;">
-                        <label>Note / Motif</label>
-                        <textarea name="notes" rows="4"><?= sl_create_post('notes') ?></textarea>
-                    </div>
-
-                    <div id="source-account-wrapper">
-                        <label>Compte source (débit)</label>
-                        <select name="source_account_code" id="source_account_code">
-                            <option value="">Choisir</option>
-                            <?php foreach ($treasuryAccounts as $acc): ?>
-                                <option value="<?= e($acc['account_code']) ?>" <?= sl_create_post('source_account_code') === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
-                                    <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                            <?php foreach ($serviceAccounts as $acc): ?>
-                                <option value="<?= e($acc['account_code']) ?>" <?= sl_create_post('source_account_code') === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
-                                    <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div id="destination-account-wrapper">
-                        <label>Compte destination (crédit)</label>
-                        <select name="destination_account_code" id="destination_account_code">
-                            <option value="">Choisir</option>
-                            <?php foreach ($treasuryAccounts as $acc): ?>
-                                <option value="<?= e($acc['account_code']) ?>" <?= sl_create_post('destination_account_code') === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
-                                    <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                            <?php foreach ($serviceAccounts as $acc): ?>
-                                <option value="<?= e($acc['account_code']) ?>" <?= sl_create_post('destination_account_code') === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
-                                    <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label>Compte débité calculé</label>
-                        <input type="text" value="<?= e($preview['debit_account_code'] ?? '') ?>" readonly>
-                    </div>
-
-                    <div>
-                        <label>Compte crédité calculé</label>
-                        <input type="text" value="<?= e($preview['credit_account_code'] ?? '') ?>" readonly>
-                    </div>
-                </div>
-
-                <div style="margin-top:16px;">
-                    <label>Libellé libre</label>
-                    <input type="text" name="label" value="<?= sl_create_post('label') ?>">
-                </div>
-
-                <div class="btn-group" style="margin-top:20px;">
-                    <button type="submit" name="action_mode" value="preview" class="btn btn-secondary">Prévisualiser</button>
-                    <button type="submit" name="action_mode" value="save" class="btn btn-success">Créer</button>
-                </div>
-            </form>
-        </div>
-
-        <div class="card">
-            <h3>Aperçu Comptable</h3>
-            <?php if ($preview): ?>
+            <div class="card">
+                <h3>Aperçu Comptable</h3>
                 <div class="stat-row"><span class="metric-label">Débit</span><span class="metric-value"><?= e($preview['debit_account_code'] ?? '') ?></span></div>
                 <div class="stat-row"><span class="metric-label">Crédit</span><span class="metric-value"><?= e($preview['credit_account_code'] ?? '') ?></span></div>
                 <div class="stat-row"><span class="metric-label">Mode manuel</span><span class="metric-value"><?= !empty($preview['is_manual_accounting']) ? 'Oui' : 'Non' ?></span></div>
                 <div class="stat-row"><span class="metric-label">Hash anti-doublon</span><span class="metric-value"><?= e($preview['operation_hash'] ?? '') ?></span></div>
-            <?php else: ?>
-                <div class="dashboard-note">Résumé de l’opération avant validation.</div>
-            <?php endif; ?>
+            </div>
         </div>
+
+        <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const map = <?= json_encode(sl_operation_service_map(), JSON_UNESCAPED_UNICODE) ?>;
+            const typeSelect = document.getElementById('operation_type_id');
+            const serviceSelect = document.getElementById('service_id');
+            const clientWrapper = document.getElementById('client-wrapper');
+            const linkedBankWrapper = document.getElementById('linked-bank-account-wrapper');
+            const sourceWrapper = document.getElementById('source-account-wrapper');
+            const destinationWrapper = document.getElementById('destination-account-wrapper');
+
+            if (!typeSelect || !serviceSelect) return;
+
+            const originalServiceOptions = Array.from(serviceSelect.querySelectorAll('option')).map(option => option.cloneNode(true));
+
+            function getSelectedTypeCode() {
+                const selected = typeSelect.options[typeSelect.selectedIndex];
+                return selected ? (selected.getAttribute('data-type-code') || '') : '';
+            }
+
+            function getSelectedServiceCode() {
+                const selected = serviceSelect.options[serviceSelect.selectedIndex];
+                return selected ? (selected.getAttribute('data-service-code') || '') : '';
+            }
+
+            function refreshServices() {
+                const typeCode = getSelectedTypeCode();
+                const currentValue = serviceSelect.value;
+
+                serviceSelect.innerHTML = '';
+
+                const placeholder = document.createElement('option');
+                placeholder.value = '';
+                placeholder.textContent = typeCode ? 'Choisir' : 'Choisir d’abord un type';
+                serviceSelect.appendChild(placeholder);
+
+                const allowedCodes = map[typeCode] || [];
+                let stillValid = false;
+
+                originalServiceOptions.forEach(option => {
+                    if (option.value === '') return;
+                    const serviceCode = option.getAttribute('data-service-code') || '';
+                    if (allowedCodes.includes(serviceCode)) {
+                        const cloned = option.cloneNode(true);
+                        if (cloned.value === currentValue) stillValid = true;
+                        serviceSelect.appendChild(cloned);
+                    }
+                });
+
+                serviceSelect.value = stillValid ? currentValue : '';
+                refreshVisibility();
+            }
+
+            function refreshVisibility() {
+                const typeCode = getSelectedTypeCode();
+                const serviceCode = getSelectedServiceCode();
+                const key = typeCode + '::' + serviceCode;
+
+                const manualCases = [
+                    'VIREMENT::INTERNE',
+                    'CA_DIVERS::CA_DIVERS',
+                    'CA_DEBOURDS_ASSURANCE::CA_DEBOURDS_ASSURANCE',
+                    'FRAIS_DEBOURDS_MICROFINANCE::FRAIS_DEBOURDS_MICROFINANCE',
+                    'CA_COURTAGE_PRET::CA_COURTAGE_PRET',
+                    'CA_LOGEMENT::CA_LOGEMENT'
+                ];
+
+                const needsLinkedBank =
+                    (typeCode === 'VIREMENT' && serviceCode !== 'INTERNE' && serviceCode !== '') ||
+                    typeCode === 'VERSEMENT' ||
+                    typeCode === 'REGULARISATION';
+
+                const isManual = manualCases.includes(key);
+                const isInternal = key === 'VIREMENT::INTERNE';
+
+                linkedBankWrapper.style.display = needsLinkedBank ? '' : 'none';
+                sourceWrapper.style.display = (isManual || isInternal) ? '' : 'none';
+                destinationWrapper.style.display = (isManual || isInternal) ? '' : 'none';
+                clientWrapper.style.display = isInternal ? 'none' : '';
+            }
+
+            typeSelect.addEventListener('change', refreshServices);
+            serviceSelect.addEventListener('change', refreshVisibility);
+
+            refreshServices();
+        });
+        </script>
+
+        <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
-
-    <script>
-    document.addEventListener('DOMContentLoaded', function () {
-        const map = <?= json_encode(sl_operation_service_map(), JSON_UNESCAPED_UNICODE) ?>;
-        const typeSelect = document.getElementById('operation_type_id');
-        const serviceSelect = document.getElementById('service_id');
-        const clientWrapper = document.getElementById('client-wrapper');
-        const linkedBankWrapper = document.getElementById('linked-bank-account-wrapper');
-        const sourceWrapper = document.getElementById('source-account-wrapper');
-        const destinationWrapper = document.getElementById('destination-account-wrapper');
-
-        if (!typeSelect || !serviceSelect) return;
-
-        const originalServiceOptions = Array.from(serviceSelect.querySelectorAll('option')).map(option => option.cloneNode(true));
-
-        function getSelectedTypeCode() {
-            const selected = typeSelect.options[typeSelect.selectedIndex];
-            return selected ? (selected.getAttribute('data-type-code') || '') : '';
-        }
-
-        function getSelectedServiceCode() {
-            const selected = serviceSelect.options[serviceSelect.selectedIndex];
-            return selected ? (selected.getAttribute('data-service-code') || '') : '';
-        }
-
-        function refreshServices() {
-            const typeCode = getSelectedTypeCode();
-            const currentValue = serviceSelect.value;
-
-            serviceSelect.innerHTML = '';
-
-            const placeholder = document.createElement('option');
-            placeholder.value = '';
-            placeholder.textContent = typeCode ? 'Choisir' : 'Choisir d’abord un type';
-            serviceSelect.appendChild(placeholder);
-
-            const allowedCodes = map[typeCode] || [];
-            let stillValid = false;
-
-            originalServiceOptions.forEach(option => {
-                if (option.value === '') return;
-                const serviceCode = option.getAttribute('data-service-code') || '';
-                if (allowedCodes.includes(serviceCode)) {
-                    const cloned = option.cloneNode(true);
-                    if (cloned.value === currentValue) stillValid = true;
-                    serviceSelect.appendChild(cloned);
-                }
-            });
-
-            serviceSelect.value = stillValid ? currentValue : '';
-            refreshVisibility();
-        }
-
-        function refreshVisibility() {
-            const typeCode = getSelectedTypeCode();
-            const serviceCode = getSelectedServiceCode();
-            const key = typeCode + '::' + serviceCode;
-
-            const manualCases = [
-                'VIREMENT::INTERNE',
-                'CA_DIVERS::CA_DIVERS',
-                'CA_DEBOURDS_ASSURANCE::CA_DEBOURDS_ASSURANCE',
-                'FRAIS_DEBOURDS_MICROFINANCE::FRAIS_DEBOURDS_MICROFINANCE',
-                'CA_COURTAGE_PRET::CA_COURTAGE_PRET',
-                'CA_LOGEMENT::CA_LOGEMENT'
-            ];
-
-            const needsLinkedBank =
-                (typeCode === 'VIREMENT' && serviceCode !== 'INTERNE' && serviceCode !== '') ||
-                typeCode === 'VERSEMENT' ||
-                typeCode === 'REGULARISATION';
-
-            const isManual = manualCases.includes(key);
-            const isInternal = key === 'VIREMENT::INTERNE';
-
-            linkedBankWrapper.style.display = needsLinkedBank ? '' : 'none';
-            sourceWrapper.style.display = isManual ? '' : (isInternal ? '' : 'none');
-            destinationWrapper.style.display = isManual ? '' : (isInternal ? '' : 'none');
-            clientWrapper.style.display = isInternal ? 'none' : '';
-        }
-
-        typeSelect.addEventListener('change', refreshServices);
-        serviceSelect.addEventListener('change', refreshVisibility);
-
-        refreshServices();
-    });
-    </script>
-
-    <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
-</div>
 </div>
 
 <?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

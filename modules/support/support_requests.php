@@ -27,21 +27,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <div class="page-title">
-            <div>
-                <h1>Demandes support</h1>
-                <p class="muted">Questions, incidents, accès et suivi de traitement.</p>
-            </div>
-
-            <div class="btn-group">
-                <?php if (studelyCanAccess($pdo, 'support_create_page')): ?>
-                    <a href="<?= e(APP_URL) ?>modules/support/ask_question.php" class="btn btn-secondary">Question</a>
-                    <a href="<?= e(APP_URL) ?>modules/support/report_bug.php" class="btn btn-warning">Bug</a>
-                    <a href="<?= e(APP_URL) ?>modules/support/request_access.php" class="btn btn-outline">Accès</a>
-                <?php endif; ?>
-            </div>
-        </div>
-
         <div class="timeline">
             <?php if (!$requests): ?>
                 <div class="dashboard-note">Aucune demande support enregistrée.</div>
