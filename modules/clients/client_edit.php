@@ -26,6 +26,9 @@ if (!$client) {
     exit('Client introuvable.');
 }
 
+/* LOT 1B : état avant modification */
+$beforeClient = $client;
+
 $treasuryAccounts = tableExists($pdo, 'treasury_accounts')
     ? $pdo->query("
         SELECT id, account_code, account_label, is_active
@@ -139,6 +142,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             WHERE id = ?
         ");
         $stmtUpdate->execute($params);
+
+        /* LOT 1B : reload état après modification */
+        $stmtReload = $pdo->prepare("SELECT * FROM clients WHERE id = ? LIMIT 1");
+        $stmtReload->execute([$id]);
+        $afterClient = $stmtReload->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        /* LOT 1B : audit trail */
+        if (function_exists('auditEntityChanges')) {
+            auditEntityChanges(
+                $pdo,
+                'client',
+                (int)$id,
+                $beforeClient,
+                $afterClient,
+                isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
+            );
+        }
+
+        /* LOT 1B : notification */
+        if (function_exists('createNotification')) {
+            createNotification(
+                $pdo,
+                'client_update',
+                'Le client ' . ($afterClient['full_name'] ?? ($client['client_code'] ?? 'N/A')) . ' a été modifié.',
+                'info',
+                APP_URL . 'modules/clients/client_view.php?id=' . (int)$id,
+                'client',
+                (int)$id,
+                isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
+            );
+        }
 
         if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
             logUserAction(

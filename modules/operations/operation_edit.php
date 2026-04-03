@@ -30,6 +30,9 @@ if (!$operation) {
     exit('Opération introuvable.');
 }
 
+/* LOT 1B : état avant modification */
+$beforeOperation = $operation;
+
 $operationTypes = tableExists($pdo, 'ref_operation_types')
     ? $pdo->query("
         SELECT id, code, label, is_active
@@ -234,6 +237,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo->prepare("SELECT * FROM operations WHERE id = ? LIMIT 1");
             $stmt->execute([$operationId]);
             $operation = $stmt->fetch(PDO::FETCH_ASSOC) ?: $operation;
+
+            /* LOT 1B : audit trail après modification */
+            if (function_exists('auditEntityChanges')) {
+                auditEntityChanges(
+                    $pdo,
+                    'operation',
+                    (int)$operationId,
+                    $beforeOperation,
+                    $operation,
+                    isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
+                );
+            }
+
+            /* LOT 1B : notification standard */
+            if (function_exists('createNotification')) {
+                createNotification(
+                    $pdo,
+                    'operation_update',
+                    'L’opération #' . (int)$operationId . ' a été modifiée.',
+                    'info',
+                    APP_URL . 'modules/operations/operation_view.php?id=' . (int)$operationId,
+                    'operation',
+                    (int)$operationId,
+                    isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
+                );
+            }
+
+            /* LOT 1B : alerte spécifique si mode manuel */
+            if (!empty($preview['is_manual_accounting']) && function_exists('createNotification')) {
+                createNotification(
+                    $pdo,
+                    'manual_accounting',
+                    'Une opération en mode manuel a été enregistrée.',
+                    'warning',
+                    APP_URL . 'modules/operations/operation_view.php?id=' . (int)$operationId,
+                    'operation',
+                    (int)$operationId,
+                    isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
+                );
+            }
 
             $successMessage = 'Opération mise à jour avec succès.';
         }
