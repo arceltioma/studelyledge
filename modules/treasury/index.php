@@ -5,6 +5,7 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
 if (function_exists('studelyEnforceAccess')) {
     studelyEnforceAccess($pdo, 'treasury_view_page');
@@ -12,38 +13,55 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'treasury_view');
 }
 
-$pageTitle = 'Comptes internes';
-$pageSubtitle = 'Gestion des comptes de trésorerie internes';
-
-$flashSuccess = $_SESSION['success_message'] ?? '';
-$flashError = $_SESSION['error_message'] ?? '';
-unset($_SESSION['success_message'], $_SESSION['error_message']);
-
-$rows = [];
-
-if (tableExists($pdo, 'treasury_accounts')) {
-    $labelColumn = columnExists($pdo, 'treasury_accounts', 'account_label') ? 'account_label' : 'account_code';
-    $openingCol = columnExists($pdo, 'treasury_accounts', 'opening_balance') ? 'opening_balance' : 'NULL';
-    $currentCol = columnExists($pdo, 'treasury_accounts', 'current_balance') ? 'current_balance' : 'NULL';
-    $activeCol = columnExists($pdo, 'treasury_accounts', 'is_active') ? 'is_active' : '1';
-
-    $rows = $pdo->query("
-        SELECT
-            id,
-            account_code,
-            {$labelColumn} AS account_label,
-            {$openingCol} AS opening_balance,
-            {$currentCol} AS current_balance,
-            {$activeCol} AS is_active
-        FROM treasury_accounts
-        ORDER BY account_code ASC
-    ")->fetchAll(PDO::FETCH_ASSOC);
+if (!tableExists($pdo, 'treasury_accounts')) {
+    exit('Table treasury_accounts introuvable.');
 }
 
-$canCreate = currentUserCan($pdo, 'treasury_create') || currentUserCan($pdo, 'treasury_manage') || currentUserCan($pdo, 'admin_manage');
-$canEdit = currentUserCan($pdo, 'treasury_edit') || currentUserCan($pdo, 'treasury_manage') || currentUserCan($pdo, 'admin_manage');
-$canArchive = currentUserCan($pdo, 'treasury_delete') || currentUserCan($pdo, 'treasury_manage') || currentUserCan($pdo, 'admin_manage');
-$canView = currentUserCan($pdo, 'treasury_view') || currentUserCan($pdo, 'treasury_manage') || currentUserCan($pdo, 'admin_manage');
+$pageTitle = 'Comptes internes (512)';
+$pageSubtitle = 'Gestion compacte des comptes de trésorerie, suivi des soldes et accès rapide';
+
+$search = trim((string)($_GET['search'] ?? ''));
+$status = trim((string)($_GET['status'] ?? ''));
+
+$where = ['1=1'];
+$params = [];
+
+if ($search !== '') {
+    $where[] = "(
+        COALESCE(account_code,'') LIKE ?
+        OR COALESCE(account_label,'') LIKE ?
+    )";
+    $params[] = "%{$search}%";
+    $params[] = "%{$search}%";
+}
+
+if ($status === 'active' && columnExists($pdo, 'treasury_accounts', 'is_active')) {
+    $where[] = "COALESCE(is_active,1) = 1";
+}
+
+if ($status === 'archived' && columnExists($pdo, 'treasury_accounts', 'is_active')) {
+    $where[] = "COALESCE(is_active,1) = 0";
+}
+
+$stmt = $pdo->prepare("
+    SELECT *
+    FROM treasury_accounts
+    WHERE " . implode(' AND ', $where) . "
+    ORDER BY COALESCE(is_active,1) DESC, account_code ASC
+");
+$stmt->execute($params);
+$accounts = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+$totalAccounts = count($accounts);
+$totalActive = 0;
+$totalCurrentBalance = 0.0;
+
+foreach ($accounts as $row) {
+    if ((int)($row['is_active'] ?? 1) === 1) {
+        $totalActive++;
+    }
+    $totalCurrentBalance += (float)($row['current_balance'] ?? 0);
+}
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -54,72 +72,96 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <div class="page-hero">
-
-            <?php if ($canCreate): ?>
-                <div class="btn-group">
-                    <a href="<?= e(APP_URL) ?>modules/treasury/treasury_create.php" class="btn btn-success">+ Nouveau compte</a>
+        <section class="sl-grid sl-grid-3 sl-stable-block" style="margin-bottom:20px;">
+            <div class="sl-card sl-kpi-card sl-kpi-card--blue">
+                <div class="sl-kpi-card__label">Comptes</div>
+                <div class="sl-kpi-card__value"><?= (int)$totalAccounts ?></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Total affiché</span>
+                    <strong>512</strong>
                 </div>
-            <?php endif; ?>
-        </div>
+            </div>
 
-        <?php if ($flashSuccess !== ''): ?>
-            <div class="success"><?= e($flashSuccess) ?></div>
-        <?php endif; ?>
+            <div class="sl-card sl-kpi-card sl-kpi-card--emerald">
+                <div class="sl-kpi-card__label">Actifs</div>
+                <div class="sl-kpi-card__value"><?= (int)$totalActive ?></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Disponibles</span>
+                    <strong>Suivi</strong>
+                </div>
+            </div>
 
-        <?php if ($flashError !== ''): ?>
-            <div class="error"><?= e($flashError) ?></div>
-        <?php endif; ?>
+            <div class="sl-card sl-kpi-card sl-kpi-card--violet">
+                <div class="sl-kpi-card__label">Solde courant</div>
+                <div class="sl-kpi-card__value"><?= e(number_format($totalCurrentBalance, 2, ',', ' ')) ?></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Somme affichée</span>
+                    <strong>Trésorerie</strong>
+                </div>
+            </div>
+        </section>
 
-        <div class="card">
-            <div class="table-responsive">
-                <table class="table">
+        <section class="sl-card sl-stable-block" style="margin-bottom:20px;">
+            <form method="GET">
+                <div class="dashboard-grid-4">
+                    <div>
+                        <label>Recherche</label>
+                        <input type="text" name="search" value="<?= e($search) ?>" placeholder="Code ou intitulé">
+                    </div>
+
+                    <div>
+                        <label>Statut</label>
+                        <select name="status">
+                            <option value="">Tous</option>
+                            <option value="active" <?= $status === 'active' ? 'selected' : '' ?>>Actifs</option>
+                            <option value="archived" <?= $status === 'archived' ? 'selected' : '' ?>>Archivés</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="btn-group" style="margin-top:18px;">
+                    <button type="submit" class="btn btn-success">Filtrer</button>
+                    <a href="<?= e(APP_URL) ?>modules/treasury/index.php" class="btn btn-outline">Réinitialiser</a>
+                    <a href="<?= e(APP_URL) ?>modules/treasury/treasury_create.php" class="btn btn-secondary">Ajouter</a>
+                </div>
+            </form>
+        </section>
+
+        <section class="sl-card sl-stable-block">
+            <div class="sl-card-head">
+                <div>
+                    <h3>Liste compacte des comptes internes</h3>
+                    <p class="sl-card-head-subtitle">Vue synthétique, solde et accès direct</p>
+                </div>
+            </div>
+
+            <div class="sl-table-wrap">
+                <table class="sl-table">
                     <thead>
                         <tr>
-                            <th>Code compte</th>
+                            <th>Code</th>
                             <th>Intitulé</th>
                             <th>Solde ouverture</th>
                             <th>Solde courant</th>
                             <th>Statut</th>
-                            <th style="width: 260px;">Actions</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php if ($rows): ?>
-                            <?php foreach ($rows as $row): ?>
-                                <?php $isActive = (int)($row['is_active'] ?? 1) === 1; ?>
+                        <?php if ($accounts): ?>
+                            <?php foreach ($accounts as $row): ?>
                                 <tr>
-                                    <td><strong><?= e($row['account_code'] ?? '') ?></strong></td>
-                                    <td><?= e($row['account_label'] ?? '') ?></td>
+                                    <td><?= e((string)($row['account_code'] ?? '')) ?></td>
+                                    <td><?= e((string)($row['account_label'] ?? '')) ?></td>
                                     <td><?= e(number_format((float)($row['opening_balance'] ?? 0), 2, ',', ' ')) ?></td>
                                     <td><?= e(number_format((float)($row['current_balance'] ?? 0), 2, ',', ' ')) ?></td>
-                                    <td>
-                                        <span class="<?= $isActive ? 'badge badge-success' : 'badge badge-danger' ?>">
-                                            <?= $isActive ? 'Actif' : 'Archivé' ?>
-                                        </span>
-                                    </td>
+                                    <td><?= ((int)($row['is_active'] ?? 1) === 1) ? 'Actif' : 'Archivé' ?></td>
                                     <td>
                                         <div class="btn-group">
-                                            <?php if ($canView): ?>
-                                                <a href="<?= e(APP_URL) ?>modules/treasury/treasury_view.php?id=<?= (int)$row['id'] ?>" class="btn btn-secondary">
-                                                    Voir
-                                                </a>
-                                            <?php endif; ?>
-
-                                            <?php if ($canEdit && $isActive): ?>
-                                                <a href="<?= e(APP_URL) ?>modules/treasury/treasury_edit.php?id=<?= (int)$row['id'] ?>" class="btn btn-success">
-                                                    Modifier
-                                                </a>
-                                            <?php endif; ?>
-
-                                            <?php if ($canArchive): ?>
-                                                <a
-                                                    href="<?= e(APP_URL) ?>modules/treasury/treasury_archive.php?id=<?= (int)$row['id'] ?>"
-                                                    class="btn btn-danger"
-                                                    onclick="return confirm('Confirmer le changement de statut de ce compte de trésorerie ?');"
-                                                >
-                                                    <?= $isActive ? 'Archiver' : 'Réactiver' ?>
-                                                </a>
+                                            <a class="btn btn-sm btn-secondary" href="<?= e(APP_URL) ?>modules/treasury/treasury_view.php?id=<?= (int)$row['id'] ?>">Voir</a>
+                                            <a class="btn btn-sm btn-outline" href="<?= e(APP_URL) ?>modules/treasury/treasury_edit.php?id=<?= (int)$row['id'] ?>">Modifier</a>
+                                            <?php if ((int)($row['is_active'] ?? 1) === 1): ?>
+                                                <a class="btn btn-sm btn-danger" href="<?= e(APP_URL) ?>modules/treasury/treasury_archive.php?id=<?= (int)$row['id'] ?>">Archiver</a>
                                             <?php endif; ?>
                                         </div>
                                     </td>
@@ -127,13 +169,13 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="6">Aucun compte interne trouvé.</td>
+                                <td colspan="6">Aucun compte de trésorerie trouvé.</td>
                             </tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
             </div>
-        </div>
+        </section>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>

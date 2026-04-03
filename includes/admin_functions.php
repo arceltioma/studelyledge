@@ -363,6 +363,8 @@ if (!function_exists('studelyAccessMap')) {
             'user_logs_view_page' => ['user_logs_view', 'admin_manage'],
             'settings_manage_page' => ['settings_manage', 'admin_manage'],
 
+            'service_accounts_import_page' => ['service_accounts_view', 'service_accounts_manage', 'admin_functional_view', 'admin_manage'],
+
             /* LOT 2 additif */
             'notifications_view_page' => ['dashboard_view', 'admin_manage'],
             'intelligence_center_page' => ['admin_dashboard_view', 'admin_manage'],
@@ -426,7 +428,14 @@ if (!function_exists('studelyModulePermissions')) {
 
             'support' => ['support_view', 'support_requests_view', 'support_create', 'support_manage', 'support_admin_manage'],
 
-            'admin_functional' => ['admin_functional_view', 'services_manage', 'operation_types_manage', 'service_accounts_view', 'statuses_manage'],
+            'admin_functional' => [
+    'admin_functional_view',
+    'services_manage',
+    'operation_types_manage',
+    'service_accounts_view',
+    'service_accounts_manage',
+    'statuses_manage'
+],
             'admin' => ['admin_dashboard_view', 'users_manage', 'roles_manage', 'permissions_manage', 'user_logs_view', 'settings_manage', 'admin_manage'],
 
             /* LOT 2 additif */
@@ -2574,5 +2583,197 @@ if (!function_exists('sl_create_entity_notification')) {
             $entityId,
             $createdBy
         );
+    }
+}
+
+if (!function_exists('sl_build_notification_link_for_entity')) {
+    function sl_build_notification_link_for_entity(string $entityType, int $entityId): ?string
+    {
+        $entityType = strtolower(trim($entityType));
+        $entityId = (int)$entityId;
+
+        if ($entityId <= 0 || !defined('APP_URL')) {
+            return null;
+        }
+
+        return match ($entityType) {
+            'client' => APP_URL . 'modules/clients/client_view.php?id=' . $entityId,
+            'operation' => APP_URL . 'modules/operations/operation_view.php?id=' . $entityId,
+            'treasury_account' => APP_URL . 'modules/treasury/treasury_view.php?id=' . $entityId,
+            'service_account' => APP_URL . 'modules/service_accounts/view.php?id=' . $entityId,
+            'import' => APP_URL . 'modules/imports/import_journal.php',
+            default => null,
+        };
+    }
+}
+
+if (!function_exists('sl_create_entity_notification')) {
+    function sl_create_entity_notification(
+        PDO $pdo,
+        string $type,
+        string $message,
+        string $level = 'info',
+        ?string $entityType = null,
+        ?int $entityId = null,
+        ?int $createdBy = null
+    ): void {
+        if (!function_exists('createNotification')) {
+            return;
+        }
+
+        $linkUrl = null;
+        if ($entityType !== null && $entityId !== null && function_exists('sl_build_notification_link_for_entity')) {
+            $linkUrl = sl_build_notification_link_for_entity($entityType, $entityId);
+        }
+
+        createNotification(
+            $pdo,
+            $type,
+            $message,
+            $level,
+            $linkUrl,
+            $entityType,
+            $entityId,
+            $createdBy
+        );
+    }
+}
+
+if (!function_exists('sl_get_operation_rules_summary')) {
+    function sl_get_operation_rules_summary(
+        string $operationTypeCode,
+        string $serviceCode,
+        ?string $commercialCountry = null,
+        ?string $destinationCountry = null
+    ): array {
+        $operationTypeCode = sl_normalize_code($operationTypeCode);
+        $serviceCode = sl_normalize_code($serviceCode);
+
+        $manual = sl_is_manual_accounting_case($operationTypeCode, $serviceCode);
+        $isInternal = ($operationTypeCode === 'VIREMENT' && $serviceCode === 'INTERNE');
+
+        $requiresClient = !$isInternal;
+        $requiresLinkedBank =
+            ($operationTypeCode === 'VERSEMENT')
+            || ($operationTypeCode === 'REGULARISATION')
+            || ($operationTypeCode === 'VIREMENT' && $serviceCode !== 'INTERNE');
+
+        $searchText = '—';
+
+        if ($operationTypeCode === 'FRAIS_SERVICE' && $serviceCode === 'AVI') {
+            $searchText = 'AVI + ' . ($destinationCountry ?: '?') . ' + ' . ($commercialCountry ?: '?');
+        } elseif ($operationTypeCode === 'FRAIS_SERVICE' && $serviceCode === 'ATS') {
+            $searchText = 'ATS + ' . ($commercialCountry ?: '?');
+        } elseif ($operationTypeCode === 'FRAIS_GESTION' && $serviceCode === 'GESTION') {
+            $searchText = 'GESTION + ' . ($commercialCountry ?: '?');
+        } elseif ($operationTypeCode === 'COMMISSION_DE_TRANSFERT' && $serviceCode === 'COMMISSION_DE_TRANSFERT') {
+            $searchText = 'TRANSFERT + ' . ($commercialCountry ?: '?');
+        } elseif ($operationTypeCode === 'CA_PLACEMENT' && $serviceCode === 'CA_PLACEMENT') {
+            $searchText = 'CA PLACEMENT + ' . ($commercialCountry ?: '?');
+        }
+
+        return [
+            'operation_type_code' => $operationTypeCode,
+            'service_code' => $serviceCode,
+            'requires_client' => $requiresClient,
+            'requires_linked_bank' => $requiresLinkedBank,
+            'requires_manual_accounts' => $manual,
+            'service_account_search_text' => $searchText,
+        ];
+    }
+}
+
+if (!function_exists('sl_get_operation_anomalies')) {
+    function sl_get_operation_anomalies(array $payload): array
+    {
+        $issues = [];
+
+        $amount = (float)($payload['amount'] ?? 0);
+        $currency = trim((string)($payload['currency_code'] ?? ''));
+        $clientId = (int)($payload['client_id'] ?? 0);
+        $typeCode = sl_normalize_code((string)($payload['operation_type_code'] ?? ''));
+        $serviceCode = sl_normalize_code((string)($payload['service_code'] ?? ''));
+        $manualDebit = trim((string)($payload['manual_debit_account_code'] ?? ''));
+        $manualCredit = trim((string)($payload['manual_credit_account_code'] ?? ''));
+
+        if ($amount <= 0) {
+            $issues[] = ['level' => 'danger', 'message' => 'Montant nul ou négatif.'];
+        }
+
+        if ($currency === '') {
+            $issues[] = ['level' => 'warning', 'message' => 'Devise absente.'];
+        }
+
+        if (!($typeCode === 'VIREMENT' && $serviceCode === 'INTERNE') && $clientId <= 0) {
+            $issues[] = ['level' => 'danger', 'message' => 'Client obligatoire manquant.'];
+        }
+
+        if ($typeCode === '' || $serviceCode === '') {
+            $issues[] = ['level' => 'danger', 'message' => 'Type opération ou service manquant.'];
+        }
+
+        if ($typeCode !== '' && $serviceCode !== '' && !sl_service_allowed_for_type($typeCode, $serviceCode)) {
+            $issues[] = ['level' => 'danger', 'message' => 'Service incompatible avec le type d’opération.'];
+        }
+
+        if (sl_is_manual_accounting_case($typeCode, $serviceCode)) {
+            if ($manualDebit === '' || $manualCredit === '') {
+                $issues[] = ['level' => 'danger', 'message' => 'Comptes source / destination manquants pour un cas manuel.'];
+            }
+        }
+
+        if ($manualDebit !== '' && $manualCredit !== '' && $manualDebit === $manualCredit) {
+            $issues[] = ['level' => 'warning', 'message' => 'Compte débité et crédité identiques.'];
+        }
+
+        if (empty($issues)) {
+            $issues[] = ['level' => 'success', 'message' => 'Aucune anomalie bloquante détectée.'];
+        }
+
+        return $issues;
+    }
+}
+
+if (!function_exists('sl_get_import_mapping_suggestions')) {
+    function sl_get_import_mapping_suggestions(array $headers): array
+    {
+        $map = [];
+        $normalizedHeaders = [];
+
+        foreach ($headers as $header) {
+            $normalizedHeaders[(string)$header] = sl_normalize_match_text((string)$header);
+        }
+
+        $dictionary = [
+            'operation_date' => ['DATE', 'DATE OPERATION', 'DATE_OPERATION'],
+            'amount' => ['MONTANT', 'AMOUNT', 'SOMME', 'VALEUR'],
+            'currency_code' => ['DEVISE', 'CURRENCY', 'CURRENCY CODE'],
+            'client_code' => ['CLIENT', 'CODE CLIENT', 'CLIENT CODE'],
+            'operation_type' => ['TYPE OPERATION', 'TYPE', 'OPERATION TYPE'],
+            'service' => ['SERVICE', 'TYPE SERVICE'],
+            'reference' => ['REFERENCE', 'LIBELLE', 'INTITULE'],
+            'label' => ['LABEL', 'LIBELLE OPERATION'],
+            'notes' => ['NOTE', 'MOTIF', 'COMMENTAIRE'],
+            'source_account_code' => ['COMPTE SOURCE', 'SOURCE ACCOUNT', 'DEBIT'],
+            'destination_account_code' => ['COMPTE DESTINATION', 'DESTINATION ACCOUNT', 'CREDIT'],
+            'linked_bank_account_id' => ['COMPTE BANCAIRE LIE', 'BANK ACCOUNT', 'LINKED BANK'],
+            'account_code' => ['CODE COMPTE', 'ACCOUNT CODE'],
+            'account_label' => ['INTITULE COMPTE', 'ACCOUNT LABEL'],
+            'commercial_country_label' => ['PAYS COMMERCIAL', 'COMMERCIAL COUNTRY'],
+            'destination_country_label' => ['PAYS DESTINATION', 'DESTINATION COUNTRY'],
+        ];
+
+        foreach ($dictionary as $target => $aliases) {
+            foreach ($normalizedHeaders as $original => $normalized) {
+                foreach ($aliases as $alias) {
+                    if ($normalized === sl_normalize_match_text($alias)) {
+                        $map[$target] = $original;
+                        continue 3;
+                    }
+                }
+            }
+        }
+
+        return $map;
     }
 }
