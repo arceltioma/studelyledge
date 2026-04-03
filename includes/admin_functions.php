@@ -2777,3 +2777,15 @@ if (!function_exists('sl_get_import_mapping_suggestions')) {
         return $map;
     }
 }
+
+if (!function_exists('renderPostableBadge')) {
+    function renderPostableBadge(?int $isPostable): string
+    {
+        $isPostable = (int)$isPostable === 1;
+
+        $class = $isPostable ? 'badge badge-success' : 'badge badge-outline';
+        $label = $isPostable ? 'Postable' : 'Structure';
+
+        return '<span class="' . $class . '">' . e($label) . '</span>';
+    }
+}

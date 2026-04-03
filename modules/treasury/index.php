@@ -139,6 +139,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <table class="sl-table">
                     <thead>
                         <tr>
+                            <th>Type</th>
                             <th>Code</th>
                             <th>Intitulé</th>
                             <th>Solde ouverture</th>
@@ -151,6 +152,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <?php if ($accounts): ?>
                             <?php foreach ($accounts as $row): ?>
                                 <tr>
+                                    <td><?= renderPostableBadge($row['is_postable'] ?? 0) ?></td>
                                     <td><?= e((string)($row['account_code'] ?? '')) ?></td>
                                     <td><?= e((string)($row['account_label'] ?? '')) ?></td>
                                     <td><?= e(number_format((float)($row['opening_balance'] ?? 0), 2, ',', ' ')) ?></td>

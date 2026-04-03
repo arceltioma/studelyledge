@@ -1906,3 +1906,21 @@ body.dashboard-no-jump * {
         text-align: left;
     }
 }
+.badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.badge-success {
+    background: rgba(34,197,94,0.1);
+    color: #166534;
+}
+
+.badge-outline {
+    border: 1px solid rgba(148,163,184,0.4);
+    color: #334155;
+    background: #fff;
+}
