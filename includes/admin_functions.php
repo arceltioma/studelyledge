@@ -2,6 +2,27 @@
 
 /*
 |--------------------------------------------------------------------------
+| Chargement additif LOT 2
+|--------------------------------------------------------------------------
+*/
+
+$slRulesEnginePath = __DIR__ . '/rules_engine.php';
+if (is_file($slRulesEnginePath)) {
+    require_once $slRulesEnginePath;
+}
+
+$slAnomalyEnginePath = __DIR__ . '/anomaly_engine.php';
+if (is_file($slAnomalyEnginePath)) {
+    require_once $slAnomalyEnginePath;
+}
+
+$slImportMapperPath = __DIR__ . '/import_mapper.php';
+if (is_file($slImportMapperPath)) {
+    require_once $slImportMapperPath;
+}
+
+/*
+|--------------------------------------------------------------------------
 | Helpers généraux
 |--------------------------------------------------------------------------
 */
@@ -341,6 +362,10 @@ if (!function_exists('studelyAccessMap')) {
             'permissions_manage_page' => ['permissions_manage', 'admin_manage'],
             'user_logs_view_page' => ['user_logs_view', 'admin_manage'],
             'settings_manage_page' => ['settings_manage', 'admin_manage'],
+
+            /* LOT 2 additif */
+            'notifications_view_page' => ['dashboard_view', 'admin_manage'],
+            'intelligence_center_page' => ['admin_dashboard_view', 'admin_manage'],
         ];
     }
 }
@@ -403,6 +428,10 @@ if (!function_exists('studelyModulePermissions')) {
 
             'admin_functional' => ['admin_functional_view', 'services_manage', 'operation_types_manage', 'service_accounts_view', 'statuses_manage'],
             'admin' => ['admin_dashboard_view', 'users_manage', 'roles_manage', 'permissions_manage', 'user_logs_view', 'settings_manage', 'admin_manage'],
+
+            /* LOT 2 additif */
+            'notifications' => ['dashboard_view', 'admin_manage'],
+            'intelligence' => ['admin_dashboard_view', 'admin_manage'],
         ];
     }
 }
@@ -2434,5 +2463,116 @@ if (!function_exists('globalSearch')) {
         }
 
         return $results;
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| LOT 2 - helpers intelligents additifs
+|--------------------------------------------------------------------------
+*/
+
+if (!function_exists('sl_get_operation_rules_summary')) {
+    function sl_get_operation_rules_summary(
+        ?string $operationTypeCode,
+        ?string $serviceCode,
+        ?string $countryCommercial = null,
+        ?string $countryDestination = null
+    ): array {
+        if (function_exists('sl_rules_build_summary')) {
+            return sl_rules_build_summary(
+                $operationTypeCode,
+                $serviceCode,
+                $countryCommercial,
+                $countryDestination
+            );
+        }
+
+        return [
+            'requires_client' => !($operationTypeCode === 'VIREMENT' && $serviceCode === 'INTERNE'),
+            'requires_linked_bank' => false,
+            'requires_manual_accounts' => sl_is_manual_accounting_case($operationTypeCode, $serviceCode),
+            'service_account_tokens' => [],
+            'service_account_search_text' => '',
+        ];
+    }
+}
+
+if (!function_exists('sl_get_operation_anomalies')) {
+    function sl_get_operation_anomalies(array $payload): array
+    {
+        if (function_exists('sl_detect_operation_anomalies')) {
+            return sl_detect_operation_anomalies($payload);
+        }
+
+        $fallback = [];
+
+        if ((float)($payload['amount'] ?? 0) <= 0) {
+            $fallback[] = [
+                'level' => 'danger',
+                'code' => 'INVALID_AMOUNT',
+                'message' => 'Le montant est invalide ou nul.',
+            ];
+        }
+
+        return $fallback;
+    }
+}
+
+if (!function_exists('sl_get_import_mapping_suggestions')) {
+    function sl_get_import_mapping_suggestions(array $headers): array
+    {
+        if (function_exists('sl_import_mapper_suggest_mapping')) {
+            return sl_import_mapper_suggest_mapping($headers);
+        }
+
+        return [];
+    }
+}
+
+if (!function_exists('sl_build_notification_link_for_entity')) {
+    function sl_build_notification_link_for_entity(?string $entityType, ?int $entityId): ?string
+    {
+        if (!defined('APP_URL') || !$entityType || !$entityId || $entityId <= 0) {
+            return null;
+        }
+
+        $entityType = strtolower(trim($entityType));
+
+        return match ($entityType) {
+            'client' => APP_URL . 'modules/clients/client_view.php?id=' . $entityId,
+            'operation' => APP_URL . 'modules/operations/operation_view.php?id=' . $entityId,
+            'treasury_account' => APP_URL . 'modules/treasury/treasury_view.php?id=' . $entityId,
+            'import' => APP_URL . 'modules/imports/import_journal.php',
+            default => null,
+        };
+    }
+}
+
+if (!function_exists('sl_create_entity_notification')) {
+    function sl_create_entity_notification(
+        PDO $pdo,
+        string $type,
+        string $message,
+        string $level = 'info',
+        ?string $entityType = null,
+        ?int $entityId = null,
+        ?int $createdBy = null,
+        ?string $linkUrl = null
+    ): void {
+        if ($linkUrl === null) {
+            $linkUrl = sl_build_notification_link_for_entity($entityType, $entityId);
+        }
+
+        createNotification(
+            $pdo,
+            $type,
+            $message,
+            $level,
+            $linkUrl,
+            $entityType,
+            $entityId,
+            $createdBy
+        );
     }
 }

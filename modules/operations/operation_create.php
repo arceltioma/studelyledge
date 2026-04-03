@@ -7,6 +7,10 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
+/* LOT 2 - nouveaux moteurs additifs */
+require_once __DIR__ . '/../../includes/rules_engine.php';
+require_once __DIR__ . '/../../includes/anomaly_engine.php';
+
 if (function_exists('studelyEnforceAccess')) {
     studelyEnforceAccess($pdo, 'operations_create_page');
 } else {
@@ -92,7 +96,31 @@ if (!function_exists('sl_find_by_id')) {
     }
 }
 
+if (!function_exists('sl_render_rules_summary')) {
+    function sl_render_rules_summary(array $summary): string
+    {
+        $parts = [];
+
+        if (!empty($summary['requires_client'])) {
+            $parts[] = 'Client requis';
+        }
+        if (!empty($summary['requires_linked_bank'])) {
+            $parts[] = 'Compte lié requis';
+        }
+        if (!empty($summary['requires_manual_accounts'])) {
+            $parts[] = 'Comptes manuels requis';
+        }
+        if (!empty($summary['service_account_search_text'])) {
+            $parts[] = 'Recherche 706: ' . $summary['service_account_search_text'];
+        }
+
+        return $parts ? implode(' | ', $parts) : '—';
+    }
+}
+
 $preview = null;
+$rulesSummary = [];
+$anomalies = [];
 $errorMessage = '';
 $successMessage = '';
 
@@ -167,6 +195,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Le compte source et le compte destination sont obligatoires pour ce cas.');
         }
 
+        $selectedClient = null;
+        if ($clientId !== null) {
+            $selectedClient = sl_find_by_id($clients, $clientId);
+        }
+
         $payload = [
             'operation_date' => $operationDate,
             'amount' => $amount,
@@ -188,6 +221,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'manual_credit_account_code' => $isManualCase ? $destinationAccountCode : '',
         ];
 
+        /* LOT 2 - résumé des règles */
+        if (function_exists('sl_rules_build_summary')) {
+            $rulesSummary = sl_rules_build_summary(
+                $typeCode,
+                $serviceCode,
+                (string)($selectedClient['country_commercial'] ?? ''),
+                (string)($selectedClient['country_destination'] ?? '')
+            );
+        }
+
+        /* LOT 2 - détection anomalies */
+        if (function_exists('sl_detect_operation_anomalies')) {
+            $anomalies = sl_detect_operation_anomalies(array_merge($payload, [
+                'country_commercial' => (string)($selectedClient['country_commercial'] ?? ''),
+                'country_destination' => (string)($selectedClient['country_destination'] ?? ''),
+            ]));
+        }
+
         $preview = resolveAccountingOperationV2($pdo, $payload);
 
         if ($actionMode === 'save') {
@@ -207,9 +258,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
             }
 
+            /* LOT 1B / LOT 2 - notification standard */
+            if (function_exists('createNotification')) {
+                createNotification(
+                    $pdo,
+                    'operation_create',
+                    'Une nouvelle opération #' . (int)$newId . ' a été créée.',
+                    'success',
+                    APP_URL . 'modules/operations/operation_view.php?id=' . (int)$newId,
+                    'operation',
+                    (int)$newId,
+                    isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
+                );
+            }
+
+            /* LOT 1B / LOT 2 - alerte spécifique si mode manuel */
+            if (!empty($preview['is_manual_accounting']) && function_exists('createNotification')) {
+                createNotification(
+                    $pdo,
+                    'manual_accounting',
+                    'Une opération en mode manuel a été enregistrée.',
+                    'warning',
+                    APP_URL . 'modules/operations/operation_view.php?id=' . (int)$newId,
+                    'operation',
+                    (int)$newId,
+                    isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
+                );
+            }
+
             $pdo->commit();
             $successMessage = 'Opération créée avec succès.';
             $_POST = [];
+
+            /* on vide aussi les enrichissements visuels après succès */
+            $preview = null;
+            $rulesSummary = [];
+            $anomalies = [];
         }
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
@@ -392,6 +476,39 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <div class="stat-row"><span class="metric-label">Crédit</span><span class="metric-value"><?= e($preview['credit_account_code'] ?? '') ?></span></div>
                 <div class="stat-row"><span class="metric-label">Mode manuel</span><span class="metric-value"><?= !empty($preview['is_manual_accounting']) ? 'Oui' : 'Non' ?></span></div>
                 <div class="stat-row"><span class="metric-label">Hash anti-doublon</span><span class="metric-value"><?= e($preview['operation_hash'] ?? '') ?></span></div>
+
+                <!-- LOT 2 : résumé intelligent -->
+                <hr style="margin:16px 0;">
+
+                <h4 style="margin-bottom:10px;">Règles intelligentes</h4>
+                <div class="stat-row">
+                    <span class="metric-label">Résumé</span>
+                    <span class="metric-value"><?= e(sl_render_rules_summary($rulesSummary)) ?></span>
+                </div>
+
+                <?php if (!empty($rulesSummary['service_account_tokens']) && is_array($rulesSummary['service_account_tokens'])): ?>
+                    <div class="stat-row">
+                        <span class="metric-label">Tokens 706</span>
+                        <span class="metric-value"><?= e(implode(' | ', $rulesSummary['service_account_tokens'])) ?></span>
+                    </div>
+                <?php endif; ?>
+
+                <hr style="margin:16px 0;">
+
+                <h4 style="margin-bottom:10px;">Anomalies détectées</h4>
+                <?php if ($anomalies): ?>
+                    <?php foreach ($anomalies as $anomaly): ?>
+                        <div class="stat-row">
+                            <span class="metric-label"><?= e((string)($anomaly['code'] ?? '')) ?></span>
+                            <span class="metric-value"><?= e((string)($anomaly['message'] ?? '')) ?></span>
+                        </div>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <div class="stat-row">
+                        <span class="metric-label">Statut</span>
+                        <span class="metric-value">Aucune anomalie détectée</span>
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
 

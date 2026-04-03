@@ -7,6 +7,10 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
+/* LOT 2 - moteurs additifs */
+require_once __DIR__ . '/../../includes/rules_engine.php';
+require_once __DIR__ . '/../../includes/anomaly_engine.php';
+
 if (function_exists('studelyEnforceAccess')) {
     studelyEnforceAccess($pdo, 'dashboard_view_page');
 } else {
@@ -427,6 +431,94 @@ $chartTypeAmounts = array_map(static fn($r) => (float)$r['total_amount'], $byTyp
 $chartServiceLabels = array_map(static fn($r) => $r['label'], $byService);
 $chartServiceAmounts = array_map(static fn($r) => (float)$r['total_amount'], $byService);
 
+/* LOT 2 - intelligence système non destructive */
+$intelligence = [
+    'rows_analyzed' => 0,
+    'rules_enriched' => 0,
+    'warnings' => 0,
+    'dangers' => 0,
+    'infos' => 0,
+    'auto_mapped_ratio' => 0,
+];
+
+if ($hasOperations) {
+    $intelligenceRows = dashboard_fetch_all($pdo, "
+        SELECT
+            o.id,
+            o.amount,
+            o.currency_code,
+            o.client_id,
+            o.operation_type_code,
+            o.reference,
+            o.service_id,
+            o.debit_account_code,
+            o.credit_account_code,
+            " . ($hasClients ? "c.country_commercial, c.country_destination," : "NULL AS country_commercial, NULL AS country_destination,") . "
+            " . ($hasRefServices ? "rs.code AS service_code" : "NULL AS service_code") . "
+        FROM operations o
+        {$joinClients}
+        {$joinServices}
+        {$whereSql}
+        ORDER BY o.id DESC
+        LIMIT 300
+    ", $params);
+
+    $intelligence['rows_analyzed'] = count($intelligenceRows);
+
+    foreach ($intelligenceRows as $opRow) {
+        $typeCode = (string)($opRow['operation_type_code'] ?? '');
+        $serviceCode = (string)($opRow['service_code'] ?? '');
+
+        if (function_exists('sl_rules_build_summary')) {
+            $summaryRules = sl_rules_build_summary(
+                $typeCode,
+                $serviceCode,
+                (string)($opRow['country_commercial'] ?? ''),
+                (string)($opRow['country_destination'] ?? '')
+            );
+
+            if (
+                !empty($summaryRules['requires_client']) ||
+                !empty($summaryRules['requires_linked_bank']) ||
+                !empty($summaryRules['requires_manual_accounts']) ||
+                !empty($summaryRules['service_account_search_text'])
+            ) {
+                $intelligence['rules_enriched']++;
+            }
+        }
+
+        if (function_exists('sl_detect_operation_anomalies')) {
+            $anomaliesDetected = sl_detect_operation_anomalies([
+                'amount' => (float)($opRow['amount'] ?? 0),
+                'currency_code' => (string)($opRow['currency_code'] ?? ''),
+                'client_id' => isset($opRow['client_id']) ? (int)$opRow['client_id'] : 0,
+                'operation_type_code' => $typeCode,
+                'service_code' => $serviceCode,
+                'manual_debit_account_code' => '',
+                'manual_credit_account_code' => '',
+                'reference' => (string)($opRow['reference'] ?? ''),
+                'country_commercial' => (string)($opRow['country_commercial'] ?? ''),
+                'country_destination' => (string)($opRow['country_destination'] ?? ''),
+            ]);
+
+            foreach ($anomaliesDetected as $anomaly) {
+                $level = strtolower((string)($anomaly['level'] ?? 'info'));
+                if ($level === 'warning') {
+                    $intelligence['warnings']++;
+                } elseif ($level === 'danger') {
+                    $intelligence['dangers']++;
+                } elseif ($level === 'info') {
+                    $intelligence['infos']++;
+                }
+            }
+        }
+    }
+
+    if ($intelligence['rows_analyzed'] > 0) {
+        $intelligence['auto_mapped_ratio'] = (int)round(($intelligence['rules_enriched'] / max(1, $intelligence['rows_analyzed'])) * 100);
+    }
+}
+
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -543,6 +635,61 @@ require_once __DIR__ . '/../../includes/document_start.php';
         </div>
     </div>
 </section>
+
+        <!-- LOT 2 : bloc intelligence système additif -->
+        <section class="sl-grid sl-grid-4 sl-stable-block" style="margin-top:20px;">
+            <div class="sl-card sl-kpi-card sl-kpi-card--blue">
+                <div class="sl-kpi-card__top">
+                    <div class="sl-kpi-card__icon">🧠</div>
+                    <span class="sl-kpi-card__tag">LOT 2</span>
+                </div>
+                <div class="sl-kpi-card__label">Opérations analysées</div>
+                <div class="sl-kpi-card__value"><?= (int)$intelligence['rows_analyzed'] ?></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Périmètre intelligent</span>
+                    <strong>Max 300 lignes</strong>
+                </div>
+            </div>
+
+            <div class="sl-card sl-kpi-card sl-kpi-card--emerald">
+                <div class="sl-kpi-card__top">
+                    <div class="sl-kpi-card__icon">⚙️</div>
+                    <span class="sl-kpi-card__tag">Règles</span>
+                </div>
+                <div class="sl-kpi-card__label">Lignes enrichies</div>
+                <div class="sl-kpi-card__value"><?= (int)$intelligence['rules_enriched'] ?></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Taux d’enrichissement</span>
+                    <strong><?= (int)$intelligence['auto_mapped_ratio'] ?>%</strong>
+                </div>
+            </div>
+
+            <div class="sl-card sl-kpi-card sl-kpi-card--green">
+                <div class="sl-kpi-card__top">
+                    <div class="sl-kpi-card__icon">⚠️</div>
+                    <span class="sl-kpi-card__tag">Anomalies</span>
+                </div>
+                <div class="sl-kpi-card__label">Warnings</div>
+                <div class="sl-kpi-card__value"><?= (int)$intelligence['warnings'] ?></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Infos détectées</span>
+                    <strong><?= (int)$intelligence['infos'] ?></strong>
+                </div>
+            </div>
+
+            <div class="sl-card sl-kpi-card sl-kpi-card--violet">
+                <div class="sl-kpi-card__top">
+                    <div class="sl-kpi-card__icon">🚨</div>
+                    <span class="sl-kpi-card__tag">Contrôle</span>
+                </div>
+                <div class="sl-kpi-card__label">Dangers</div>
+                <div class="sl-kpi-card__value"><?= (int)$intelligence['dangers'] ?></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Moteur intelligent</span>
+                    <strong>Actif</strong>
+                </div>
+            </div>
+        </section>
 
         <section class="sl-grid sl-grid-3 sl-stable-block" style="margin-top:20px;">
             <div class="sl-card sl-card-highlight sl-card-audit-main">

@@ -18,6 +18,12 @@ $pageSubtitle = 'Recherche transversale sur clients, opérations, trésorerie et
 
 $results = globalSearch($pdo, $q, 12);
 
+$totalClients = count($results['clients'] ?? []);
+$totalOperations = count($results['operations'] ?? []);
+$totalTreasury = count($results['treasury'] ?? []);
+$totalServices = count($results['services'] ?? []);
+$totalResults = $totalClients + $totalOperations + $totalTreasury + $totalServices;
+
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -26,18 +32,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <section class="sl-page-hero sl-stable-block">
-            <div>
-                <h1><?= e($pageTitle) ?></h1>
-                <p><?= e($pageSubtitle) ?></p>
-            </div>
-        </section>
-
         <section class="sl-card" style="margin-bottom:20px;">
             <form method="GET">
                 <div style="display:flex; gap:12px; flex-wrap:wrap;">
                     <input type="text" name="q" value="<?= e($q) ?>" placeholder="Client, référence, compte, service..." style="flex:1; min-width:280px;">
                     <button type="submit" class="btn btn-success">Rechercher</button>
+                    <a href="<?= e(APP_URL) ?>modules/admin/intelligence_center.php" class="btn btn-outline">Centre d’intelligence</a>
                 </div>
             </form>
         </section>
@@ -47,6 +47,44 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <p class="muted">Saisis un mot-clé pour lancer une recherche globale.</p>
             </div>
         <?php else: ?>
+
+            <section class="sl-grid sl-grid-4 sl-stable-block" style="margin-bottom:20px;">
+                <div class="sl-card sl-kpi-card sl-kpi-card--blue">
+                    <div class="sl-kpi-card__label">Total résultats</div>
+                    <div class="sl-kpi-card__value"><?= (int)$totalResults ?></div>
+                    <div class="sl-kpi-card__meta">
+                        <span>Recherche</span>
+                        <strong><?= e($q) ?></strong>
+                    </div>
+                </div>
+
+                <div class="sl-card sl-kpi-card sl-kpi-card--emerald">
+                    <div class="sl-kpi-card__label">Clients</div>
+                    <div class="sl-kpi-card__value"><?= (int)$totalClients ?></div>
+                    <div class="sl-kpi-card__meta">
+                        <span>Correspondances</span>
+                        <strong>Profils</strong>
+                    </div>
+                </div>
+
+                <div class="sl-card sl-kpi-card sl-kpi-card--green">
+                    <div class="sl-kpi-card__label">Opérations</div>
+                    <div class="sl-kpi-card__value"><?= (int)$totalOperations ?></div>
+                    <div class="sl-kpi-card__meta">
+                        <span>Correspondances</span>
+                        <strong>Flux</strong>
+                    </div>
+                </div>
+
+                <div class="sl-card sl-kpi-card sl-kpi-card--violet">
+                    <div class="sl-kpi-card__label">Trésorerie + Services</div>
+                    <div class="sl-kpi-card__value"><?= (int)($totalTreasury + $totalServices) ?></div>
+                    <div class="sl-kpi-card__meta">
+                        <span>Comptes et référentiels</span>
+                        <strong>Structure</strong>
+                    </div>
+                </div>
+            </section>
 
             <div class="dashboard-grid-2">
                 <div class="card">

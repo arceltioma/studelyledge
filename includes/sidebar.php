@@ -59,7 +59,9 @@ $groupAdminFunctionalOpen = sidebarGroupOpen([
 ], $currentUri);
 
 $groupAdminTechnicalOpen = sidebarGroupOpen([
-    '/modules/admin/'
+    '/modules/admin/',
+    '/modules/admin/audit_logs.php',
+    '/modules/admin/intelligence_center.php'
 ], $currentUri);
 ?>
 
@@ -124,7 +126,7 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
                     <div class="sidebar-group-links">
                         <?php if ($can('imports_preview_page')): ?>
                             <a class="sidebar-link <?= sidebarActive('/modules/imports/import_preview.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/imports/import_preview.php">
-                                <span>📥</span><span>Import relevés</span>
+                                <span>📥</span><span>Import Opérations</span>
                             </a>
                         <?php endif; ?>
 
@@ -224,6 +226,14 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
                     <div class="sidebar-group-links">
                         <a class="sidebar-link <?= sidebarActive('/modules/admin/dashboard_admin.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/dashboard_admin.php">
                             <span>🛠️</span><span>Dashboard Admin Technique</span>
+                        </a>
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/admin/intelligence_center.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/intelligence_center.php">
+                            <span>🧠</span><span>Centre d’intelligence</span>
+                        </a>
+
+                        <a class="sidebar-link <?= sidebarActive('/modules/admin/audit_logs.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/audit_logs.php">
+                            <span>🧭</span><span>Audit &amp; Traçabilité</span>
                         </a>
 
                         <?php if ($can('user_logs_view_page')): ?>

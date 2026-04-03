@@ -7,6 +7,11 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
+/* LOT 2 - nouveaux moteurs additifs */
+require_once __DIR__ . '/../../includes/rules_engine.php';
+require_once __DIR__ . '/../../includes/anomaly_engine.php';
+require_once __DIR__ . '/../../includes/import_mapper.php';
+
 if (function_exists('studelyEnforceAccess')) {
     studelyEnforceAccess($pdo, 'imports_preview_page');
 } else {
@@ -32,6 +37,12 @@ $importSession = $_SESSION[SL_IMPORT_SESSION_KEY];
 $rawRows = $importSession['rows'];
 $fileName = (string)($importSession['file_name'] ?? 'import.csv');
 $finalMapping = $importSession['final_mapping'] ?? [];
+$rawHeaders = $importSession['raw_headers'] ?? [];
+$suggestedMapping = [];
+
+if ($rawHeaders && function_exists('sl_import_mapper_suggest_mapping')) {
+    $suggestedMapping = sl_import_mapper_suggest_mapping($rawHeaders);
+}
 
 if (!function_exists('sl_preview_find_operation_type')) {
     function sl_preview_find_operation_type(PDO $pdo, string $value): ?array
@@ -147,10 +158,38 @@ if (!function_exists('sl_preview_parse_amount')) {
     }
 }
 
+if (!function_exists('sl_preview_render_rules_summary')) {
+    function sl_preview_render_rules_summary(array $summary): string
+    {
+        $parts = [];
+
+        if (!empty($summary['requires_client'])) {
+            $parts[] = 'Client requis';
+        }
+        if (!empty($summary['requires_linked_bank'])) {
+            $parts[] = 'Compte lié requis';
+        }
+        if (!empty($summary['requires_manual_accounts'])) {
+            $parts[] = 'Comptes manuels requis';
+        }
+        if (!empty($summary['service_account_search_text'])) {
+            $parts[] = 'Recherche 706: ' . $summary['service_account_search_text'];
+        }
+
+        return $parts ? implode(' | ', $parts) : '—';
+    }
+}
+
 $preparedRows = [];
 $importableCount = 0;
 $errorCount = 0;
 $duplicateCount = 0;
+
+/* LOT 2 - stats intelligentes */
+$warningCount = 0;
+$infoCount = 0;
+$dangerCount = 0;
+$rowsWithRulesCount = 0;
 
 foreach ($rawRows as $index => $row) {
     $line = (int)($row['_line_number'] ?? ($index + 2));
@@ -159,6 +198,11 @@ foreach ($rawRows as $index => $row) {
     $messages = [];
     $preview = null;
     $payload = null;
+    $rulesSummary = [];
+    $anomalies = [];
+    $client = null;
+    $type = null;
+    $service = null;
 
     try {
         $operationDate = trim((string)($row['operation_date'] ?? ''));
@@ -250,6 +294,45 @@ foreach ($rawRows as $index => $row) {
             'manual_credit_account_code' => $isManualCase ? $destinationAccountCode : '',
         ];
 
+        /* LOT 2 - résumé des règles */
+        $rulesSummary = function_exists('sl_rules_build_summary')
+            ? sl_rules_build_summary(
+                $typeCode,
+                $serviceCode,
+                (string)($client['country_commercial'] ?? ''),
+                (string)($client['country_destination'] ?? '')
+            )
+            : [];
+
+        if (!empty($rulesSummary['service_account_search_text']) || !empty($rulesSummary['requires_client']) || !empty($rulesSummary['requires_linked_bank']) || !empty($rulesSummary['requires_manual_accounts'])) {
+            $rowsWithRulesCount++;
+        }
+
+        /* LOT 2 - anomalies non destructives */
+        $anomalies = function_exists('sl_detect_operation_anomalies')
+            ? sl_detect_operation_anomalies(array_merge($payload, [
+                'country_commercial' => (string)($client['country_commercial'] ?? ''),
+                'country_destination' => (string)($client['country_destination'] ?? ''),
+            ]))
+            : [];
+
+        foreach ($anomalies as $anomaly) {
+            $level = strtolower((string)($anomaly['level'] ?? 'info'));
+            $message = (string)($anomaly['message'] ?? '');
+
+            if ($message !== '') {
+                $messages[] = '[LOT2 ' . strtoupper($level) . '] ' . $message;
+            }
+
+            if ($level === 'warning') {
+                $warningCount++;
+            } elseif ($level === 'danger') {
+                $dangerCount++;
+            } elseif ($level === 'info') {
+                $infoCount++;
+            }
+        }
+
         $preview = resolveAccountingOperationV2($pdo, $payload);
 
         if (!empty($preview['operation_hash'])) {
@@ -277,6 +360,11 @@ foreach ($rawRows as $index => $row) {
         'preview' => $preview,
         'status' => $status,
         'messages' => $messages,
+        'rules_summary' => $rulesSummary,
+        'anomalies' => $anomalies,
+        'client_row' => $client,
+        'type_row' => $type,
+        'service_row' => $service,
     ];
 }
 
@@ -328,6 +416,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
+        /* LOT 2 - notification succès additive */
+        if (function_exists('createNotification')) {
+            createNotification(
+                $pdo,
+                'import_success',
+                $inserted . ' opération(s) ont été importée(s) avec succès.',
+                'success',
+                APP_URL . 'modules/imports/import_journal.php',
+                'import',
+                null,
+                isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
+            );
+        }
+
         $pdo->commit();
 
         unset($_SESSION[SL_IMPORT_SESSION_KEY]);
@@ -338,6 +440,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
+
+        if (function_exists('createNotification')) {
+            createNotification(
+                $pdo,
+                'import_error',
+                'Un import d’opérations a échoué : ' . $e->getMessage(),
+                'warning',
+                APP_URL . 'modules/imports/import_journal.php',
+                'import',
+                null,
+                isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
+            );
+        }
+
         $errorMessage = $e->getMessage();
     }
 }
@@ -380,6 +496,61 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </div>
         </div>
 
+        <!-- LOT 2 : résumé intelligent additif -->
+        <div class="dashboard-grid-4" style="margin-bottom:20px;">
+            <div class="card stat-card">
+                <div class="stat-title">Règles intelligentes</div>
+                <div class="stat-value"><?= (int)$rowsWithRulesCount ?></div>
+                <div class="stat-subtitle">Lignes enrichies par les règles</div>
+            </div>
+
+            <div class="card stat-card">
+                <div class="stat-title">Warnings</div>
+                <div class="stat-value"><?= (int)$warningCount ?></div>
+                <div class="stat-subtitle">Anomalies de niveau warning</div>
+            </div>
+
+            <div class="card stat-card">
+                <div class="stat-title">Infos</div>
+                <div class="stat-value"><?= (int)$infoCount ?></div>
+                <div class="stat-subtitle">Anomalies de niveau info</div>
+            </div>
+
+            <div class="card stat-card">
+                <div class="stat-title">Headers détectés</div>
+                <div class="stat-value"><?= count($rawHeaders) ?></div>
+                <div class="stat-subtitle">Source brute du mapping</div>
+            </div>
+        </div>
+
+        <?php if ($suggestedMapping): ?>
+            <div class="card" style="margin-bottom:20px;">
+                <h3>Suggestions intelligentes de mapping (LOT 2)</h3>
+                <div class="table-responsive">
+                    <table class="modern-table">
+                        <thead>
+                            <tr>
+                                <th>Colonne source</th>
+                                <th>Champ suggéré</th>
+                                <th>Score</th>
+                                <th>Match</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($suggestedMapping as $sourceHeader => $guess): ?>
+                                <tr>
+                                    <td><?= e((string)$sourceHeader) ?></td>
+                                    <td><?= e((string)($guess['field'] ?? '')) ?></td>
+                                    <td><?= e((string)($guess['score'] ?? '0')) ?>%</td>
+                                    <td><?= e((string)($guess['matched_on'] ?? '')) ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        <?php endif; ?>
+
         <div class="card">
             <form method="POST" style="margin-bottom:20px;">
                 <?= csrf_input() ?>
@@ -409,6 +580,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <th>Montant</th>
                             <th>Débit</th>
                             <th>Crédit</th>
+                            <th>Règles</th>
                             <th>Messages</th>
                         </tr>
                     </thead>
@@ -432,6 +604,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <td><?= e((string)($row['raw']['amount'] ?? '')) ?></td>
                                 <td><?= e((string)($row['preview']['debit_account_code'] ?? '')) ?></td>
                                 <td><?= e((string)($row['preview']['credit_account_code'] ?? '')) ?></td>
+                                <td><?= e(sl_preview_render_rules_summary($row['rules_summary'] ?? [])) ?></td>
                                 <td><?= e($row['messages'] ? implode(' | ', $row['messages']) : '—') ?></td>
                             </tr>
                         <?php endforeach; ?>

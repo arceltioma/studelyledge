@@ -12,6 +12,77 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'user_logs_view');
 }
 
+if (!function_exists('auditBadgeClass')) {
+    function auditBadgeClass(string $value): string
+    {
+        $value = strtolower(trim($value));
+
+        return match ($value) {
+            'create_client', 'create_operation', 'create_treasury_account', 'import_operation', 'client_import', 'treasury_import' => 'badge badge-success',
+            'edit_client', 'edit_operation', 'edit_treasury_account', 'client_update', 'operation_update', 'treasury_update' => 'badge badge-warning',
+            'delete_operation', 'archive_operation' => 'badge badge-danger',
+            default => 'badge badge-secondary',
+        };
+    }
+}
+
+if (!function_exists('auditEntityBadgeClass')) {
+    function auditEntityBadgeClass(string $value): string
+    {
+        $value = strtolower(trim($value));
+
+        return match ($value) {
+            'client' => 'badge badge-info',
+            'operation' => 'badge badge-warning',
+            'treasury_account' => 'badge badge-success',
+            'import', 'client_import', 'treasury_import' => 'badge badge-secondary',
+            default => 'badge badge-outline',
+        };
+    }
+}
+
+if (!function_exists('auditShortValue')) {
+    function auditShortValue(?string $value, int $max = 80): string
+    {
+        $value = trim((string)$value);
+        if ($value === '') {
+            return '—';
+        }
+
+        if (mb_strlen($value) > $max) {
+            return mb_substr($value, 0, $max - 1) . '…';
+        }
+
+        return $value;
+    }
+}
+
+if (!function_exists('auditEntityUrl')) {
+    function auditEntityUrl(string $entityType, $entityId): ?string
+    {
+        if (function_exists('sl_build_notification_link_for_entity')) {
+            $url = sl_build_notification_link_for_entity($entityType, (int)$entityId);
+            if ($url !== null && $url !== '') {
+                return $url;
+            }
+        }
+
+        $entityType = strtolower(trim($entityType));
+        $entityId = (int)$entityId;
+
+        if ($entityId <= 0 || !defined('APP_URL')) {
+            return null;
+        }
+
+        return match ($entityType) {
+            'client' => APP_URL . 'modules/clients/client_view.php?id=' . $entityId,
+            'operation' => APP_URL . 'modules/operations/operation_view.php?id=' . $entityId,
+            'treasury_account' => APP_URL . 'modules/treasury/treasury_view.php?id=' . $entityId,
+            default => null,
+        };
+    }
+}
+
 $pageTitle = 'Audit & Traçabilité';
 $pageSubtitle = 'Journal consolidé des actions et des modifications détaillées';
 
@@ -24,7 +95,10 @@ $dateTo = trim((string)($_GET['to'] ?? ''));
 
 $users = [];
 if (tableExists($pdo, 'users')) {
-    $userLabel = columnExists($pdo, 'users', 'username') ? 'username' : (columnExists($pdo, 'users', 'email') ? 'email' : 'id');
+    $userLabel = columnExists($pdo, 'users', 'username')
+        ? 'username'
+        : (columnExists($pdo, 'users', 'email') ? 'email' : 'id');
+
     $users = $pdo->query("
         SELECT id, {$userLabel} AS display_name
         FROM users
@@ -33,17 +107,51 @@ if (tableExists($pdo, 'users')) {
 }
 
 $entityTypes = [];
+
 if (tableExists($pdo, 'audit_trail')) {
-    $entityTypes = $pdo->query("
-        SELECT DISTINCT entity_type
-        FROM audit_trail
-        WHERE COALESCE(entity_type, '') <> ''
-        ORDER BY entity_type ASC
-    ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    $entityTypes = array_merge(
+        $entityTypes,
+        $pdo->query("
+            SELECT DISTINCT entity_type
+            FROM audit_trail
+            WHERE COALESCE(entity_type, '') <> ''
+            ORDER BY entity_type ASC
+        ")->fetchAll(PDO::FETCH_COLUMN) ?: []
+    );
 }
+
+if (tableExists($pdo, 'user_logs') && columnExists($pdo, 'user_logs', 'entity_type')) {
+    $entityTypes = array_merge(
+        $entityTypes,
+        $pdo->query("
+            SELECT DISTINCT entity_type
+            FROM user_logs
+            WHERE COALESCE(entity_type, '') <> ''
+            ORDER BY entity_type ASC
+        ")->fetchAll(PDO::FETCH_COLUMN) ?: []
+    );
+}
+
+$entityTypes = array_values(array_unique(array_filter(array_map('strval', $entityTypes))));
+sort($entityTypes);
 
 $actionLogs = [];
 $auditRows = [];
+
+/* KPI synthèse */
+$totalActionLogs = tableExists($pdo, 'user_logs')
+    ? (int)$pdo->query("SELECT COUNT(*) FROM user_logs")->fetchColumn()
+    : 0;
+
+$totalAuditTrail = tableExists($pdo, 'audit_trail')
+    ? (int)$pdo->query("SELECT COUNT(*) FROM audit_trail")->fetchColumn()
+    : 0;
+
+$totalUnreadNotifications = function_exists('countUnreadNotifications')
+    ? countUnreadNotifications($pdo)
+    : 0;
+
+$totalEntitiesTracked = count($entityTypes);
 
 /* =========================
    ONGLET LOGS UTILISATEURS
@@ -188,10 +296,94 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <section class="sl-page-hero sl-stable-block">
-            <div>
-                <h1><?= e($pageTitle) ?></h1>
-                <p><?= e($pageSubtitle) ?></p>
+        <style>
+        .audit-diff-old {
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.18);
+            color: #991b1b;
+            border-radius: 10px;
+            padding: 8px 10px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .audit-diff-new {
+            background: rgba(34, 197, 94, 0.08);
+            border: 1px solid rgba(34, 197, 94, 0.18);
+            color: #166534;
+            border-radius: 10px;
+            padding: 8px 10px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .audit-meta-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .badge-outline {
+            display: inline-flex;
+            align-items: center;
+            border: 1px solid rgba(148, 163, 184, 0.4);
+            border-radius: 999px;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #334155;
+            background: #fff;
+        }
+
+        .audit-link-inline {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 4px;
+            font-size: 12px;
+            text-decoration: none;
+        }
+
+        .audit-link-inline:hover {
+            text-decoration: underline;
+        }
+        </style>
+
+        <section class="sl-grid sl-grid-4 sl-stable-block" style="margin-bottom:20px;">
+            <div class="sl-card sl-kpi-card sl-kpi-card--blue">
+                <div class="sl-kpi-card__label">Logs utilisateurs</div>
+                <div class="sl-kpi-card__value"><?= (int)$totalActionLogs ?></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Journal fonctionnel</span>
+                    <strong>Actions</strong>
+                </div>
+            </div>
+
+            <div class="sl-card sl-kpi-card sl-kpi-card--emerald">
+                <div class="sl-kpi-card__label">Audit trail</div>
+                <div class="sl-kpi-card__value"><?= (int)$totalAuditTrail ?></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Historique détaillé</span>
+                    <strong>Changements</strong>
+                </div>
+            </div>
+
+            <div class="sl-card sl-kpi-card sl-kpi-card--green">
+                <div class="sl-kpi-card__label">Entités tracées</div>
+                <div class="sl-kpi-card__value"><?= (int)$totalEntitiesTracked ?></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Types détectés</span>
+                    <strong>Traçabilité</strong>
+                </div>
+            </div>
+
+            <div class="sl-card sl-kpi-card sl-kpi-card--violet">
+                <div class="sl-kpi-card__label">Notifications non lues</div>
+                <div class="sl-kpi-card__value"><?= (int)$totalUnreadNotifications ?></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Supervision</span>
+                    <strong>Temps réel</strong>
+                </div>
             </div>
         </section>
 
@@ -199,6 +391,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="btn-group" style="margin-bottom:16px;">
                 <a href="<?= e(APP_URL) ?>modules/admin/audit_logs.php?tab=logs" class="btn <?= $tab === 'logs' ? 'btn-success' : 'btn-outline' ?>">Journal actions</a>
                 <a href="<?= e(APP_URL) ?>modules/admin/audit_logs.php?tab=trail" class="btn <?= $tab === 'trail' ? 'btn-success' : 'btn-outline' ?>">Audit détaillé</a>
+                <a href="<?= e(APP_URL) ?>modules/notifications/notifications.php" class="btn btn-outline">Notifications</a>
+                <a href="<?= e(APP_URL) ?>modules/admin/intelligence_center.php" class="btn btn-outline">Centre d’intelligence</a>
             </div>
 
             <form method="GET">
@@ -271,25 +465,48 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <th>Module</th>
                                 <th>Type entité</th>
                                 <th>ID entité</th>
+                                <th>Accès direct</th>
                                 <th>Détails</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if ($actionLogs): ?>
                                 <?php foreach ($actionLogs as $log): ?>
+                                    <?php $directUrl = auditEntityUrl((string)($log['entity_type'] ?? ''), (int)($log['entity_id'] ?? 0)); ?>
                                     <tr>
                                         <td><?= e((string)($log['created_at'] ?? '')) ?></td>
-                                        <td><?= e((string)($log['username'] ?? ($log['user_id'] ?? ''))) ?></td>
-                                        <td><?= e((string)($log['action'] ?? '')) ?></td>
-                                        <td><?= e((string)($log['module'] ?? '')) ?></td>
-                                        <td><?= e((string)($log['entity_type'] ?? '')) ?></td>
+                                        <td>
+                                            <div class="audit-meta-cell">
+                                                <strong><?= e((string)($log['username'] ?? ($log['user_id'] ?? ''))) ?></strong>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <span class="<?= e(auditBadgeClass((string)($log['action'] ?? ''))) ?>">
+                                                <?= e((string)($log['action'] ?? '')) ?>
+                                            </span>
+                                        </td>
+                                        <td>
+                                            <span class="badge badge-outline"><?= e((string)($log['module'] ?? '')) ?></span>
+                                        </td>
+                                        <td>
+                                            <span class="<?= e(auditEntityBadgeClass((string)($log['entity_type'] ?? ''))) ?>">
+                                                <?= e((string)($log['entity_type'] ?? '')) ?>
+                                            </span>
+                                        </td>
                                         <td><?= e((string)($log['entity_id'] ?? '')) ?></td>
+                                        <td>
+                                            <?php if ($directUrl !== null): ?>
+                                                <a class="btn btn-sm btn-secondary" href="<?= e($directUrl) ?>">Ouvrir</a>
+                                            <?php else: ?>
+                                                <span class="muted">—</span>
+                                            <?php endif; ?>
+                                        </td>
                                         <td><?= e((string)($log['details'] ?? '')) ?></td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="7">Aucune action trouvée.</td>
+                                    <td colspan="8">Aucune action trouvée.</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>
@@ -313,6 +530,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <th>Utilisateur</th>
                                 <th>Entité</th>
                                 <th>ID</th>
+                                <th>Accès direct</th>
                                 <th>Champ</th>
                                 <th>Ancienne valeur</th>
                                 <th>Nouvelle valeur</th>
@@ -321,19 +539,43 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <tbody>
                             <?php if ($auditRows): ?>
                                 <?php foreach ($auditRows as $row): ?>
+                                    <?php $directUrl = auditEntityUrl((string)($row['entity_type'] ?? ''), (int)($row['entity_id'] ?? 0)); ?>
                                     <tr>
                                         <td><?= e((string)($row['created_at'] ?? '')) ?></td>
-                                        <td><?= e((string)($row['username'] ?? ($row['user_id'] ?? ''))) ?></td>
-                                        <td><?= e((string)($row['entity_type'] ?? '')) ?></td>
+                                        <td>
+                                            <div class="audit-meta-cell">
+                                                <strong><?= e((string)($row['username'] ?? ($row['user_id'] ?? ''))) ?></strong>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div class="audit-meta-cell">
+                                                <span class="<?= e(auditEntityBadgeClass((string)($row['entity_type'] ?? ''))) ?>">
+                                                    <?= e((string)($row['entity_type'] ?? '')) ?>
+                                                </span>
+                                            </div>
+                                        </td>
                                         <td><?= e((string)($row['entity_id'] ?? '')) ?></td>
-                                        <td><?= e((string)($row['field_name'] ?? '')) ?></td>
-                                        <td style="max-width:260px; white-space:pre-wrap;"><?= e((string)($row['old_value'] ?? '')) ?></td>
-                                        <td style="max-width:260px; white-space:pre-wrap;"><?= e((string)($row['new_value'] ?? '')) ?></td>
+                                        <td>
+                                            <?php if ($directUrl !== null): ?>
+                                                <a class="btn btn-sm btn-secondary" href="<?= e($directUrl) ?>">Ouvrir</a>
+                                            <?php else: ?>
+                                                <span class="muted">—</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <span class="badge badge-outline"><?= e((string)($row['field_name'] ?? '')) ?></span>
+                                        </td>
+                                        <td style="max-width:260px;">
+                                            <div class="audit-diff-old"><?= e(auditShortValue((string)($row['old_value'] ?? ''), 140)) ?></div>
+                                        </td>
+                                        <td style="max-width:260px;">
+                                            <div class="audit-diff-new"><?= e(auditShortValue((string)($row['new_value'] ?? ''), 140)) ?></div>
+                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
                                 <tr>
-                                    <td colspan="7">Aucune modification trouvée.</td>
+                                    <td colspan="8">Aucune modification trouvée.</td>
                                 </tr>
                             <?php endif; ?>
                         </tbody>
