@@ -30,9 +30,6 @@ if (!$operation) {
     exit('Opération introuvable.');
 }
 
-/* LOT 1B : état avant modification */
-$beforeOperation = $operation;
-
 $operationTypes = tableExists($pdo, 'ref_operation_types')
     ? $pdo->query("
         SELECT id, code, label, is_active
@@ -74,22 +71,36 @@ $clients = tableExists($pdo, 'clients')
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
 
-$treasuryAccounts = tableExists($pdo, 'treasury_accounts')
-    ? $pdo->query("
-        SELECT id, account_code, account_label
-        FROM treasury_accounts
-        WHERE COALESCE(is_active,1)=1
-        ORDER BY account_code ASC
-    ")->fetchAll(PDO::FETCH_ASSOC)
-    : [];
+$treasuryAccounts = function_exists('sl_fetch_postable_treasury_accounts')
+    ? sl_fetch_postable_treasury_accounts($pdo)
+    : (tableExists($pdo, 'treasury_accounts')
+        ? $pdo->query("
+            SELECT id, account_code, account_label
+            FROM treasury_accounts
+            WHERE COALESCE(is_active,1)=1
+              AND COALESCE(is_postable,0)=1
+            ORDER BY account_code ASC
+        ")->fetchAll(PDO::FETCH_ASSOC)
+        : []);
 
-$serviceAccounts = tableExists($pdo, 'service_accounts')
+$serviceAccounts = function_exists('sl_fetch_postable_service_accounts')
+    ? sl_fetch_postable_service_accounts($pdo)
+    : (tableExists($pdo, 'service_accounts')
+        ? $pdo->query("
+            SELECT id, account_code, account_label
+            FROM service_accounts
+            WHERE COALESCE(is_active,1)=1
+              AND COALESCE(is_postable,0)=1
+            ORDER BY account_code ASC
+        ")->fetchAll(PDO::FETCH_ASSOC)
+        : []);
+
+$bankAccounts = tableExists($pdo, 'bank_accounts')
     ? $pdo->query("
-        SELECT id, account_code, account_label
-        FROM service_accounts
+        SELECT id, account_name, account_number
+        FROM bank_accounts
         WHERE COALESCE(is_active,1)=1
-          AND COALESCE(is_postable,0)=1
-        ORDER BY account_code ASC
+        ORDER BY account_name ASC, account_number ASC
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
 
@@ -238,46 +249,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$operationId]);
             $operation = $stmt->fetch(PDO::FETCH_ASSOC) ?: $operation;
 
-            /* LOT 1B : audit trail après modification */
-            if (function_exists('auditEntityChanges')) {
-                auditEntityChanges(
-                    $pdo,
-                    'operation',
-                    (int)$operationId,
-                    $beforeOperation,
-                    $operation,
-                    isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
-                );
-            }
-
-            /* LOT 1B : notification standard */
-            if (function_exists('createNotification')) {
-                createNotification(
-                    $pdo,
-                    'operation_update',
-                    'L’opération #' . (int)$operationId . ' a été modifiée.',
-                    'info',
-                    APP_URL . 'modules/operations/operation_view.php?id=' . (int)$operationId,
-                    'operation',
-                    (int)$operationId,
-                    isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
-                );
-            }
-
-            /* LOT 1B : alerte spécifique si mode manuel */
-            if (!empty($preview['is_manual_accounting']) && function_exists('createNotification')) {
-                createNotification(
-                    $pdo,
-                    'manual_accounting',
-                    'Une opération en mode manuel a été enregistrée.',
-                    'warning',
-                    APP_URL . 'modules/operations/operation_view.php?id=' . (int)$operationId,
-                    'operation',
-                    (int)$operationId,
-                    isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
-                );
-            }
-
             $successMessage = 'Opération mise à jour avec succès.';
         }
     } catch (Throwable $e) {
@@ -322,10 +293,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <div>
                             <label>Devise</label>
                             <select name="currency_code" required>
-                                <?php
-                                $selectedCurrency = sl_edit_value('currency_code', $operation, 'EUR');
-                                foreach ($currencies as $currency):
-                                ?>
+                                <?php $selectedCurrency = sl_edit_value('currency_code', $operation, 'EUR'); ?>
+                                <?php foreach ($currencies as $currency): ?>
                                     <option value="<?= e($currency['code']) ?>" <?= $selectedCurrency === $currency['code'] ? 'selected' : '' ?>>
                                         <?= e($currency['code'] . ' - ' . $currency['label']) ?>
                                     </option>
@@ -387,7 +356,15 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <div id="linked-bank-account-wrapper">
                             <label>Compte bancaire lié</label>
-                            <input type="number" name="linked_bank_account_id" id="linked_bank_account_id" value="<?= e(sl_edit_value('linked_bank_account_id', $operation)) ?>">
+                            <?php $selectedBank = sl_edit_value('linked_bank_account_id', $operation); ?>
+                            <select name="linked_bank_account_id" id="linked_bank_account_id">
+                                <option value="">Choisir</option>
+                                <?php foreach ($bankAccounts as $acc): ?>
+                                    <option value="<?= (int)$acc['id'] ?>" <?= $selectedBank == $acc['id'] ? 'selected' : '' ?>>
+                                        <?= e(($acc['account_name'] ?? 'Compte') . ' - ' . ($acc['account_number'] ?? '')) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
 
                         <div>

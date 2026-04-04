@@ -26,9 +26,6 @@ if (!$client) {
     exit('Client introuvable.');
 }
 
-/* LOT 1B : état avant modification */
-$beforeClient = $client;
-
 $treasuryAccounts = tableExists($pdo, 'treasury_accounts')
     ? $pdo->query("
         SELECT id, account_code, account_label, is_active
@@ -44,6 +41,7 @@ $destinationCountries = function_exists('studely_destination_countries') ? stude
 $commercialCountries = function_exists('studely_commercial_countries') ? studely_commercial_countries() : [];
 
 $errorMessage = '';
+$successMessage = '';
 
 $formData = [
     'first_name' => $client['first_name'] ?? '',
@@ -51,17 +49,24 @@ $formData = [
     'email' => $client['email'] ?? '',
     'phone' => $client['phone'] ?? '',
     'postal_address' => $client['postal_address'] ?? '',
+    'passport_number' => $client['passport_number'] ?? '',
+    'passport_issue_country' => $client['passport_issue_country'] ?? '',
+    'passport_issue_date' => $client['passport_issue_date'] ?? '',
+    'passport_expiry_date' => $client['passport_expiry_date'] ?? '',
     'client_type' => $client['client_type'] ?? '',
     'country_origin' => $client['country_origin'] ?? '',
     'country_destination' => $client['country_destination'] ?? '',
     'country_commercial' => $client['country_commercial'] ?? '',
     'currency' => $client['currency'] ?? 'EUR',
     'initial_treasury_account_id' => $client['initial_treasury_account_id'] ?? '',
+    'is_active' => (int)($client['is_active'] ?? 1),
 ];
 
-function clientEditValue(array $formData, string $key, mixed $default = ''): string
-{
-    return e((string)($formData[$key] ?? $default));
+if (!function_exists('clientEditValue')) {
+    function clientEditValue(array $formData, string $key, mixed $default = ''): string
+    {
+        return e((string)($formData[$key] ?? $default));
+    }
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -71,12 +76,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         'email' => trim((string)($_POST['email'] ?? '')),
         'phone' => trim((string)($_POST['phone'] ?? '')),
         'postal_address' => trim((string)($_POST['postal_address'] ?? '')),
+        'passport_number' => trim((string)($_POST['passport_number'] ?? '')),
+        'passport_issue_country' => trim((string)($_POST['passport_issue_country'] ?? '')),
+        'passport_issue_date' => trim((string)($_POST['passport_issue_date'] ?? '')),
+        'passport_expiry_date' => trim((string)($_POST['passport_expiry_date'] ?? '')),
         'client_type' => trim((string)($_POST['client_type'] ?? '')),
         'country_origin' => trim((string)($_POST['country_origin'] ?? '')),
         'country_destination' => trim((string)($_POST['country_destination'] ?? '')),
         'country_commercial' => trim((string)($_POST['country_commercial'] ?? '')),
         'currency' => trim((string)($_POST['currency'] ?? 'EUR')),
         'initial_treasury_account_id' => ($_POST['initial_treasury_account_id'] ?? '') !== '' ? (int)$_POST['initial_treasury_account_id'] : '',
+        'is_active' => isset($_POST['is_active']) ? 1 : 0,
     ];
 
     try {
@@ -100,38 +110,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Le pays commercial est obligatoire.');
         }
 
-        $updateFields = [
-            'first_name = ?',
-            'last_name = ?',
-            'full_name = ?',
-            'email = ?',
-            'phone = ?',
-            'client_type = ?',
-            'country_origin = ?',
-            'country_destination = ?',
-            'country_commercial = ?',
-            'currency = ?',
-            'initial_treasury_account_id = ?',
-            'updated_at = NOW()'
+        if ($formData['passport_issue_date'] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $formData['passport_issue_date'])) {
+            throw new RuntimeException('Date de délivrance du passport invalide.');
+        }
+
+        if ($formData['passport_expiry_date'] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $formData['passport_expiry_date'])) {
+            throw new RuntimeException('Date d’expiration du passport invalide.');
+        }
+
+        if ($formData['passport_issue_date'] !== '' && $formData['passport_expiry_date'] !== '') {
+            if ($formData['passport_expiry_date'] < $formData['passport_issue_date']) {
+                throw new RuntimeException('La date d’expiration du passport doit être postérieure à la date de délivrance.');
+            }
+        }
+
+        $before = $client;
+
+        $updateFields = [];
+        $params = [];
+
+        $map = [
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'full_name' => $fullName,
+            'email' => $formData['email'] !== '' ? $formData['email'] : null,
+            'phone' => $formData['phone'] !== '' ? $formData['phone'] : null,
+            'postal_address' => $formData['postal_address'] !== '' ? $formData['postal_address'] : null,
+            'passport_number' => $formData['passport_number'] !== '' ? $formData['passport_number'] : null,
+            'passport_issue_country' => $formData['passport_issue_country'] !== '' ? $formData['passport_issue_country'] : null,
+            'passport_issue_date' => $formData['passport_issue_date'] !== '' ? $formData['passport_issue_date'] : null,
+            'passport_expiry_date' => $formData['passport_expiry_date'] !== '' ? $formData['passport_expiry_date'] : null,
+            'client_type' => $formData['client_type'],
+            'country_origin' => $formData['country_origin'] !== '' ? $formData['country_origin'] : null,
+            'country_destination' => $formData['country_destination'] !== '' ? $formData['country_destination'] : null,
+            'country_commercial' => $formData['country_commercial'],
+            'currency' => $formData['currency'] !== '' ? $formData['currency'] : 'EUR',
+            'initial_treasury_account_id' => $formData['initial_treasury_account_id'] !== '' ? (int)$formData['initial_treasury_account_id'] : null,
+            'is_active' => $formData['is_active'],
         ];
 
-        $params = [
-            $firstName,
-            $lastName,
-            $fullName,
-            $formData['email'] !== '' ? $formData['email'] : null,
-            $formData['phone'] !== '' ? $formData['phone'] : null,
-            $formData['client_type'],
-            $formData['country_origin'] !== '' ? $formData['country_origin'] : null,
-            $formData['country_destination'] !== '' ? $formData['country_destination'] : null,
-            $formData['country_commercial'],
-            $formData['currency'] !== '' ? $formData['currency'] : 'EUR',
-            $formData['initial_treasury_account_id'] !== '' ? (int)$formData['initial_treasury_account_id'] : null,
-        ];
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'clients', $column)) {
+                $updateFields[] = $column . ' = ?';
+                $params[] = $value;
+            }
+        }
 
-        if (columnExists($pdo, 'clients', 'postal_address')) {
-            $updateFields[] = 'postal_address = ?';
-            $params[] = $formData['postal_address'] !== '' ? $formData['postal_address'] : null;
+        if (columnExists($pdo, 'clients', 'updated_at')) {
+            $updateFields[] = 'updated_at = NOW()';
         }
 
         $params[] = $id;
@@ -143,35 +169,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ");
         $stmtUpdate->execute($params);
 
-        /* LOT 1B : reload état après modification */
-        $stmtReload = $pdo->prepare("SELECT * FROM clients WHERE id = ? LIMIT 1");
-        $stmtReload->execute([$id]);
-        $afterClient = $stmtReload->fetch(PDO::FETCH_ASSOC) ?: [];
+        $stmt = $pdo->prepare("SELECT * FROM clients WHERE id = ? LIMIT 1");
+        $stmt->execute([$id]);
+        $client = $stmt->fetch(PDO::FETCH_ASSOC) ?: $client;
 
-        /* LOT 1B : audit trail */
-        if (function_exists('auditEntityChanges')) {
-            auditEntityChanges(
-                $pdo,
-                'client',
-                (int)$id,
-                $beforeClient,
-                $afterClient,
-                isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
-            );
-        }
-
-        /* LOT 1B : notification */
-        if (function_exists('createNotification')) {
-            createNotification(
-                $pdo,
-                'client_update',
-                'Le client ' . ($afterClient['full_name'] ?? ($client['client_code'] ?? 'N/A')) . ' a été modifié.',
-                'info',
-                APP_URL . 'modules/clients/client_view.php?id=' . (int)$id,
-                'client',
-                (int)$id,
-                isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
-            );
+        if (function_exists('auditEntityChanges') && isset($_SESSION['user_id'])) {
+            auditEntityChanges($pdo, 'client', $id, $before, $client, (int)$_SESSION['user_id']);
         }
 
         if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
@@ -186,15 +189,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             );
         }
 
-        header('Location: ' . APP_URL . 'modules/clients/client_view.php?id=' . $id);
-        exit;
+        if (function_exists('createNotification') && isset($_SESSION['user_id'])) {
+            createNotification(
+                $pdo,
+                'client_update',
+                'Client mis à jour : ' . (($client['client_code'] ?? '') . ' - ' . ($client['full_name'] ?? '')),
+                'info',
+                APP_URL . 'modules/clients/client_view.php?id=' . $id,
+                'client',
+                $id,
+                (int)$_SESSION['user_id']
+            );
+        }
+
+        $successMessage = 'Client mis à jour avec succès.';
     } catch (Throwable $e) {
         $errorMessage = $e->getMessage();
     }
 }
 
 $pageTitle = 'Modifier un client';
-$pageSubtitle = 'Mise à jour du profil client et de son rattachement financier.';
+$pageSubtitle = 'Mise à jour du profil client et de ses informations passeport.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -203,12 +218,15 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
+        <?php if ($successMessage !== ''): ?>
+            <div class="success"><?= e($successMessage) ?></div>
+        <?php endif; ?>
+
         <?php if ($errorMessage !== ''): ?>
             <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
 
         <div class="form-card">
-
             <form method="POST">
                 <?= csrf_input() ?>
                 <input type="hidden" name="id" value="<?= (int)$id ?>">
@@ -237,6 +255,33 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <div style="grid-column: 1 / -1;">
                         <label>Adresse postale</label>
                         <textarea name="postal_address" rows="3"><?= clientEditValue($formData, 'postal_address') ?></textarea>
+                    </div>
+
+                    <div>
+                        <label>Numéro de passport</label>
+                        <input type="text" name="passport_number" value="<?= clientEditValue($formData, 'passport_number') ?>">
+                    </div>
+
+                    <div>
+                        <label>Lieu de délivrance du passport</label>
+                        <select name="passport_issue_country">
+                            <option value="">Choisir</option>
+                            <?php foreach ($originCountries as $country): ?>
+                                <option value="<?= e($country) ?>" <?= clientEditValue($formData, 'passport_issue_country') === $country ? 'selected' : '' ?>>
+                                    <?= e($country) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Date de délivrance du passport</label>
+                        <input type="date" name="passport_issue_date" value="<?= clientEditValue($formData, 'passport_issue_date') ?>">
+                    </div>
+
+                    <div>
+                        <label>Date d’expiration du passport</label>
+                        <input type="date" name="passport_expiry_date" value="<?= clientEditValue($formData, 'passport_expiry_date') ?>">
                     </div>
 
                     <div>
@@ -303,6 +348,13 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <?php endforeach; ?>
                         </select>
                     </div>
+                </div>
+
+                <div style="margin-top:16px;">
+                    <label style="display:flex; gap:10px; align-items:center;">
+                        <input type="checkbox" name="is_active" value="1" <?= (int)($formData['is_active'] ?? 1) === 1 ? 'checked' : '' ?>>
+                        Client actif
+                    </label>
                 </div>
 
                 <div class="btn-group" style="margin-top:20px;">

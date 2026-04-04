@@ -5,71 +5,61 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
 if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'statements_export_page');
+    studelyEnforceAccess($pdo, 'statements_view_page');
 } else {
-    enforcePagePermission($pdo, 'clients_view');
+    enforcePagePermission($pdo, 'statements_export');
 }
 
-$search = trim((string)($_GET['search'] ?? ''));
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
-$selectFields = [
-    'c.id',
-    'c.client_code',
-    'c.full_name',
-    'c.first_name',
-    'c.last_name',
-    'c.client_type',
-    'c.country_commercial',
-    'c.generated_client_account',
-    'ba.balance AS current_balance'
+$pageTitle = 'Fiches clients';
+$pageSubtitle = 'Prévisualisation puis génération des fiches PDF, en unitaire ou en masse';
+
+$clients = tableExists($pdo, 'clients')
+    ? $pdo->query("
+        SELECT id, client_code, full_name, country_commercial, client_type
+        FROM clients
+        WHERE COALESCE(is_active,1)=1
+        ORDER BY client_code ASC
+    ")->fetchAll(PDO::FETCH_ASSOC)
+    : [];
+
+$previewPdf = (string)($_SESSION['client_profiles_preview_pdf'] ?? '');
+
+if (isset($_GET['cancel_preview']) && $_GET['cancel_preview'] === '1') {
+    unset($_SESSION['client_profiles_preview_pdf']);
+    $_SESSION['success_message'] = 'Prévisualisation annulée.';
+    header('Location: ' . APP_URL . 'modules/statements/client_profiles.php');
+    exit;
+}
+
+$fields = [
+    'identity' => 'Identité',
+    'contact' => 'Coordonnées',
+    'countries' => 'Pays',
+    'treasury_account' => 'Compte 512 lié',
+    'currency' => 'Devise',
+    'client_account' => 'Compte client généré',
+    'balances' => 'Soldes',
+    'postal_address' => 'Adresse postale',
+    'passport_number' => 'Numéro de passport',
+    'passport_issue_country' => 'Lieu de délivrance du passport',
+    'passport_issue_date' => 'Date de délivrance du passport',
+    'passport_expiry_date' => 'Date d’expiration du passport',
+    'email' => 'Email',
+    'phone' => 'Téléphone',
+    'client_type' => 'Type de client',
+    'country_origin' => 'Pays d’origine',
+    'country_destination' => 'Pays de destination',
+    'country_commercial' => 'Pays commercial',
+    'all' => 'Fiche complète',
 ];
 
-if (columnExists($pdo, 'clients', 'postal_address')) {
-    $selectFields[] = 'c.postal_address';
-}
-
-$sql = "
-    SELECT
-        " . implode(",\n        ", $selectFields) . "
-    FROM clients c
-    LEFT JOIN client_bank_accounts cba ON cba.client_id = c.id
-    LEFT JOIN bank_accounts ba ON ba.id = cba.bank_account_id
-    WHERE 1=1
-";
-$params = [];
-
-if ($search !== '') {
-    $sql .= " AND (
-        c.client_code LIKE ?
-        OR c.full_name LIKE ?
-        OR c.first_name LIKE ?
-        OR c.last_name LIKE ?
-        OR c.generated_client_account LIKE ?";
-
-    if (columnExists($pdo, 'clients', 'postal_address')) {
-        $sql .= " OR c.postal_address LIKE ?";
-    }
-
-    $sql .= ")";
-
-    $like = '%' . $search . '%';
-    $params = [$like, $like, $like, $like, $like];
-
-    if (columnExists($pdo, 'clients', 'postal_address')) {
-        $params[] = $like;
-    }
-}
-
-$sql .= " ORDER BY c.client_code ASC";
-
-$stmt = $pdo->prepare($sql);
-$stmt->execute($params);
-$clients = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-$pageTitle = 'Fiches clients PDF';
-$pageSubtitle = 'Compose des fiches clients élégantes et choisis précisément les données à exporter.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -78,138 +68,96 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <div class="card-grid" style="margin-bottom:20px;">
-            <div class="card">
-                <h3>Rendu premium</h3>
-                <div class="dashboard-note">Logo, cartes d’information, synthèse visuelle et meilleure hiérarchie de lecture.</div>
-            </div>
-            <div class="card">
-                <h3>Export à la carte</h3>
-                <div class="dashboard-note">Choisis uniquement les blocs à afficher dans la fiche PDF finale.</div>
-            </div>
-        </div>
+        <?php if (!empty($_SESSION['success_message'])): ?>
+            <div class="success"><?= e((string)$_SESSION['success_message']) ?></div>
+            <?php unset($_SESSION['success_message']); ?>
+        <?php endif; ?>
+
+        <?php if (!empty($_SESSION['error_message'])): ?>
+            <div class="error"><?= e((string)$_SESSION['error_message']) ?></div>
+            <?php unset($_SESSION['error_message']); ?>
+        <?php endif; ?>
 
         <div class="dashboard-grid-2">
-            <div class="form-card">
-                <h3 class="section-title">Filtrer les clients</h3>
+            <div class="card">
+                <h3>Préparer l’export</h3>
 
-                <form method="GET" class="inline-form">
-                    <div>
-                        <label>Recherche</label>
-                        <input type="text" name="search" value="<?= e($search) ?>" placeholder="Code client, nom, adresse, 411...">
-                    </div>
-                    <div>
-                        <button type="submit" class="btn btn-secondary">Filtrer</button>
-                    </div>
-                </form>
-
-                <form method="POST" action="<?= e(APP_URL) ?>modules/statements/generate_bulk_pdf.php" style="margin-top:20px;">
-                    <?= function_exists('csrf_input') ? csrf_input() : '' ?>
+                <form method="POST" action="<?= e(APP_URL) ?>modules/statements/generate_bulk_pdf.php">
+                    <?= csrf_input() ?>
                     <input type="hidden" name="document_kind" value="profile">
 
-                    <div class="card" style="margin-bottom:18px; background:#f8fbff;">
-                        <h3 class="section-title">Données à inclure dans la fiche</h3>
-                        <div class="card-grid">
-                            <label class="block-option"><input type="checkbox" name="fields[]" value="all" checked> <span>Toutes les données</span></label>
-                            <label class="block-option"><input type="checkbox" name="fields[]" value="identity"> <span>Identité</span></label>
-                            <label class="block-option"><input type="checkbox" name="fields[]" value="contact"> <span>Contact + adresse</span></label>
-                            <label class="block-option"><input type="checkbox" name="fields[]" value="countries"> <span>Pays</span></label>
-                            <label class="block-option"><input type="checkbox" name="fields[]" value="client_account"> <span>Compte 411</span></label>
-                            <label class="block-option"><input type="checkbox" name="fields[]" value="treasury_account"> <span>Compte 512 lié</span></label>
-                            <label class="block-option"><input type="checkbox" name="fields[]" value="currency"> <span>Devise</span></label>
-                            <label class="block-option"><input type="checkbox" name="fields[]" value="balances"> <span>Soldes</span></label>
-                        </div>
-                    </div>
-
-                    <div class="dashboard-note" style="margin-bottom:16px;">
-                        Sélectionne un ou plusieurs clients pour générer des fiches PDF modernes et professionnelles.
-                    </div>
-
-                    <div class="table-card" style="padding:0; box-shadow:none;">
-                        <table>
+                    <div class="sl-table-wrap" style="max-height:420px; overflow:auto;">
+                        <table class="sl-table">
                             <thead>
                                 <tr>
-                                    <th style="width:40px;"><input type="checkbox" id="select_all_profiles"></th>
+                                    <th></th>
                                     <th>Code</th>
                                     <th>Nom</th>
-                                    <th>Type</th>
                                     <th>Pays commercial</th>
-                                    <th>Adresse postale</th>
-                                    <th>Compte 411</th>
-                                    <th>Solde courant</th>
-                                    <th>Action rapide</th>
+                                    <th>Type</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                <?php foreach ($clients as $client): ?>
-                                    <tr>
-                                        <td><input type="checkbox" name="client_ids[]" value="<?= (int)$client['id'] ?>" class="profile-checkbox"></td>
-                                        <td><?= e($client['client_code'] ?? '') ?></td>
-                                        <td><?= e($client['full_name'] ?? trim((string)($client['first_name'] ?? '') . ' ' . (string)($client['last_name'] ?? ''))) ?></td>
-                                        <td><?= e($client['client_type'] ?? '') ?></td>
-                                        <td><?= e($client['country_commercial'] ?? '') ?></td>
-                                        <td><?= columnExists($pdo, 'clients', 'postal_address') ? e($client['postal_address'] ?? '') : '' ?></td>
-                                        <td><?= e($client['generated_client_account'] ?? '') ?></td>
-                                        <td><?= number_format((float)($client['current_balance'] ?? 0), 2, ',', ' ') ?></td>
-                                        <td>
-                                            <a class="btn btn-success" href="<?= e(APP_URL) ?>modules/statements/generate_bulk_pdf.php?single=1&document_kind=profile&client_id=<?= (int)$client['id'] ?>">
-                                                PDF unitaire
-                                            </a>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-
-                                <?php if (!$clients): ?>
-                                    <tr><td colspan="9">Aucun client trouvé.</td></tr>
+                                <?php if ($clients): ?>
+                                    <?php foreach ($clients as $client): ?>
+                                        <tr>
+                                            <td><input type="checkbox" name="client_ids[]" value="<?= (int)$client['id'] ?>"></td>
+                                            <td><?= e((string)$client['client_code']) ?></td>
+                                            <td><?= e((string)$client['full_name']) ?></td>
+                                            <td><?= e((string)($client['country_commercial'] ?? '—')) ?></td>
+                                            <td><?= e((string)($client['client_type'] ?? '—')) ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                <?php else: ?>
+                                    <tr><td colspan="5">Aucun client disponible.</td></tr>
                                 <?php endif; ?>
                             </tbody>
                         </table>
                     </div>
 
+                    <div style="margin-top:18px;">
+                        <label>Champs exportés</label>
+                        <div class="dashboard-grid-2">
+                            <?php foreach ($fields as $key => $label): ?>
+                                <label style="display:block; margin-bottom:8px;">
+                                    <input type="checkbox" name="fields[]" value="<?= e($key) ?>" <?= $key === 'all' ? '' : 'checked' ?>>
+                                    <?= e($label) ?>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+
                     <div class="btn-group" style="margin-top:20px;">
-                        <button type="submit" class="btn btn-primary">Générer les fiches PDF</button>
+                        <button type="submit" name="mode" value="preview_client_profiles" class="btn btn-secondary">Prévisualiser l’opération demandée</button>
+                        <button type="submit" name="mode" value="generate_client_profiles" class="btn btn-success">Générer le/les PDF</button>
+                        <a href="<?= e(APP_URL) ?>modules/statements/client_profiles.php?cancel_preview=1" class="btn btn-outline">Annuler</a>
+                        <a href="<?= e(APP_URL) ?>modules/statements/index.php" class="btn btn-outline">Retour</a>
                     </div>
                 </form>
             </div>
 
-            <div class="dashboard-panel">
-                <h3 class="section-title">Aperçu du style</h3>
-                <div class="dashboard-note">
-                    Le nouveau rendu met davantage en valeur l’identité client avec un en-tête premium, des cartes plus lisibles et une structure plus élégante.
-                </div>
+            <div class="card">
+                <h3>Aperçu du style</h3>
+
+                <?php if ($previewPdf !== ''): ?>
+                    <div style="height:780px; border:1px solid rgba(148,163,184,0.18); border-radius:14px; overflow:hidden;">
+                        <iframe
+                            src="<?= e(APP_URL . ltrim($previewPdf, '/')) ?>"
+                            style="width:100%; height:100%; border:none; overflow:auto;"
+                            title="Aperçu PDF fiches clients"
+                        ></iframe>
+                    </div>
+
+                    <div class="btn-group" style="margin-top:16px;">
+                        <a class="btn btn-secondary" href="<?= e(APP_URL . ltrim($previewPdf, '/')) ?>" target="_blank">Ouvrir l’aperçu</a>
+                    </div>
+                <?php else: ?>
+                    <div class="dashboard-note">
+                        Clique sur <strong>Prévisualiser l’opération demandée</strong> pour afficher ici la fiche PDF avant génération.
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
-
-        <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            const selectAll = document.getElementById('select_all_profiles');
-            const boxes = Array.from(document.querySelectorAll('.profile-checkbox'));
-            const allBox = document.querySelector('input[name="fields[]"][value="all"]');
-            const fieldBoxes = Array.from(document.querySelectorAll('input[name="fields[]"]')).filter(el => el.value !== 'all');
-
-            if (selectAll) {
-                selectAll.addEventListener('change', function () {
-                    boxes.forEach(box => box.checked = selectAll.checked);
-                });
-            }
-
-            if (allBox) {
-                allBox.addEventListener('change', function () {
-                    if (allBox.checked) {
-                        fieldBoxes.forEach(box => box.checked = false);
-                    }
-                });
-            }
-
-            fieldBoxes.forEach(box => {
-                box.addEventListener('change', function () {
-                    if (box.checked && allBox) {
-                        allBox.checked = false;
-                    }
-                });
-            });
-        });
-        </script>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>

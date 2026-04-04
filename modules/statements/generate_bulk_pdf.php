@@ -25,6 +25,10 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'clients_view');
 }
 
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
 @ini_set('display_errors', '0');
 @ini_set('html_errors', '0');
 error_reporting(E_ALL);
@@ -261,6 +265,7 @@ if (!function_exists('renderClientProfilePdfHtml')) {
         .kpi { font-size: 24px; font-weight: 800; color: #1d2549; margin: 2px 0; }
         .kpi-sub { font-size: 11px; color: #64748b; }
         .footer { margin-top: 18px; padding-top: 10px; border-top: 1px solid #e5e7eb; color: #64748b; font-size: 10px; text-align: center; }
+        .page-break { page-break-after: always; }
     </style>
 </head>
 <body>
@@ -294,21 +299,25 @@ if (!function_exists('renderClientProfilePdfHtml')) {
     </div>
 
     <table class="grid">
-        <?php if (pdfFieldEnabled($fields, 'identity') || pdfFieldEnabled($fields, 'contact')): ?>
         <tr>
             <td class="card" style="width:50%;">
                 <div class="card-title">Identité & contact</div>
                 <table class="meta-table">
-                    <?php if (pdfFieldEnabled($fields, 'identity')): ?>
+                    <?php if (pdfFieldEnabled($fields, 'identity') || pdfFieldEnabled($fields, 'client_type')): ?>
                         <tr><td class="label">Prénom</td><td class="value"><?= pdfSafeText($client['first_name'] ?? '') ?></td></tr>
                         <tr><td class="label">Nom</td><td class="value"><?= pdfSafeText($client['last_name'] ?? '') ?></td></tr>
                         <tr><td class="label">Type client</td><td class="value"><?= pdfSafeText($client['client_type'] ?? '—') ?></td></tr>
-                        <tr><td class="label">Statut client</td><td class="value"><?= pdfSafeText($client['client_status'] ?? '—') ?></td></tr>
                     <?php endif; ?>
 
-                    <?php if (pdfFieldEnabled($fields, 'contact')): ?>
+                    <?php if (pdfFieldEnabled($fields, 'contact') || pdfFieldEnabled($fields, 'email')): ?>
                         <tr><td class="label">Email</td><td class="value"><?= pdfSafeText($client['email'] ?? '—') ?></td></tr>
+                    <?php endif; ?>
+
+                    <?php if (pdfFieldEnabled($fields, 'contact') || pdfFieldEnabled($fields, 'phone')): ?>
                         <tr><td class="label">Téléphone</td><td class="value"><?= pdfSafeText($client['phone'] ?? '—') ?></td></tr>
+                    <?php endif; ?>
+
+                    <?php if (pdfFieldEnabled($fields, 'contact') || pdfFieldEnabled($fields, 'postal_address')): ?>
                         <tr><td class="label">Adresse postale</td><td class="value"><?= nl2br(pdfSafeText($postalAddress !== '' ? $postalAddress : '—')) ?></td></tr>
                     <?php endif; ?>
                 </table>
@@ -317,9 +326,15 @@ if (!function_exists('renderClientProfilePdfHtml')) {
             <td class="card" style="width:50%;">
                 <div class="card-title">Cycle & rattachement</div>
                 <table class="meta-table">
-                    <?php if (pdfFieldEnabled($fields, 'countries')): ?>
+                    <?php if (pdfFieldEnabled($fields, 'countries') || pdfFieldEnabled($fields, 'country_origin')): ?>
                         <tr><td class="label">Pays d’origine</td><td class="value"><?= pdfSafeText($client['country_origin'] ?? '—') ?></td></tr>
+                    <?php endif; ?>
+
+                    <?php if (pdfFieldEnabled($fields, 'countries') || pdfFieldEnabled($fields, 'country_destination')): ?>
                         <tr><td class="label">Pays de destination</td><td class="value"><?= pdfSafeText($client['country_destination'] ?? '—') ?></td></tr>
+                    <?php endif; ?>
+
+                    <?php if (pdfFieldEnabled($fields, 'countries') || pdfFieldEnabled($fields, 'country_commercial')): ?>
                         <tr><td class="label">Pays commercial</td><td class="value"><?= pdfSafeText($client['country_commercial'] ?? '—') ?></td></tr>
                     <?php endif; ?>
 
@@ -331,12 +346,44 @@ if (!function_exists('renderClientProfilePdfHtml')) {
                         <tr><td class="label">Devise</td><td class="value"><?= pdfSafeText($currency) ?></td></tr>
                     <?php endif; ?>
 
+                    <?php if (pdfFieldEnabled($fields, 'client_account')): ?>
+                        <tr><td class="label">Compte client</td><td class="value"><?= pdfSafeText($client['generated_client_account'] ?? '—') ?></td></tr>
+                    <?php endif; ?>
+
                     <tr><td class="label">Date édition</td><td class="value"><?= pdfDateFr(date('Y-m-d')) ?></td></tr>
                 </table>
             </td>
         </tr>
-        <?php endif; ?>
     </table>
+
+    <?php if (
+        pdfFieldEnabled($fields, 'passport_number') ||
+        pdfFieldEnabled($fields, 'passport_issue_country') ||
+        pdfFieldEnabled($fields, 'passport_issue_date') ||
+        pdfFieldEnabled($fields, 'passport_expiry_date')
+    ): ?>
+    <table class="grid">
+        <tr>
+            <td class="card" style="width:100%;">
+                <div class="card-title">Données passeport</div>
+                <table class="meta-table">
+                    <?php if (pdfFieldEnabled($fields, 'passport_number')): ?>
+                        <tr><td class="label">Numéro de passport</td><td class="value"><?= pdfSafeText($client['passport_number'] ?? '—') ?></td></tr>
+                    <?php endif; ?>
+                    <?php if (pdfFieldEnabled($fields, 'passport_issue_country')): ?>
+                        <tr><td class="label">Lieu de délivrance</td><td class="value"><?= pdfSafeText($client['passport_issue_country'] ?? '—') ?></td></tr>
+                    <?php endif; ?>
+                    <?php if (pdfFieldEnabled($fields, 'passport_issue_date')): ?>
+                        <tr><td class="label">Date de délivrance</td><td class="value"><?= pdfSafeText($client['passport_issue_date'] ?? '—') ?></td></tr>
+                    <?php endif; ?>
+                    <?php if (pdfFieldEnabled($fields, 'passport_expiry_date')): ?>
+                        <tr><td class="label">Date d’expiration</td><td class="value"><?= pdfSafeText($client['passport_expiry_date'] ?? '—') ?></td></tr>
+                    <?php endif; ?>
+                </table>
+            </td>
+        </tr>
+    </table>
+    <?php endif; ?>
 
     <?php if (pdfFieldEnabled($fields, 'balances')): ?>
     <table class="grid">
@@ -452,6 +499,7 @@ if (!function_exists('renderClientStatementPdfHtml')) {
         .credit { color: #117a4f; font-weight: 700; }
         .balance { color: #1d2549; font-weight: 700; }
         .footer { margin-top: 14px; padding-top: 8px; border-top: 1px solid #e5e7eb; color: #64748b; font-size: 10px; text-align: center; }
+        .page-break { page-break-after: always; }
     </style>
 </head>
 <body>
@@ -571,7 +619,92 @@ if (!function_exists('renderClientStatementPdfHtml')) {
     }
 }
 
+if (!function_exists('pdfEnsurePublicExportDir')) {
+    function pdfEnsurePublicExportDir(): string
+    {
+        $exportDir = APP_ROOT . 'exports' . DIRECTORY_SEPARATOR;
+        if (!is_dir($exportDir)) {
+            mkdir($exportDir, 0777, true);
+        }
+        return $exportDir;
+    }
+}
+
+if (!function_exists('pdfBuildPublicRelativePath')) {
+    function pdfBuildPublicRelativePath(string $absolutePath): string
+    {
+        return 'exports/' . basename($absolutePath);
+    }
+}
+
+if (!function_exists('pdfStorePreviewAndRedirect')) {
+    function pdfStorePreviewAndRedirect(string $modulePage, string $sessionKey, string $relativePath, string $message = ''): void
+    {
+        $_SESSION[$sessionKey] = $relativePath;
+        if ($message !== '') {
+            $_SESSION['success_message'] = $message;
+        }
+
+        header('Location: ' . APP_URL . 'modules/statements/' . $modulePage);
+        exit;
+    }
+}
+
+if (!function_exists('pdfExtractStyleBlock')) {
+    function pdfExtractStyleBlock(string $html): string
+    {
+        if (preg_match('/<style>(.*?)<\/style>/is', $html, $m)) {
+            return (string)$m[1];
+        }
+        return '';
+    }
+}
+
+if (!function_exists('pdfExtractBodyHtml')) {
+    function pdfExtractBodyHtml(string $html): string
+    {
+        if (preg_match('/<body[^>]*>(.*?)<\/body>/is', $html, $m)) {
+            return (string)$m[1];
+        }
+        return $html;
+    }
+}
+
+if (!function_exists('pdfBuildCombinedPreviewHtml')) {
+    function pdfBuildCombinedPreviewHtml(array $fullHtmlDocuments): string
+    {
+        if (!$fullHtmlDocuments) {
+            return '';
+        }
+
+        $style = pdfExtractStyleBlock((string)$fullHtmlDocuments[0]);
+        $bodies = [];
+
+        foreach ($fullHtmlDocuments as $index => $html) {
+            $body = pdfExtractBodyHtml((string)$html);
+            if ($index < count($fullHtmlDocuments) - 1) {
+                $body .= '<div class="page-break"></div>';
+            }
+            $bodies[] = $body;
+        }
+
+        return '<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<style>' . $style . '</style>
+</head>
+<body>' . implode('', $bodies) . '</body>
+</html>';
+    }
+}
+
 $singleMode = isset($_GET['single']) && (int)($_GET['single']) === 1;
+$mode = trim((string)($_GET['mode'] ?? $_POST['mode'] ?? 'generate_account_statement'));
+$allowedModes = ['preview_client_profiles', 'generate_client_profiles', 'preview_account_statement', 'generate_account_statement'];
+if (!in_array($mode, $allowedModes, true)) {
+    $mode = 'generate_account_statement';
+}
 
 if ($singleMode) {
     $clientIds = isset($_GET['client_id']) ? [(int)$_GET['client_id']] : [];
@@ -597,7 +730,9 @@ if (!is_array($fields) || !$fields) {
 $clientIds = array_values(array_filter(array_map('intval', $clientIds), fn ($v) => $v > 0));
 
 if (!$clientIds) {
-    exit('Aucun client sélectionné.');
+    $_SESSION['error_message'] = 'Aucun client sélectionné.';
+    header('Location: ' . APP_URL . 'modules/statements/index.php');
+    exit;
 }
 
 $allowedDocumentKinds = ['statement', 'profile'];
@@ -624,7 +759,9 @@ $stmtClients->execute($clientIds);
 $clients = $stmtClients->fetchAll(PDO::FETCH_ASSOC);
 
 if (!$clients) {
-    exit('Aucun client trouvé.');
+    $_SESSION['error_message'] = 'Aucun client trouvé.';
+    header('Location: ' . APP_URL . 'modules/statements/index.php');
+    exit;
 }
 
 $options = new Options();
@@ -634,11 +771,14 @@ $options->set('isHtml5ParserEnabled', true);
 
 $tmpDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'studelyledger_export_' . uniqid('', true);
 if (!mkdir($tmpDir, 0777, true) && !is_dir($tmpDir)) {
-    exit('Impossible de créer le répertoire temporaire.');
+    $_SESSION['error_message'] = 'Impossible de créer le répertoire temporaire.';
+    header('Location: ' . APP_URL . 'modules/statements/index.php');
+    exit;
 }
 
 $logoDataUri = pdfLoadLogoDataUri();
 $pdfFiles = [];
+$fullHtmlDocuments = [];
 
 foreach ($clients as $client) {
     $clientId = (int)$client['id'];
@@ -652,14 +792,15 @@ foreach ($clients as $client) {
         $operations = findClientStatementOperations($pdo, $clientId, $dateFrom, $dateTo);
     }
 
-    $dompdf = new Dompdf($options);
-
     if ($documentKind === 'profile') {
         $html = renderClientProfilePdfHtml($client, $clientBank, $treasury, $logoDataUri, $fields);
     } else {
         $html = renderClientStatementPdfHtml($pdo, $client, $clientBank, $operations, $dateFrom, $dateTo, $logoDataUri);
     }
 
+    $fullHtmlDocuments[] = $html;
+
+    $dompdf = new Dompdf($options);
     $dompdf->loadHtml($html, 'UTF-8');
     $dompdf->setPaper('A4', 'portrait');
     $dompdf->render();
@@ -672,20 +813,59 @@ foreach ($clients as $client) {
     $pdfFiles[] = $targetPath;
 }
 
+$publicExportDir = pdfEnsurePublicExportDir();
+$isPreviewMode = in_array($mode, ['preview_client_profiles', 'preview_account_statement'], true);
+
+if ($isPreviewMode) {
+    $combinedHtml = pdfBuildCombinedPreviewHtml($fullHtmlDocuments);
+
+    if ($combinedHtml === '') {
+        $_SESSION['error_message'] = 'Impossible de générer l’aperçu PDF.';
+        header('Location: ' . APP_URL . 'modules/statements/index.php');
+        exit;
+    }
+
+    $previewDompdf = new Dompdf($options);
+    $previewDompdf->loadHtml($combinedHtml, 'UTF-8');
+    $previewDompdf->setPaper('A4', 'portrait');
+    $previewDompdf->render();
+
+    $previewName = 'preview_' . $documentKind . '_' . date('Ymd_His') . '.pdf';
+    $previewPath = $publicExportDir . $previewName;
+    file_put_contents($previewPath, $previewDompdf->output());
+
+    $relativePath = pdfBuildPublicRelativePath($previewPath);
+
+    if ($mode === 'preview_client_profiles') {
+        pdfStorePreviewAndRedirect('client_profiles.php', 'client_profiles_preview_pdf', $relativePath, 'Aperçu PDF généré.');
+    }
+
+    if ($mode === 'preview_account_statement') {
+        pdfStorePreviewAndRedirect('account_statements.php', 'account_statements_preview_pdf', $relativePath, 'Aperçu PDF généré.');
+    }
+}
+
 if (count($pdfFiles) === 1) {
     $singlePdf = $pdfFiles[0];
-    pdfSendBinaryFile($singlePdf, 'application/pdf', basename($singlePdf));
+    $finalName = basename($singlePdf);
+    $finalPublicPath = $publicExportDir . $finalName;
+    copy($singlePdf, $finalPublicPath);
+    pdfSendBinaryFile($singlePdf, 'application/pdf', $finalName);
 }
 
 if (!class_exists('ZipArchive')) {
-    exit("L'extension PHP ZipArchive n'est pas disponible. Active l'extension zip dans php.ini pour exporter plusieurs PDF.");
+    $_SESSION['error_message'] = "L'extension PHP ZipArchive n'est pas disponible. Active l'extension zip dans php.ini pour exporter plusieurs PDF.";
+    header('Location: ' . APP_URL . 'modules/statements/index.php');
+    exit;
 }
 
 $zipPath = $tmpDir . DIRECTORY_SEPARATOR . 'exports_clients.zip';
 $zip = new ZipArchive();
 
 if ($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
-    exit('Impossible de créer l’archive ZIP.');
+    $_SESSION['error_message'] = 'Impossible de créer l’archive ZIP.';
+    header('Location: ' . APP_URL . 'modules/statements/index.php');
+    exit;
 }
 
 foreach ($pdfFiles as $pdfFile) {
@@ -693,4 +873,8 @@ foreach ($pdfFiles as $pdfFile) {
 }
 $zip->close();
 
-pdfSendBinaryFile($zipPath, 'application/zip', 'exports_clients.zip');
+$zipFinalName = 'exports_clients_' . date('Ymd_His') . '.zip';
+$zipPublicPath = $publicExportDir . $zipFinalName;
+copy($zipPath, $zipPublicPath);
+
+pdfSendBinaryFile($zipPath, 'application/zip', $zipFinalName);

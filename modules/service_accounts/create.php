@@ -17,30 +17,13 @@ if (!tableExists($pdo, 'service_accounts')) {
     exit('Table service_accounts introuvable.');
 }
 
-$id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
-if ($id <= 0) {
-    exit('Compte de service invalide.');
-}
-
-$stmt = $pdo->prepare("
-    SELECT *
-    FROM service_accounts
-    WHERE id = ?
-    LIMIT 1
-");
-$stmt->execute([$id]);
-$account = $stmt->fetch(PDO::FETCH_ASSOC);
-
-if (!$account) {
-    exit('Compte de service introuvable.');
-}
-
-$pageTitle = 'Modifier un compte de service (706)';
-$pageSubtitle = 'Mise à jour sécurisée du compte de produit';
+$pageTitle = 'Créer un compte de service';
+$pageSubtitle = 'Ajout complet d’un compte 706';
 
 $currencies = function_exists('sl_get_currency_options') ? sl_get_currency_options($pdo) : [['code' => 'EUR', 'label' => 'Euro']];
 $commercialCountries = function_exists('studely_commercial_countries') ? studely_commercial_countries() : [];
 $destinationCountries = function_exists('studely_destination_countries') ? studely_destination_countries() : [];
+
 $operationTypes = tableExists($pdo, 'ref_operation_types')
     ? $pdo->query("SELECT id, label FROM ref_operation_types WHERE COALESCE(is_active,1)=1 ORDER BY label ASC")->fetchAll(PDO::FETCH_ASSOC)
     : [];
@@ -49,15 +32,15 @@ $successMessage = '';
 $errorMessage = '';
 
 $formData = [
-    'account_code' => $account['account_code'] ?? '',
-    'account_label' => $account['account_label'] ?? '',
-    'operation_type_id' => $account['operation_type_id'] ?? '',
-    'commercial_country_label' => $account['commercial_country_label'] ?? '',
-    'destination_country_label' => $account['destination_country_label'] ?? '',
-    'currency_code' => $account['currency_code'] ?? 'EUR',
-    'current_balance' => (string)($account['current_balance'] ?? '0'),
-    'is_postable' => (int)($account['is_postable'] ?? 0),
-    'is_active' => (int)($account['is_active'] ?? 1),
+    'account_code' => '',
+    'account_label' => '',
+    'operation_type_id' => '',
+    'commercial_country_label' => '',
+    'destination_country_label' => '',
+    'currency_code' => 'EUR',
+    'current_balance' => '0',
+    'is_postable' => 1,
+    'is_active' => 1,
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -85,20 +68,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('L’intitulé est obligatoire.');
         }
 
-        $stmtCheck = $pdo->prepare("
-            SELECT COUNT(*)
-            FROM service_accounts
-            WHERE account_code = ?
-              AND id <> ?
-        ");
-        $stmtCheck->execute([$formData['account_code'], $id]);
+        $stmtCheck = $pdo->prepare("SELECT COUNT(*) FROM service_accounts WHERE account_code = ?");
+        $stmtCheck->execute([$formData['account_code']]);
         if ((int)$stmtCheck->fetchColumn() > 0) {
-            throw new RuntimeException('Un autre compte utilise déjà ce code.');
+            throw new RuntimeException('Ce code compte existe déjà.');
         }
 
-        $before = $account;
-
-        $fields = [];
+        $columns = [];
+        $values = [];
         $params = [];
 
         $map = [
@@ -115,50 +92,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         foreach ($map as $column => $value) {
             if (columnExists($pdo, 'service_accounts', $column)) {
-                $fields[] = $column . ' = ?';
+                $columns[] = $column;
+                $values[] = '?';
                 $params[] = $value;
             }
         }
 
-        if (columnExists($pdo, 'service_accounts', 'updated_at')) {
-            $fields[] = 'updated_at = NOW()';
+        if (columnExists($pdo, 'service_accounts', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
         }
-
-        $params[] = $id;
-
-        $stmtUpdate = $pdo->prepare("
-            UPDATE service_accounts
-            SET " . implode(', ', $fields) . "
-            WHERE id = ?
-        ");
-        $stmtUpdate->execute($params);
+        if (columnExists($pdo, 'service_accounts', 'updated_at')) {
+            $columns[] = 'updated_at';
+            $values[] = 'NOW()';
+        }
 
         $stmt = $pdo->prepare("
-            SELECT *
-            FROM service_accounts
-            WHERE id = ?
-            LIMIT 1
+            INSERT INTO service_accounts (" . implode(', ', $columns) . ")
+            VALUES (" . implode(', ', $values) . ")
         ");
-        $stmt->execute([$id]);
-        $account = $stmt->fetch(PDO::FETCH_ASSOC) ?: $account;
+        $stmt->execute($params);
 
-        if (function_exists('auditEntityChanges') && isset($_SESSION['user_id'])) {
-            auditEntityChanges($pdo, 'service_account', $id, $before, $account, (int)$_SESSION['user_id']);
-        }
-
-        if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
-            logUserAction(
-                $pdo,
-                (int)$_SESSION['user_id'],
-                'edit_service_account',
-                'service_accounts',
-                'service_account',
-                $id,
-                'Modification d’un compte de service 706'
-            );
-        }
-
-        $successMessage = 'Compte de service mis à jour avec succès.';
+        $successMessage = 'Compte de service créé avec succès.';
     } catch (Throwable $e) {
         $errorMessage = $e->getMessage();
     }
@@ -179,7 +134,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
 <div class="form-card">
 <form method="POST">
 <?= csrf_input() ?>
-<input type="hidden" name="id" value="<?= (int)$id ?>">
 
 <div class="dashboard-grid-2">
     <div><label>Code compte</label><input type="text" name="account_code" value="<?= e($formData['account_code']) ?>" required></div>
@@ -232,33 +186,27 @@ require_once __DIR__ . '/../../includes/document_start.php';
 </div>
 
 <div style="margin-top:16px;">
-    <label style="display:flex; align-items:center; gap:10px;">
+    <label style="display:flex; gap:10px; align-items:center;">
         <input type="checkbox" name="is_postable" value="1" <?= (int)$formData['is_postable'] === 1 ? 'checked' : '' ?>> Compte postable
     </label>
 </div>
 
 <div style="margin-top:10px;">
-    <label style="display:flex; align-items:center; gap:10px;">
+    <label style="display:flex; gap:10px; align-items:center;">
         <input type="checkbox" name="is_active" value="1" <?= (int)$formData['is_active'] === 1 ? 'checked' : '' ?>> Compte actif
     </label>
 </div>
 
 <div class="btn-group" style="margin-top:20px;">
-    <button type="submit" class="btn btn-success">Enregistrer</button>
-    <a href="<?= e(APP_URL) ?>modules/service_accounts/view.php?id=<?= (int)$id ?>" class="btn btn-secondary">Voir</a>
+    <button type="submit" class="btn btn-success">Créer</button>
     <a href="<?= e(APP_URL) ?>modules/service_accounts/index.php" class="btn btn-outline">Retour</a>
 </div>
 </form>
 </div>
 
 <div class="card">
-    <h3>État actuel</h3>
-    <div class="sl-data-list">
-        <div class="sl-data-list__row"><span>Code</span><strong><?= e((string)($account['account_code'] ?? '')) ?></strong></div>
-        <div class="sl-data-list__row"><span>Intitulé</span><strong><?= e((string)($account['account_label'] ?? '')) ?></strong></div>
-        <div class="sl-data-list__row"><span>Type</span><strong><?= ((int)($account['is_postable'] ?? 0) === 1) ? 'Postable' : 'Structure' ?></strong></div>
-        <div class="sl-data-list__row"><span>Statut</span><strong><?= ((int)($account['is_active'] ?? 1) === 1) ? 'Actif' : 'Archivé' ?></strong></div>
-    </div>
+    <h3>Lecture</h3>
+    <div class="dashboard-note">Les comptes 706 enregistrent les produits et frais de service, en cohérence avec l’analyse du chiffre d’affaires attendue dans l’application. :contentReference[oaicite:5]{index=5}</div>
 </div>
 </div>
 

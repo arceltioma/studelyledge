@@ -9,27 +9,18 @@ require_once __DIR__ . '/../../includes/permission_middleware.php';
 if (function_exists('studelyEnforceAccess')) {
     studelyEnforceAccess($pdo, 'statements_view_page');
 } else {
-    enforcePagePermission($pdo, 'statements_view');
+    enforcePagePermission($pdo, 'statements_export');
 }
 
-$pageTitle = 'Hub Export';
-$pageSubtitle = 'Point d’entrée centralisé des exports financiers, clients et états';
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
-$totalClients = tableExists($pdo, 'clients')
-    ? (int)$pdo->query("SELECT COUNT(*) FROM clients")->fetchColumn()
-    : 0;
+$pageTitle = 'Hub des exports';
+$pageSubtitle = 'Prévisualisation, validation et génération des relevés et fiches clients';
 
-$totalOperations = tableExists($pdo, 'operations')
-    ? (int)$pdo->query("SELECT COUNT(*) FROM operations")->fetchColumn()
-    : 0;
-
-$totalTreasury = tableExists($pdo, 'treasury_accounts')
-    ? (int)$pdo->query("SELECT COUNT(*) FROM treasury_accounts")->fetchColumn()
-    : 0;
-
-$totalServiceAccounts = tableExists($pdo, 'service_accounts')
-    ? (int)$pdo->query("SELECT COUNT(*) FROM service_accounts")->fetchColumn()
-    : 0;
+$previewClientProfiles = (string)($_SESSION['client_profiles_preview_pdf'] ?? '');
+$previewAccountStatements = (string)($_SESSION['account_statements_preview_pdf'] ?? '');
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -40,60 +31,86 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <section class="sl-grid sl-grid-4 sl-stable-block" style="margin-bottom:20px;">
-            <div class="sl-card sl-kpi-card sl-kpi-card--blue">
-                <div class="sl-kpi-card__label">Clients</div>
-                <div class="sl-kpi-card__value"><?= (int)$totalClients ?></div>
-                <div class="sl-kpi-card__meta">
-                    <span>Exportables</span>
-                    <strong>Profils</strong>
+        <?php if (!empty($_SESSION['success_message'])): ?>
+            <div class="success"><?= e((string)$_SESSION['success_message']) ?></div>
+            <?php unset($_SESSION['success_message']); ?>
+        <?php endif; ?>
+
+        <?php if (!empty($_SESSION['error_message'])): ?>
+            <div class="error"><?= e((string)$_SESSION['error_message']) ?></div>
+            <?php unset($_SESSION['error_message']); ?>
+        <?php endif; ?>
+
+        <div class="dashboard-grid-2">
+            <div class="card clickable" onclick="location.href='<?= e(APP_URL) ?>modules/statements/account_statements.php'">
+                <h2>Relevés de comptes</h2>
+                <p class="muted">
+                    Exports centrés sur les flux financiers : période, mouvements, débits, crédits, soldes, historique.
+                </p>
+
+                <div class="detail-grid" style="margin-top:18px;">
+                    <div class="detail-row">
+                        <div class="detail-label">Prévisualisation</div>
+                        <div class="detail-value"><?= $previewAccountStatements !== '' ? 'Disponible' : 'À générer' ?></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Mode</div>
+                        <div class="detail-value">Unitaire et masse</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Rendu</div>
+                        <div class="detail-value">Iframe scrollable + PDF final</div>
+                    </div>
+                </div>
+
+                <div class="btn-group" style="margin-top:18px;">
+                    <span class="btn btn-primary">Ouvrir le module</span>
                 </div>
             </div>
 
-            <div class="sl-card sl-kpi-card sl-kpi-card--emerald">
-                <div class="sl-kpi-card__label">Opérations</div>
-                <div class="sl-kpi-card__value"><?= (int)$totalOperations ?></div>
-                <div class="sl-kpi-card__meta">
-                    <span>Exportables</span>
-                    <strong>Flux</strong>
+            <div class="card clickable" onclick="location.href='<?= e(APP_URL) ?>modules/statements/client_profiles.php'">
+                <h2>Fiches clients</h2>
+                <p class="muted">
+                    Exports centrés sur l’identité et le profil client : coordonnées, pays, rattachement financier, passeport, comptes et données utiles.
+                </p>
+
+                <div class="detail-grid" style="margin-top:18px;">
+                    <div class="detail-row">
+                        <div class="detail-label">Prévisualisation</div>
+                        <div class="detail-value"><?= $previewClientProfiles !== '' ? 'Disponible' : 'À générer' ?></div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Mode</div>
+                        <div class="detail-value">Unitaire et masse</div>
+                    </div>
+                    <div class="detail-row">
+                        <div class="detail-label">Rendu</div>
+                        <div class="detail-value">Iframe scrollable + PDF final</div>
+                    </div>
+                </div>
+
+                <div class="btn-group" style="margin-top:18px;">
+                    <span class="btn btn-primary">Ouvrir le module</span>
                 </div>
             </div>
+        </div>
 
-            <div class="sl-card sl-kpi-card sl-kpi-card--green">
-                <div class="sl-kpi-card__label">Comptes internes</div>
-                <div class="sl-kpi-card__value"><?= (int)$totalTreasury ?></div>
-                <div class="sl-kpi-card__meta">
-                    <span>Exportables</span>
-                    <strong>512</strong>
-                </div>
-            </div>
-
-            <div class="sl-card sl-kpi-card sl-kpi-card--violet">
-                <div class="sl-kpi-card__label">Comptes service</div>
-                <div class="sl-kpi-card__value"><?= (int)$totalServiceAccounts ?></div>
-                <div class="sl-kpi-card__meta">
-                    <span>Exportables</span>
-                    <strong>706</strong>
-                </div>
-            </div>
-        </section>
-
-        <div class="dashboard-grid-2 dashboard-section-spacing">
+        <div class="dashboard-grid-2" style="margin-top:20px;">
             <div class="card">
-                <h3>Exports disponibles</h3>
-                <div class="btn-group btn-group-vertical">
-                    <a href="<?= e(APP_URL) ?>modules/statements/account_statements.php" class="btn btn-outline">Relevés de comptes</a>
-                    <a href="<?= e(APP_URL) ?>modules/statements/client_profiles.php" class="btn btn-outline">Fiches clients</a>
-                    <a href="<?= e(APP_URL) ?>modules/operations/operations_list.php" class="btn btn-outline">Liste opérations</a>
-                    <a href="<?= e(APP_URL) ?>modules/treasury/index.php" class="btn btn-outline">Comptes internes</a>
-                    <a href="<?= e(APP_URL) ?>modules/service_accounts/index.php" class="btn btn-outline">Comptes de service</a>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>Lecture</h3>
+                <h3>Parcours harmonisé</h3>
                 <div class="dashboard-note">
-                    Le Hub Export regroupe les principaux points de sortie de la donnée pour le pilotage, le contrôle et la restitution métier.
+                    1. Tu paramètres l’export dans le bloc de gauche. <br>
+                    2. Tu cliques sur <strong>Prévisualiser l’opération demandée</strong>. <br>
+                    3. Le rendu PDF s’affiche dans le bloc de droite. <br>
+                    4. Tu confirmes avec <strong>Générer le/les PDF</strong> ou tu annules.
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Comportement de masse</h3>
+                <div class="dashboard-note">
+                    La prévisualisation de masse produit un PDF unique de contrôle, scrollable dans l’iframe.  
+                    La génération finale conserve l’export par client, avec PDF unitaire ou ZIP si plusieurs documents sont produits.
                 </div>
             </div>
         </div>

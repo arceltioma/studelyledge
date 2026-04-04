@@ -22,6 +22,7 @@ $pageSubtitle = 'Gestion compacte des comptes de trésorerie, suivi des soldes e
 
 $search = trim((string)($_GET['search'] ?? ''));
 $status = trim((string)($_GET['status'] ?? ''));
+$typeView = trim((string)($_GET['type_view'] ?? ''));
 
 $where = ['1=1'];
 $params = [];
@@ -43,6 +44,14 @@ if ($status === 'archived' && columnExists($pdo, 'treasury_accounts', 'is_active
     $where[] = "COALESCE(is_active,1) = 0";
 }
 
+if ($typeView === 'postable' && columnExists($pdo, 'treasury_accounts', 'is_postable')) {
+    $where[] = "COALESCE(is_postable,0) = 1";
+}
+
+if ($typeView === 'structure' && columnExists($pdo, 'treasury_accounts', 'is_postable')) {
+    $where[] = "COALESCE(is_postable,0) = 0";
+}
+
 $stmt = $pdo->prepare("
     SELECT *
     FROM treasury_accounts
@@ -55,11 +64,20 @@ $accounts = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $totalAccounts = count($accounts);
 $totalActive = 0;
 $totalCurrentBalance = 0.0;
+$totalPostable = 0;
+$totalStructure = 0;
 
 foreach ($accounts as $row) {
     if ((int)($row['is_active'] ?? 1) === 1) {
         $totalActive++;
     }
+
+    if ((int)($row['is_postable'] ?? 0) === 1) {
+        $totalPostable++;
+    } else {
+        $totalStructure++;
+    }
+
     $totalCurrentBalance += (float)($row['current_balance'] ?? 0);
 }
 
@@ -72,7 +90,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <section class="sl-grid sl-grid-3 sl-stable-block" style="margin-bottom:20px;">
+        <section class="sl-grid sl-grid-4 sl-stable-block" style="margin-bottom:20px;">
             <div class="sl-card sl-kpi-card sl-kpi-card--blue">
                 <div class="sl-kpi-card__label">Comptes</div>
                 <div class="sl-kpi-card__value"><?= (int)$totalAccounts ?></div>
@@ -88,6 +106,15 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <div class="sl-kpi-card__meta">
                     <span>Disponibles</span>
                     <strong>Suivi</strong>
+                </div>
+            </div>
+
+            <div class="sl-card sl-kpi-card sl-kpi-card--green">
+                <div class="sl-kpi-card__label">Postables</div>
+                <div class="sl-kpi-card__value"><?= (int)$totalPostable ?></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Écritures autorisées</span>
+                    <strong>Opérationnels</strong>
                 </div>
             </div>
 
@@ -117,6 +144,15 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <option value="archived" <?= $status === 'archived' ? 'selected' : '' ?>>Archivés</option>
                         </select>
                     </div>
+
+                    <div>
+                        <label>Type</label>
+                        <select name="type_view">
+                            <option value="">Tous</option>
+                            <option value="postable" <?= $typeView === 'postable' ? 'selected' : '' ?>>Postables</option>
+                            <option value="structure" <?= $typeView === 'structure' ? 'selected' : '' ?>>Structures</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="btn-group" style="margin-top:18px;">
@@ -131,7 +167,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="sl-card-head">
                 <div>
                     <h3>Liste compacte des comptes internes</h3>
-                    <p class="sl-card-head-subtitle">Vue synthétique, solde et accès direct</p>
+                    <p class="sl-card-head-subtitle">Vue synthétique, type comptable et accès direct</p>
                 </div>
             </div>
 
@@ -139,9 +175,9 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <table class="sl-table">
                     <thead>
                         <tr>
-                            <th>Type</th>
                             <th>Code</th>
                             <th>Intitulé</th>
+                            <th>Type</th>
                             <th>Solde ouverture</th>
                             <th>Solde courant</th>
                             <th>Statut</th>
@@ -152,9 +188,9 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <?php if ($accounts): ?>
                             <?php foreach ($accounts as $row): ?>
                                 <tr>
-                                    <td><?= renderPostableBadge($row['is_postable'] ?? 0) ?></td>
                                     <td><?= e((string)($row['account_code'] ?? '')) ?></td>
                                     <td><?= e((string)($row['account_label'] ?? '')) ?></td>
+                                    <td><?= renderPostableBadge($row['is_postable'] ?? 0) ?></td>
                                     <td><?= e(number_format((float)($row['opening_balance'] ?? 0), 2, ',', ' ')) ?></td>
                                     <td><?= e(number_format((float)($row['current_balance'] ?? 0), 2, ',', ' ')) ?></td>
                                     <td><?= ((int)($row['is_active'] ?? 1) === 1) ? 'Actif' : 'Archivé' ?></td>
@@ -171,7 +207,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <?php endforeach; ?>
                         <?php else: ?>
                             <tr>
-                                <td colspan="6">Aucun compte de trésorerie trouvé.</td>
+                                <td colspan="7">Aucun compte de trésorerie trouvé.</td>
                             </tr>
                         <?php endif; ?>
                     </tbody>

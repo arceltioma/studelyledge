@@ -22,6 +22,7 @@ $pageSubtitle = 'Gestion compacte des comptes de service, suivi des soldes et ac
 
 $search = trim((string)($_GET['search'] ?? ''));
 $status = trim((string)($_GET['status'] ?? ''));
+$typeView = trim((string)($_GET['type_view'] ?? ''));
 
 $where = ['1=1'];
 $params = [];
@@ -47,6 +48,14 @@ if ($status === 'archived' && columnExists($pdo, 'service_accounts', 'is_active'
     $where[] = "COALESCE(is_active,1) = 0";
 }
 
+if ($typeView === 'postable' && columnExists($pdo, 'service_accounts', 'is_postable')) {
+    $where[] = "COALESCE(is_postable,0) = 1";
+}
+
+if ($typeView === 'structure' && columnExists($pdo, 'service_accounts', 'is_postable')) {
+    $where[] = "COALESCE(is_postable,0) = 0";
+}
+
 $stmt = $pdo->prepare("
     SELECT *
     FROM service_accounts
@@ -59,10 +68,14 @@ $accounts = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 $totalAccounts = count($accounts);
 $totalActive = 0;
 $totalCurrentBalance = 0.0;
+$totalPostable = 0;
 
 foreach ($accounts as $row) {
     if ((int)($row['is_active'] ?? 1) === 1) {
         $totalActive++;
+    }
+    if ((int)($row['is_postable'] ?? 0) === 1) {
+        $totalPostable++;
     }
     $totalCurrentBalance += (float)($row['current_balance'] ?? 0);
 }
@@ -76,43 +89,33 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <section class="sl-grid sl-grid-3 sl-stable-block" style="margin-bottom:20px;">
+        <section class="sl-grid sl-grid-4 sl-stable-block" style="margin-bottom:20px;">
             <div class="sl-card sl-kpi-card sl-kpi-card--blue">
                 <div class="sl-kpi-card__label">Comptes</div>
                 <div class="sl-kpi-card__value"><?= (int)$totalAccounts ?></div>
-                <div class="sl-kpi-card__meta">
-                    <span>Total affiché</span>
-                    <strong>706</strong>
-                </div>
+                <div class="sl-kpi-card__meta"><span>Total affiché</span><strong>706</strong></div>
             </div>
-
             <div class="sl-card sl-kpi-card sl-kpi-card--emerald">
                 <div class="sl-kpi-card__label">Actifs</div>
                 <div class="sl-kpi-card__value"><?= (int)$totalActive ?></div>
-                <div class="sl-kpi-card__meta">
-                    <span>Disponibles</span>
-                    <strong>Suivi</strong>
-                </div>
+                <div class="sl-kpi-card__meta"><span>Disponibles</span><strong>Suivi</strong></div>
             </div>
-
+            <div class="sl-card sl-kpi-card sl-kpi-card--green">
+                <div class="sl-kpi-card__label">Postables</div>
+                <div class="sl-kpi-card__value"><?= (int)$totalPostable ?></div>
+                <div class="sl-kpi-card__meta"><span>Écritures autorisées</span><strong>Opérationnels</strong></div>
+            </div>
             <div class="sl-card sl-kpi-card sl-kpi-card--violet">
                 <div class="sl-kpi-card__label">Solde courant</div>
                 <div class="sl-kpi-card__value"><?= e(number_format($totalCurrentBalance, 2, ',', ' ')) ?></div>
-                <div class="sl-kpi-card__meta">
-                    <span>Somme affichée</span>
-                    <strong>Produits</strong>
-                </div>
+                <div class="sl-kpi-card__meta"><span>Somme affichée</span><strong>Produits</strong></div>
             </div>
         </section>
 
         <section class="sl-card sl-stable-block" style="margin-bottom:20px;">
             <form method="GET">
                 <div class="dashboard-grid-4">
-                    <div>
-                        <label>Recherche</label>
-                        <input type="text" name="search" value="<?= e($search) ?>" placeholder="Code, intitulé, pays...">
-                    </div>
-
+                    <div><label>Recherche</label><input type="text" name="search" value="<?= e($search) ?>" placeholder="Code, intitulé, pays..."></div>
                     <div>
                         <label>Statut</label>
                         <select name="status">
@@ -121,11 +124,20 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <option value="archived" <?= $status === 'archived' ? 'selected' : '' ?>>Archivés</option>
                         </select>
                     </div>
+                    <div>
+                        <label>Type</label>
+                        <select name="type_view">
+                            <option value="">Tous</option>
+                            <option value="postable" <?= $typeView === 'postable' ? 'selected' : '' ?>>Postables</option>
+                            <option value="structure" <?= $typeView === 'structure' ? 'selected' : '' ?>>Structures</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="btn-group" style="margin-top:18px;">
                     <button type="submit" class="btn btn-success">Filtrer</button>
                     <a href="<?= e(APP_URL) ?>modules/service_accounts/index.php" class="btn btn-outline">Réinitialiser</a>
+                    <a href="<?= e(APP_URL) ?>modules/service_accounts/create.php" class="btn btn-secondary">Créer</a>
                     <a href="<?= e(APP_URL) ?>modules/service_accounts/import_service_accounts_csv.php" class="btn btn-secondary">Importer CSV</a>
                 </div>
             </form>
@@ -135,7 +147,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="sl-card-head">
                 <div>
                     <h3>Liste compacte des comptes de service</h3>
-                    <p class="sl-card-head-subtitle">Vue synthétique, solde et accès direct</p>
+                    <p class="sl-card-head-subtitle">Vue synthétique, type comptable et accès direct</p>
                 </div>
             </div>
 
@@ -143,9 +155,9 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <table class="sl-table">
                     <thead>
                         <tr>
-                            <th>Type</th>
                             <th>Code</th>
                             <th>Intitulé</th>
+                            <th>Type</th>
                             <th>Pays commercial</th>
                             <th>Pays destination</th>
                             <th>Solde courant</th>
@@ -157,9 +169,9 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <?php if ($accounts): ?>
                             <?php foreach ($accounts as $row): ?>
                                 <tr>
-                                    <td><?= renderPostableBadge($row['is_postable'] ?? 0) ?></td>
                                     <td><?= e((string)($row['account_code'] ?? '')) ?></td>
                                     <td><?= e((string)($row['account_label'] ?? '')) ?></td>
+                                    <td><?= renderPostableBadge($row['is_postable'] ?? 0) ?></td>
                                     <td><?= e((string)($row['commercial_country_label'] ?? '—')) ?></td>
                                     <td><?= e((string)($row['destination_country_label'] ?? '—')) ?></td>
                                     <td><?= e(number_format((float)($row['current_balance'] ?? 0), 2, ',', ' ')) ?></td>
@@ -176,9 +188,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
-                            <tr>
-                                <td colspan="7">Aucun compte de service trouvé.</td>
-                            </tr>
+                            <tr><td colspan="8">Aucun compte de service trouvé.</td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>

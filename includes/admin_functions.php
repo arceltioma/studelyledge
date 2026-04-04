@@ -1287,7 +1287,14 @@ if (!function_exists('resolveAccountingOperationV2')) {
         $serviceId = isset($payload['service_id']) ? (int)$payload['service_id'] : null;
         $clientId = isset($payload['client_id']) ? (int)$payload['client_id'] : null;
         $linkedBankAccountId = isset($payload['linked_bank_account_id']) ? (int)$payload['linked_bank_account_id'] : null;
+        $operationTypeId = isset($payload['operation_type_id']) ? (int)$payload['operation_type_id'] : 0;
 
+if ($operationTypeId > 0 && $serviceId > 0 && function_exists('sl_find_accounting_rule')) {
+    $rule = sl_find_accounting_rule($pdo, $operationTypeId, $serviceId);
+    if ($rule) {
+        return sl_resolve_accounting_operation_from_rule($pdo, $payload, $rule);
+    }
+}
         if ($operationTypeCode === '') {
             throw new RuntimeException('Type d’opération manquant.');
         }
@@ -2787,5 +2794,218 @@ if (!function_exists('renderPostableBadge')) {
         $label = $isPostable ? 'Postable' : 'Structure';
 
         return '<span class="' . $class . '">' . e($label) . '</span>';
+    }
+}
+
+if (!function_exists('sl_fetch_postable_treasury_accounts')) {
+    function sl_fetch_postable_treasury_accounts(PDO $pdo): array
+    {
+        if (!tableExists($pdo, 'treasury_accounts')) {
+            return [];
+        }
+
+        $where = ["COALESCE(is_active,1)=1"];
+
+        if (columnExists($pdo, 'treasury_accounts', 'is_postable')) {
+            $where[] = "COALESCE(is_postable,0)=1";
+        }
+
+        $stmt = $pdo->query("
+            SELECT *
+            FROM treasury_accounts
+            WHERE " . implode(' AND ', $where) . "
+            ORDER BY account_code ASC
+        ");
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+
+if (!function_exists('sl_fetch_postable_service_accounts')) {
+    function sl_fetch_postable_service_accounts(PDO $pdo): array
+    {
+        if (!tableExists($pdo, 'service_accounts')) {
+            return [];
+        }
+
+        $where = ["COALESCE(is_active,1)=1"];
+
+        if (columnExists($pdo, 'service_accounts', 'is_postable')) {
+            $where[] = "COALESCE(is_postable,0)=1";
+        }
+
+        $stmt = $pdo->query("
+            SELECT *
+            FROM service_accounts
+            WHERE " . implode(' AND ', $where) . "
+            ORDER BY account_code ASC
+        ");
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+if (!function_exists('sl_find_accounting_rule')) {
+    function sl_find_accounting_rule(PDO $pdo, int $operationTypeId, int $serviceId): ?array
+    {
+        if ($operationTypeId <= 0 || $serviceId <= 0 || !tableExists($pdo, 'accounting_rules')) {
+            return null;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM accounting_rules
+            WHERE operation_type_id = ?
+              AND service_id = ?
+              AND COALESCE(is_active,1) = 1
+            LIMIT 1
+        ");
+        $stmt->execute([$operationTypeId, $serviceId]);
+
+        $rule = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $rule ?: null;
+    }
+}
+
+if (!function_exists('sl_resolve_rule_account_code')) {
+    function sl_resolve_rule_account_code(PDO $pdo, string $mode, array $payload, ?array $clientContext, ?array $matchedServiceAccount): ?string
+    {
+        $mode = strtoupper(trim($mode));
+
+        return match ($mode) {
+            'CLIENT_411' => (string)($clientContext['generated_client_account'] ?? ''),
+            'CLIENT_512' => (string)($clientContext['treasury_account_code'] ?? ''),
+            'SERVICE_706' => (string)($matchedServiceAccount['account_code'] ?? ''),
+            'MANUAL_DEBIT' => trim((string)($payload['manual_debit_account_code'] ?? '')),
+            'MANUAL_CREDIT' => trim((string)($payload['manual_credit_account_code'] ?? '')),
+            'SOURCE_512' => trim((string)($payload['source_treasury_code'] ?? '')),
+            'TARGET_512' => trim((string)($payload['target_treasury_code'] ?? '')),
+            default => null,
+        };
+    }
+}
+
+if (!function_exists('sl_resolve_accounting_operation_from_rule')) {
+    function sl_resolve_accounting_operation_from_rule(PDO $pdo, array $payload, array $rule): array
+    {
+        $clientId = isset($payload['client_id']) ? (int)$payload['client_id'] : null;
+        $clientContext = null;
+
+        if ($clientId > 0) {
+            $clientContext = getClientAccountingContext($pdo, $clientId);
+        }
+
+        if ((int)($rule['requires_client'] ?? 0) === 1 && !$clientContext) {
+            throw new RuntimeException('Cette règle comptable exige un client.');
+        }
+
+        if ((int)($rule['requires_manual_accounts'] ?? 0) === 1) {
+            $manualDebit = trim((string)($payload['manual_debit_account_code'] ?? ''));
+            $manualCredit = trim((string)($payload['manual_credit_account_code'] ?? ''));
+            if ($manualDebit === '' || $manualCredit === '') {
+                throw new RuntimeException('Cette règle exige des comptes manuels source et destination.');
+            }
+        }
+
+        $matchedServiceAccount = null;
+        $serviceId = isset($payload['service_id']) ? (int)$payload['service_id'] : 0;
+        $labelPattern = trim((string)($rule['label_pattern'] ?? ''));
+
+        if ($labelPattern !== '') {
+            $tokens = [];
+            $tokens[] = $labelPattern;
+
+            if (!empty($clientContext['country_destination'])) {
+                $tokens[] = (string)$clientContext['country_destination'];
+            }
+            if (!empty($clientContext['country_commercial'])) {
+                $tokens[] = (string)$clientContext['country_commercial'];
+            }
+
+            $matchedServiceAccount = sl_find_service_account_by_label_rule($pdo, $serviceId, $tokens);
+        }
+
+        $debitMode = strtoupper(trim((string)($rule['debit_mode'] ?? '')));
+        $creditMode = strtoupper(trim((string)($rule['credit_mode'] ?? '')));
+
+        $debit = null;
+        $credit = null;
+
+        if ($debitMode === 'FIXED_ACCOUNT') {
+            $debit = trim((string)($rule['debit_fixed_account_code'] ?? ''));
+        } else {
+            $debit = sl_resolve_rule_account_code($pdo, $debitMode, $payload, $clientContext, $matchedServiceAccount);
+        }
+
+        if ($creditMode === 'FIXED_ACCOUNT') {
+            $credit = trim((string)($rule['credit_fixed_account_code'] ?? ''));
+        } else {
+            $credit = sl_resolve_rule_account_code($pdo, $creditMode, $payload, $clientContext, $matchedServiceAccount);
+        }
+
+        if ($debit === '' || $credit === '' || $debit === null || $credit === null) {
+            throw new RuntimeException('La règle comptable paramétrée ne permet pas de résoudre les comptes.');
+        }
+
+        $operationHash = sl_build_operation_hash($payload, $debit, $credit);
+
+        return [
+            'debit_account_code' => $debit,
+            'credit_account_code' => $credit,
+            'analytic_account' => $matchedServiceAccount
+                ? [
+                    'account_code' => $matchedServiceAccount['account_code'] ?? null,
+                    'account_label' => $matchedServiceAccount['account_label'] ?? null,
+                ]
+                : null,
+            'client_context' => $clientContext,
+            'service_info' => null,
+            'linked_bank_account' => null,
+            'is_manual_accounting' => (int)($rule['requires_manual_accounts'] ?? 0),
+            'operation_hash' => $operationHash,
+            'preview_lines' => [
+                ['side' => 'DEBIT', 'account' => $debit],
+                ['side' => 'CREDIT', 'account' => $credit],
+            ],
+            'resolved_by_rule' => 1,
+            'rule_id' => (int)($rule['id'] ?? 0),
+            'rule_code' => (string)($rule['rule_code'] ?? ''),
+        ];
+    }
+}
+if (!function_exists('slPreviewSessionKey')) {
+    function slPreviewSessionKey(string $scope): string
+    {
+        return 'studely_preview_' . preg_replace('/[^a-zA-Z0-9_]/', '_', $scope);
+    }
+}
+
+if (!function_exists('slSetPreviewPayload')) {
+    function slSetPreviewPayload(string $scope, array $payload): void
+    {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        $_SESSION[slPreviewSessionKey($scope)] = $payload;
+    }
+}
+
+if (!function_exists('slGetPreviewPayload')) {
+    function slGetPreviewPayload(string $scope): array
+    {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        $value = $_SESSION[slPreviewSessionKey($scope)] ?? [];
+        return is_array($value) ? $value : [];
+    }
+}
+
+if (!function_exists('slClearPreviewPayload')) {
+    function slClearPreviewPayload(string $scope): void
+    {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+        unset($_SESSION[slPreviewSessionKey($scope)]);
     }
 }
