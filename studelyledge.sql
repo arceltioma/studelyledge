@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Hôte : 127.0.0.1
--- Généré le : ven. 03 avr. 2026 à 00:15
+-- Généré le : dim. 05 avr. 2026 à 21:24
 -- Version du serveur : 10.4.32-MariaDB
 -- Version de PHP : 8.2.12
 
@@ -20,6 +20,30 @@ SET time_zone = "+00:00";
 --
 -- Base de données : `studelyledge`
 --
+
+-- --------------------------------------------------------
+
+--
+-- Structure de la table `accounting_rules`
+--
+
+CREATE TABLE `accounting_rules` (
+  `id` int(11) NOT NULL,
+  `operation_type_id` int(11) NOT NULL,
+  `service_id` int(11) NOT NULL,
+  `rule_code` varchar(120) NOT NULL,
+  `debit_mode` varchar(50) NOT NULL,
+  `credit_mode` varchar(50) NOT NULL,
+  `debit_fixed_account_code` varchar(50) DEFAULT NULL,
+  `credit_fixed_account_code` varchar(50) DEFAULT NULL,
+  `requires_client` tinyint(1) NOT NULL DEFAULT 1,
+  `requires_linked_bank` tinyint(1) NOT NULL DEFAULT 0,
+  `requires_manual_accounts` tinyint(1) NOT NULL DEFAULT 0,
+  `label_pattern` varchar(255) DEFAULT NULL,
+  `is_active` tinyint(1) NOT NULL DEFAULT 1,
+  `created_at` datetime DEFAULT NULL,
+  `updated_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- --------------------------------------------------------
 
@@ -66,6 +90,23 @@ INSERT INTO `account_types` (`id`, `name`, `created_at`) VALUES
 -- --------------------------------------------------------
 
 --
+-- Structure de la table `audit_trail`
+--
+
+CREATE TABLE `audit_trail` (
+  `id` int(11) NOT NULL,
+  `entity_type` varchar(100) NOT NULL,
+  `entity_id` int(11) NOT NULL,
+  `field_name` varchar(100) NOT NULL,
+  `old_value` text DEFAULT NULL,
+  `new_value` text DEFAULT NULL,
+  `user_id` int(11) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Structure de la table `bank_accounts`
 --
 
@@ -89,12 +130,12 @@ CREATE TABLE `bank_accounts` (
 --
 
 INSERT INTO `bank_accounts` (`id`, `account_name`, `account_number`, `bank_name`, `country`, `account_type_id`, `account_category_id`, `initial_balance`, `balance`, `is_active`, `created_at`, `updated_at`) VALUES
-(1, 'Compte client CLT0001', '411CLT0001', 'Compte client interne', 'France', NULL, NULL, 0.00, 11450.00, 1, '2026-03-29 00:19:28', '2026-04-01 21:45:23'),
-(2, 'Compte client CLT0002', '411CLT0002', 'Compte client interne', 'France', NULL, NULL, 0.00, 8505.00, 1, '2026-03-29 00:19:28', '2026-04-01 21:45:23'),
-(3, 'Compte client CLT0003', '411CLT0003', 'Compte client interne', 'Belgique', NULL, NULL, 0.00, 14580.00, 1, '2026-03-29 00:19:28', '2026-04-01 21:45:23'),
-(4, 'Compte client CLT0004', '411CLT0004', 'Compte client interne', 'Cameroun', NULL, NULL, 0.00, 585000.00, 1, '2026-03-29 00:19:28', '2026-04-01 21:45:23'),
-(5, 'Compte client CLT0005', '411CLT0005', 'Compte client interne', 'France', NULL, NULL, 0.00, 725392.00, 1, '2026-03-29 00:19:28', '2026-04-01 21:45:23'),
-(6, 'Compte client CLT0006', '411CLT0006', 'Compte client interne', 'Espagne', NULL, NULL, 0.00, 282000.00, 1, '2026-03-29 00:19:28', '2026-04-01 21:45:23');
+(1, 'Compte client CLT0001', '411CLT0001', 'Compte client interne', 'France', NULL, NULL, 0.00, 11450.00, 1, '2026-03-29 00:19:28', '2026-04-04 23:36:43'),
+(2, 'Compte client CLT0002', '411CLT0002', 'Compte client interne', 'France', NULL, NULL, 0.00, 8505.00, 1, '2026-03-29 00:19:28', '2026-04-04 23:36:43'),
+(3, 'Compte client CLT0003', '411CLT0003', 'Compte client interne', 'Belgique', NULL, NULL, 0.00, 14580.00, 1, '2026-03-29 00:19:28', '2026-04-04 23:36:43'),
+(4, 'Compte client CLT0004', '411CLT0004', 'Compte client interne', 'Cameroun', NULL, NULL, 0.00, 585000.00, 1, '2026-03-29 00:19:28', '2026-04-04 23:36:43'),
+(5, 'Compte client CLT0005', '411CLT0005', 'Compte client interne', 'France', NULL, NULL, 0.00, 725392.00, 1, '2026-03-29 00:19:28', '2026-04-04 23:36:43'),
+(6, 'Compte client CLT0006', '411CLT0006', 'Compte client interne', 'Espagne', NULL, NULL, 0.00, 282000.00, 1, '2026-03-29 00:19:28', '2026-04-04 23:36:43');
 
 -- --------------------------------------------------------
 
@@ -135,6 +176,10 @@ CREATE TABLE `clients` (
   `email` varchar(255) DEFAULT NULL,
   `phone` varchar(100) DEFAULT NULL,
   `postal_address` varchar(255) DEFAULT NULL,
+  `passport_number` varchar(100) DEFAULT NULL,
+  `passport_issue_country` varchar(150) DEFAULT NULL,
+  `passport_issue_date` date DEFAULT NULL,
+  `passport_expiry_date` date DEFAULT NULL,
   `country_origin` varchar(150) DEFAULT NULL,
   `country_destination` varchar(150) DEFAULT NULL,
   `country_commercial` varchar(150) DEFAULT NULL,
@@ -154,13 +199,13 @@ CREATE TABLE `clients` (
 -- Déchargement des données de la table `clients`
 --
 
-INSERT INTO `clients` (`id`, `client_code`, `first_name`, `last_name`, `full_name`, `email`, `phone`, `postal_address`, `country_origin`, `country_destination`, `country_commercial`, `client_type`, `client_status`, `status_id`, `category_id`, `currency`, `generated_client_account`, `initial_treasury_account_id`, `is_active`, `created_at`, `updated_at`) VALUES
-(1, 'CLT0001', 'Aminata', 'Diallo', 'Aminata Diallo', 'aminata.diallo@test.local', '+221700000001', NULL, 'Sénégal', 'France', 'Sénégal', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT0001', 1, 1, '2026-03-29 00:19:28', '2026-03-31 22:41:57'),
-(2, 'CLT0002', 'Moussa', 'Traore', 'Moussa Traore', 'moussa.traore@test.local', '+223700000002', NULL, 'Mali', 'France', 'France', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT0002', 2, 1, '2026-03-29 00:19:28', '2026-03-29 00:19:28'),
-(3, 'CLT0003', 'Sarah', 'Nguessan', 'Sarah Nguessan', 'sarah.nguessan@test.local', '+225700000003', NULL, 'Côte d’Ivoire', 'Belgique', 'Belgique', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT0003', 10, 1, '2026-03-29 00:19:28', '2026-03-29 00:19:28'),
-(4, 'CLT0004', 'Kevin', 'Mba', 'Kevin Mba', 'kevin.mba@test.local', '+237700000004', NULL, 'Cameroun', 'Autres destinations', 'Cameroun', 'Particulier', 'Actif', NULL, NULL, 'XAF', '411CLT0004', 12, 1, '2026-03-29 00:19:28', '2026-03-29 00:19:28'),
-(5, 'CLT0005', 'Grace', 'Ekué', 'Grace Ekué', 'grace.ekue@test.local', '+228700000005', NULL, 'Togo', 'France', 'Togo', 'Entreprise', 'Actif', NULL, NULL, 'XOF', '411CLT0005', 48, 1, '2026-03-29 00:19:28', '2026-03-29 00:19:28'),
-(6, 'CLT0006', 'Nadia', 'Benali', 'Nadia Benali', 'nadia.benali@test.local', '+213700000006', NULL, 'Algérie', 'Espagne', 'Algérie', 'Partenaire', 'Actif', NULL, NULL, 'DZD', '411CLT0006', 50, 1, '2026-03-29 00:19:28', '2026-03-29 00:19:28');
+INSERT INTO `clients` (`id`, `client_code`, `first_name`, `last_name`, `full_name`, `email`, `phone`, `postal_address`, `passport_number`, `passport_issue_country`, `passport_issue_date`, `passport_expiry_date`, `country_origin`, `country_destination`, `country_commercial`, `client_type`, `client_status`, `status_id`, `category_id`, `currency`, `generated_client_account`, `initial_treasury_account_id`, `is_active`, `created_at`, `updated_at`) VALUES
+(1, 'CLT0001', 'Aminata', 'Diallo', 'Aminata Diallo', 'aminata.diallo@test.local', '+221700000001', NULL, NULL, NULL, NULL, NULL, 'Sénégal', 'France', 'Sénégal', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT0001', 1, 1, '2026-03-29 00:19:28', '2026-03-31 22:41:57'),
+(2, 'CLT0002', 'Moussa', 'Traore', 'Moussa Traore', 'moussa.traore@test.local', '+223700000002', NULL, NULL, NULL, NULL, NULL, 'Mali', 'France', 'France', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT0002', 2, 1, '2026-03-29 00:19:28', '2026-03-29 00:19:28'),
+(3, 'CLT0003', 'Sarah', 'Nguessan', 'Sarah Nguessan', 'sarah.nguessan@test.local', '+225700000003', NULL, NULL, NULL, NULL, NULL, 'Côte d’Ivoire', 'Belgique', 'Belgique', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT0003', 10, 1, '2026-03-29 00:19:28', '2026-03-29 00:19:28'),
+(4, 'CLT0004', 'Kevin', 'Mba', 'Kevin Mba', 'kevin.mba@test.local', '+237700000004', NULL, NULL, NULL, NULL, NULL, 'Cameroun', 'Autres destinations', 'Cameroun', 'Particulier', 'Actif', NULL, NULL, 'XAF', '411CLT0004', 12, 1, '2026-03-29 00:19:28', '2026-03-29 00:19:28'),
+(5, 'CLT0005', 'Grace', 'Ekué', 'Grace Ekué', 'grace.ekue@test.local', '+228700000005', NULL, NULL, NULL, NULL, NULL, 'Togo', 'France', 'Togo', 'Entreprise', 'Actif', NULL, NULL, 'XOF', '411CLT0005', 48, 1, '2026-03-29 00:19:28', '2026-03-29 00:19:28'),
+(6, 'CLT0006', 'Nadia', 'Benali', 'Nadia Benali', 'nadia.benali@test.local', '+213700000006', NULL, NULL, NULL, NULL, NULL, 'Algérie', 'Espagne', 'Algérie', 'Partenaire', 'Actif', NULL, NULL, 'DZD', '411CLT0006', 50, 1, '2026-03-29 00:19:28', '2026-03-29 00:19:28');
 
 -- --------------------------------------------------------
 
@@ -243,6 +288,26 @@ CREATE TABLE `import_rows` (
   `raw_data` longtext DEFAULT NULL,
   `status` varchar(100) NOT NULL DEFAULT 'pending',
   `error_message` text DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `updated_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Structure de la table `notifications`
+--
+
+CREATE TABLE `notifications` (
+  `id` int(11) NOT NULL,
+  `type` varchar(100) NOT NULL,
+  `message` varchar(255) NOT NULL,
+  `level` enum('info','success','warning','danger') NOT NULL DEFAULT 'info',
+  `link_url` varchar(255) DEFAULT NULL,
+  `entity_type` varchar(100) DEFAULT NULL,
+  `entity_id` int(11) DEFAULT NULL,
+  `is_read` tinyint(1) NOT NULL DEFAULT 0,
+  `created_by` int(11) DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `updated_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -736,188 +801,188 @@ CREATE TABLE `service_accounts` (
 --
 
 INSERT INTO `service_accounts` (`id`, `parent_account_id`, `account_level`, `sort_order`, `account_code`, `account_label`, `operation_type_label`, `destination_country_label`, `commercial_country_label`, `level_depth`, `is_postable`, `is_active`, `current_balance`, `created_at`, `updated_at`) VALUES
-(1, NULL, 1, 0, '706101', 'FRAIS DE SERVICES AVI', 'FRAIS DE SERVICE', 'France', 'France', 3, 1, 1, 6250.00, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(2, NULL, 1, 0, '706102', 'FRAIS DE GESTION', 'FRAIS BANCAIRES', 'International', 'International', 3, 1, 1, 15000.00, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(3, NULL, 1, 0, '706103', 'COMMISSION DE TRANSFERT', 'VIREMENT EXCEPTIONEL', 'International', 'International', 3, 1, 1, 0.00, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(4, NULL, 1, 0, '706104', 'FRAIS DE SERVICE ATS', 'FRAIS DE SERVICE', 'France', 'France', 3, 1, 1, 175.00, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(5, NULL, 1, 0, '706105', 'CA PLACEMENT', 'VIREMENT INTERNE', 'International', 'International', 3, 1, 1, 0.00, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(6, NULL, 1, 0, '706106', 'CA DIVERS', 'VIREMENT INTERNE', 'International', 'International', 3, 1, 1, 0.00, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(31, NULL, 1, 10, '706', 'Prestations de services', NULL, NULL, NULL, 1, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(32, 31, 2, 20, '7061', 'FRAIS DE SERVICES AVI', 'FRAIS_DE_SERVICE', NULL, NULL, 2, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(33, 31, 2, 30, '7062', 'FRAIS DE GESTION', 'FRAIS_BANCAIRES', NULL, NULL, 2, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(34, 31, 2, 40, '7063', 'COMMISSION DE TRANSFERT', 'VIREMENT_EXCEPTIONEL', NULL, NULL, 2, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(35, 31, 2, 50, '7064', 'CA DIVERS', 'VIREMENT_INTERNE', NULL, NULL, 2, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(36, 31, 2, 60, '7065', 'FRAIS DE SERVICE ATS', 'FRAIS_DE_SERVICE', NULL, NULL, 2, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(37, 31, 2, 70, '7066', 'CA PLACEMENT', 'VIREMENT_INTERNE', NULL, NULL, 2, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(39, 32, 3, 110, '70611', 'FRAIS DE SERVICE AVI ALLEMAGNE', 'FRAIS_DE_SERVICE', 'Allemagne', NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(40, 32, 3, 120, '70612', 'FRAIS DE SERVICES AVI BELGIQUE', 'FRAIS_DE_SERVICE', 'Belgique', NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(41, 32, 3, 130, '70613', 'FRAIS DE SERVICES AVI FRANCE', 'FRAIS_DE_SERVICE', 'France', NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(42, 35, 3, 410, '70641', 'CA DEBOURS LOGEMENT', 'VIREMENT_INTERNE', NULL, NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(43, 35, 3, 420, '70642', 'CA DEBOURS ASSURANCE', 'VIREMENT_INTERNE', NULL, NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(44, 35, 3, 430, '70643', 'FRAIS DEBOURS MICROFINANCE', 'VIREMENT_INTERNE', NULL, NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(45, 35, 3, 440, '70644', 'CA COURTAGE PRÊT', 'VIREMENT_INTERNE', NULL, NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(46, 35, 3, 450, '70645', 'CA LOGEMENT', 'VIREMENT_INTERNE', NULL, NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(54, 39, 4, 1101, '7061101', 'FRAIS DE SERVICE AVI ALLEMAGNE-France', 'FRAIS_DE_SERVICE', 'Allemagne', 'France', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(55, 39, 4, 1102, '7061102', 'FRAIS DE SERVICE AVI ALLEMAGNE-Allemagne', 'FRAIS_DE_SERVICE', 'Allemagne', 'Allemagne', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(56, 39, 4, 1103, '7061103', 'FRAIS DE SERVICE AVI ALLEMAGNE-Belgique', 'FRAIS_DE_SERVICE', 'Allemagne', 'Belgique', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(57, 39, 4, 1104, '7061104', 'FRAIS DE SERVICE AVI ALLEMAGNE-Cameroun', 'FRAIS_DE_SERVICE', 'Allemagne', 'Cameroun', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(58, 39, 4, 1105, '7061105', 'FRAIS DE SERVICE AVI ALLEMAGNE-Sénégal', 'FRAIS_DE_SERVICE', 'Allemagne', 'Sénégal', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(59, 39, 4, 1106, '7061106', 'FRAIS DE SERVICE AVI ALLEMAGNE-Côte d\'Ivoire', 'FRAIS_DE_SERVICE', 'Allemagne', 'Côte d\'Ivoire', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(60, 39, 4, 1107, '7061107', 'FRAIS DE SERVICE AVI ALLEMAGNE-Benin', 'FRAIS_DE_SERVICE', 'Allemagne', 'Benin', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(61, 39, 4, 1108, '7061108', 'FRAIS DE SERVICE AVI ALLEMAGNE-Burkina Faso', 'FRAIS_DE_SERVICE', 'Allemagne', 'Burkina Faso', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(62, 39, 4, 1109, '7061109', 'FRAIS DE SERVICE AVI ALLEMAGNE-Congo Brazzaville', 'FRAIS_DE_SERVICE', 'Allemagne', 'Congo Brazzaville', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(63, 39, 4, 1110, '7061110', 'FRAIS DE SERVICE AVI ALLEMAGNE-Congo Kinshasa', 'FRAIS_DE_SERVICE', 'Allemagne', 'Congo Kinshasa', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(64, 39, 4, 1111, '7061111', 'FRAIS DE SERVICE AVI ALLEMAGNE-Gabon', 'FRAIS_DE_SERVICE', 'Allemagne', 'Gabon', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(65, 39, 4, 1112, '7061112', 'FRAIS DE SERVICE AVI ALLEMAGNE-Tchad', 'FRAIS_DE_SERVICE', 'Allemagne', 'Tchad', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(66, 39, 4, 1113, '7061113', 'FRAIS DE SERVICE AVI ALLEMAGNE-Mali', 'FRAIS_DE_SERVICE', 'Allemagne', 'Mali', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(67, 39, 4, 1114, '7061114', 'FRAIS DE SERVICE AVI ALLEMAGNE-Togo', 'FRAIS_DE_SERVICE', 'Allemagne', 'Togo', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(68, 39, 4, 1115, '7061115', 'FRAIS DE SERVICE AVI ALLEMAGNE-Mexique', 'FRAIS_DE_SERVICE', 'Allemagne', 'Mexique', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(69, 39, 4, 1116, '7061116', 'FRAIS DE SERVICE AVI ALLEMAGNE-Inde', 'FRAIS_DE_SERVICE', 'Allemagne', 'Inde', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(70, 39, 4, 1117, '7061117', 'FRAIS DE SERVICE AVI ALLEMAGNE-Algérie', 'FRAIS_DE_SERVICE', 'Allemagne', 'Algérie', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(71, 39, 4, 1118, '7061118', 'FRAIS DE SERVICE AVI ALLEMAGNE-Guinée', 'FRAIS_DE_SERVICE', 'Allemagne', 'Guinée', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(72, 39, 4, 1119, '7061119', 'FRAIS DE SERVICE AVI ALLEMAGNE-Tunisie', 'FRAIS_DE_SERVICE', 'Allemagne', 'Tunisie', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(73, 39, 4, 1120, '7061120', 'FRAIS DE SERVICE AVI ALLEMAGNE-Maroc', 'FRAIS_DE_SERVICE', 'Allemagne', 'Maroc', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(74, 39, 4, 1121, '7061121', 'FRAIS DE SERVICE AVI ALLEMAGNE-Niger', 'FRAIS_DE_SERVICE', 'Allemagne', 'Niger', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(75, 39, 4, 1122, '7061122', 'FRAIS DE SERVICE AVI ALLEMAGNE-Afrique de l\'est', 'FRAIS_DE_SERVICE', 'Allemagne', 'Afrique de l\'est', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(76, 39, 4, 1123, '7061123', 'FRAIS DE SERVICE AVI ALLEMAGNE-Autres pays', 'FRAIS_DE_SERVICE', 'Allemagne', 'Autres pays', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(85, 40, 4, 1201, '7061201', 'FRAIS DE SERVICES AVI BELGIQUE-France', 'FRAIS_DE_SERVICE', 'Belgique', 'France', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(86, 40, 4, 1202, '7061202', 'FRAIS DE SERVICES AVI BELGIQUE-Allemagne', 'FRAIS_DE_SERVICE', 'Belgique', 'Allemagne', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(87, 40, 4, 1203, '7061203', 'FRAIS DE SERVICES AVI BELGIQUE-Belgique', 'FRAIS_DE_SERVICE', 'Belgique', 'Belgique', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(88, 40, 4, 1204, '7061204', 'FRAIS DE SERVICES AVI BELGIQUE-Cameroun', 'FRAIS_DE_SERVICE', 'Belgique', 'Cameroun', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(89, 40, 4, 1205, '7061205', 'FRAIS DE SERVICES AVI BELGIQUE-Sénégal', 'FRAIS_DE_SERVICE', 'Belgique', 'Sénégal', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(90, 40, 4, 1206, '7061206', 'FRAIS DE SERVICES AVI BELGIQUE-Côte d\'Ivoire', 'FRAIS_DE_SERVICE', 'Belgique', 'Côte d\'Ivoire', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(91, 40, 4, 1207, '7061207', 'FRAIS DE SERVICES AVI BELGIQUE-Benin', 'FRAIS_DE_SERVICE', 'Belgique', 'Benin', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(92, 40, 4, 1208, '7061208', 'FRAIS DE SERVICES AVI BELGIQUE-Burkina Faso', 'FRAIS_DE_SERVICE', 'Belgique', 'Burkina Faso', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(93, 40, 4, 1209, '7061209', 'FRAIS DE SERVICES AVI BELGIQUE-Congo Brazzaville', 'FRAIS_DE_SERVICE', 'Belgique', 'Congo Brazzaville', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(94, 40, 4, 1210, '7061210', 'FRAIS DE SERVICES AVI BELGIQUE-Congo Kinshasa', 'FRAIS_DE_SERVICE', 'Belgique', 'Congo Kinshasa', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(95, 40, 4, 1211, '7061211', 'FRAIS DE SERVICES AVI BELGIQUE-Gabon', 'FRAIS_DE_SERVICE', 'Belgique', 'Gabon', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(96, 40, 4, 1212, '7061212', 'FRAIS DE SERVICES AVI BELGIQUE-Tchad', 'FRAIS_DE_SERVICE', 'Belgique', 'Tchad', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(97, 40, 4, 1213, '7061213', 'FRAIS DE SERVICES AVI BELGIQUE-Mali', 'FRAIS_DE_SERVICE', 'Belgique', 'Mali', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(98, 40, 4, 1214, '7061214', 'FRAIS DE SERVICES AVI BELGIQUE-Togo', 'FRAIS_DE_SERVICE', 'Belgique', 'Togo', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(99, 40, 4, 1215, '7061215', 'FRAIS DE SERVICES AVI BELGIQUE-Mexique', 'FRAIS_DE_SERVICE', 'Belgique', 'Mexique', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(100, 40, 4, 1216, '7061216', 'FRAIS DE SERVICES AVI BELGIQUE-Inde', 'FRAIS_DE_SERVICE', 'Belgique', 'Inde', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(101, 40, 4, 1217, '7061217', 'FRAIS DE SERVICES AVI BELGIQUE-Algérie', 'FRAIS_DE_SERVICE', 'Belgique', 'Algérie', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(102, 40, 4, 1218, '7061218', 'FRAIS DE SERVICES AVI BELGIQUE-Guinée', 'FRAIS_DE_SERVICE', 'Belgique', 'Guinée', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(103, 40, 4, 1219, '7061219', 'FRAIS DE SERVICES AVI BELGIQUE-Tunisie', 'FRAIS_DE_SERVICE', 'Belgique', 'Tunisie', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(104, 40, 4, 1220, '7061220', 'FRAIS DE SERVICES AVI BELGIQUE-Maroc', 'FRAIS_DE_SERVICE', 'Belgique', 'Maroc', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(105, 40, 4, 1221, '7061221', 'FRAIS DE SERVICES AVI BELGIQUE-Niger', 'FRAIS_DE_SERVICE', 'Belgique', 'Niger', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(106, 40, 4, 1222, '7061222', 'FRAIS DE SERVICES AVI BELGIQUE-Afrique de l\'est', 'FRAIS_DE_SERVICE', 'Belgique', 'Afrique de l\'est', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(107, 40, 4, 1223, '7061223', 'FRAIS DE SERVICES AVI BELGIQUE-Autres pays', 'FRAIS_DE_SERVICE', 'Belgique', 'Autres pays', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(116, 41, 4, 1301, '7061301', 'FRAIS DE SERVICES AVI France-France', 'FRAIS_DE_SERVICE', 'France', 'France', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(117, 41, 4, 1302, '7061302', 'FRAIS DE SERVICES AVI France-Allemagne', 'FRAIS_DE_SERVICE', 'France', 'Allemagne', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(118, 41, 4, 1303, '7061303', 'FRAIS DE SERVICES AVI France-Belgique', 'FRAIS_DE_SERVICE', 'France', 'Belgique', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(119, 41, 4, 1304, '7061304', 'FRAIS DE SERVICES AVI France-Cameroun', 'FRAIS_DE_SERVICE', 'France', 'Cameroun', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(120, 41, 4, 1305, '7061305', 'FRAIS DE SERVICES AVI France-Sénégal', 'FRAIS_DE_SERVICE', 'France', 'Sénégal', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(121, 41, 4, 1306, '7061306', 'FRAIS DE SERVICES AVI France-Côte d\'Ivoire', 'FRAIS_DE_SERVICE', 'France', 'Côte d\'Ivoire', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(122, 41, 4, 1307, '7061307', 'FRAIS DE SERVICES AVI France-Benin', 'FRAIS_DE_SERVICE', 'France', 'Benin', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(123, 41, 4, 1308, '7061308', 'FRAIS DE SERVICES AVI France-Burkina Faso', 'FRAIS_DE_SERVICE', 'France', 'Burkina Faso', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(124, 41, 4, 1309, '7061309', 'FRAIS DE SERVICES AVI France-Congo Brazzaville', 'FRAIS_DE_SERVICE', 'France', 'Congo Brazzaville', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(125, 41, 4, 1310, '7061310', 'FRAIS DE SERVICES AVI France-Congo Kinshasa', 'FRAIS_DE_SERVICE', 'France', 'Congo Kinshasa', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(126, 41, 4, 1311, '7061311', 'FRAIS DE SERVICES AVI France-Gabon', 'FRAIS_DE_SERVICE', 'France', 'Gabon', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(127, 41, 4, 1312, '7061312', 'FRAIS DE SERVICES AVI France-Tchad', 'FRAIS_DE_SERVICE', 'France', 'Tchad', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(128, 41, 4, 1313, '7061313', 'FRAIS DE SERVICES AVI France-Mali', 'FRAIS_DE_SERVICE', 'France', 'Mali', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(129, 41, 4, 1314, '7061314', 'FRAIS DE SERVICES AVI France-Togo', 'FRAIS_DE_SERVICE', 'France', 'Togo', 4, 1, 1, 150.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(130, 41, 4, 1315, '7061315', 'FRAIS DE SERVICES AVI France-Mexique', 'FRAIS_DE_SERVICE', 'France', 'Mexique', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(131, 41, 4, 1316, '7061316', 'FRAIS DE SERVICES AVI France-Inde', 'FRAIS_DE_SERVICE', 'France', 'Inde', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(132, 41, 4, 1317, '7061317', 'FRAIS DE SERVICES AVI France-Algérie', 'FRAIS_DE_SERVICE', 'France', 'Algérie', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(133, 41, 4, 1318, '7061318', 'FRAIS DE SERVICES AVI France-Guinée', 'FRAIS_DE_SERVICE', 'France', 'Guinée', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(134, 41, 4, 1319, '7061319', 'FRAIS DE SERVICES AVI France-Tunisie', 'FRAIS_DE_SERVICE', 'France', 'Tunisie', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(135, 41, 4, 1320, '7061320', 'FRAIS DE SERVICES AVI France-Maroc', 'FRAIS_DE_SERVICE', 'France', 'Maroc', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(136, 41, 4, 1321, '7061321', 'FRAIS DE SERVICES AVI France-Niger', 'FRAIS_DE_SERVICE', 'France', 'Niger', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(137, 41, 4, 1322, '7061322', 'FRAIS DE SERVICES AVI France-Afrique de l\'est', 'FRAIS_DE_SERVICE', 'France', 'Afrique de l\'est', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(138, 41, 4, 1323, '7061323', 'FRAIS DE SERVICES AVI France-Autres pays', 'FRAIS_DE_SERVICE', 'France', 'Autres pays', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(147, 33, 3, 201, '706201', 'FRAIS DE GESTION-France', 'FRAIS_BANCAIRES', NULL, 'France', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(148, 33, 3, 202, '706202', 'FRAIS DE GESTION-Allemagne', 'FRAIS_BANCAIRES', NULL, 'Allemagne', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(149, 33, 3, 203, '706203', 'FRAIS DE GESTION-Belgique', 'FRAIS_BANCAIRES', NULL, 'Belgique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(150, 33, 3, 204, '706204', 'FRAIS DE GESTION-Cameroun', 'FRAIS_BANCAIRES', NULL, 'Cameroun', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(151, 33, 3, 205, '706205', 'FRAIS DE GESTION-Sénégal', 'FRAIS_BANCAIRES', NULL, 'Sénégal', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(152, 33, 3, 206, '706206', 'FRAIS DE GESTION-Côte d\'Ivoire', 'FRAIS_BANCAIRES', NULL, 'Côte d\'Ivoire', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(153, 33, 3, 207, '706207', 'FRAIS DE GESTION-Benin', 'FRAIS_BANCAIRES', NULL, 'Benin', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(154, 33, 3, 208, '706208', 'FRAIS DE GESTION-Burkina Faso', 'FRAIS_BANCAIRES', NULL, 'Burkina Faso', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(155, 33, 3, 209, '706209', 'FRAIS DE GESTION-Congo Brazzaville', 'FRAIS_BANCAIRES', NULL, 'Congo Brazzaville', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(156, 33, 3, 210, '706210', 'FRAIS DE GESTION-Congo Kinshasa', 'FRAIS_BANCAIRES', NULL, 'Congo Kinshasa', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(157, 33, 3, 211, '706211', 'FRAIS DE GESTION-Gabon', 'FRAIS_BANCAIRES', NULL, 'Gabon', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(158, 33, 3, 212, '706212', 'FRAIS DE GESTION-Tchad', 'FRAIS_BANCAIRES', NULL, 'Tchad', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(159, 33, 3, 213, '706213', 'FRAIS DE GESTION-Mali', 'FRAIS_BANCAIRES', NULL, 'Mali', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(160, 33, 3, 214, '706214', 'FRAIS DE GESTION-Togo', 'FRAIS_BANCAIRES', NULL, 'Togo', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(161, 33, 3, 215, '706215', 'FRAIS DE GESTION-Mexique', 'FRAIS_BANCAIRES', NULL, 'Mexique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(162, 33, 3, 216, '706216', 'FRAIS DE GESTION-Inde', 'FRAIS_BANCAIRES', NULL, 'Inde', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(163, 33, 3, 217, '706217', 'FRAIS DE GESTION-Algérie', 'FRAIS_BANCAIRES', NULL, 'Algérie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(164, 33, 3, 218, '706218', 'FRAIS DE GESTION-Guinée', 'FRAIS_BANCAIRES', NULL, 'Guinée', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(165, 33, 3, 219, '706219', 'FRAIS DE GESTION-Tunisie', 'FRAIS_BANCAIRES', NULL, 'Tunisie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(166, 33, 3, 220, '706220', 'FRAIS DE GESTION-Maroc', 'FRAIS_BANCAIRES', NULL, 'Maroc', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(167, 33, 3, 221, '706221', 'FRAIS DE GESTION-Niger', 'FRAIS_BANCAIRES', NULL, 'Niger', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(168, 33, 3, 222, '706222', 'FRAIS DE GESTION-Afrique de l\'est', 'FRAIS_BANCAIRES', NULL, 'Afrique de l\'est', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(169, 33, 3, 223, '706223', 'FRAIS DE GESTION-Autres pays', 'FRAIS_BANCAIRES', NULL, 'Autres pays', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(178, 34, 3, 301, '706301', 'COMMISSION DE TRANSFERT-France', 'VIREMENT_EXCEPTIONEL', NULL, 'France', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(179, 34, 3, 302, '706302', 'COMMISSION DE TRANSFERT-Allemagne', 'VIREMENT_EXCEPTIONEL', NULL, 'Allemagne', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(180, 34, 3, 303, '706303', 'COMMISSION DE TRANSFERT-Belgique', 'VIREMENT_EXCEPTIONEL', NULL, 'Belgique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(181, 34, 3, 304, '706304', 'COMMISSION DE TRANSFERT-Cameroun', 'VIREMENT_EXCEPTIONEL', NULL, 'Cameroun', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(182, 34, 3, 305, '706305', 'COMMISSION DE TRANSFERT-Sénégal', 'VIREMENT_EXCEPTIONEL', NULL, 'Sénégal', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(183, 34, 3, 306, '706306', 'COMMISSION DE TRANSFERT-Côte d\'Ivoire', 'VIREMENT_EXCEPTIONEL', NULL, 'Côte d\'Ivoire', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(184, 34, 3, 307, '706307', 'COMMISSION DE TRANSFERT-Benin', 'VIREMENT_EXCEPTIONEL', NULL, 'Benin', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(185, 34, 3, 308, '706308', 'COMMISSION DE TRANSFERT-Burkina Faso', 'VIREMENT_EXCEPTIONEL', NULL, 'Burkina Faso', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(186, 34, 3, 309, '706309', 'COMMISSION DE TRANSFERT-Congo Brazzaville', 'VIREMENT_EXCEPTIONEL', NULL, 'Congo Brazzaville', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(187, 34, 3, 310, '706310', 'COMMISSION DE TRANSFERT-Congo Kinshasa', 'VIREMENT_EXCEPTIONEL', NULL, 'Congo Kinshasa', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(188, 34, 3, 311, '706311', 'COMMISSION DE TRANSFERT-Gabon', 'VIREMENT_EXCEPTIONEL', NULL, 'Gabon', 3, 1, 1, -100.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(189, 34, 3, 312, '706312', 'COMMISSION DE TRANSFERT-Tchad', 'VIREMENT_EXCEPTIONEL', NULL, 'Tchad', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(190, 34, 3, 313, '706313', 'COMMISSION DE TRANSFERT-Mali', 'VIREMENT_EXCEPTIONEL', NULL, 'Mali', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(191, 34, 3, 314, '706314', 'COMMISSION DE TRANSFERT-Togo', 'VIREMENT_EXCEPTIONEL', NULL, 'Togo', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(192, 34, 3, 315, '706315', 'COMMISSION DE TRANSFERT-Mexique', 'VIREMENT_EXCEPTIONEL', NULL, 'Mexique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(193, 34, 3, 316, '706316', 'COMMISSION DE TRANSFERT-Inde', 'VIREMENT_EXCEPTIONEL', NULL, 'Inde', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(194, 34, 3, 317, '706317', 'COMMISSION DE TRANSFERT-Algérie', 'VIREMENT_EXCEPTIONEL', NULL, 'Algérie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(195, 34, 3, 318, '706318', 'COMMISSION DE TRANSFERT-Guinée', 'VIREMENT_EXCEPTIONEL', NULL, 'Guinée', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(196, 34, 3, 319, '706319', 'COMMISSION DE TRANSFERT-Tunisie', 'VIREMENT_EXCEPTIONEL', NULL, 'Tunisie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(197, 34, 3, 320, '706320', 'COMMISSION DE TRANSFERT-Maroc', 'VIREMENT_EXCEPTIONEL', NULL, 'Maroc', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(198, 34, 3, 321, '706321', 'COMMISSION DE TRANSFERT-Niger', 'VIREMENT_EXCEPTIONEL', NULL, 'Niger', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(199, 34, 3, 322, '706322', 'COMMISSION DE TRANSFERT-Afrique de l\'est', 'VIREMENT_EXCEPTIONEL', NULL, 'Afrique de l\'est', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(200, 34, 3, 323, '706323', 'COMMISSION DE TRANSFERT-Autres pays', 'VIREMENT_EXCEPTIONEL', NULL, 'Autres pays', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(209, 36, 3, 501, '706501', 'FRAIS DE SERVICE ATS-France', 'FRAIS_DE_SERVICE', NULL, 'France', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(210, 36, 3, 502, '706502', 'FRAIS DE SERVICE ATS-Allemagne', 'FRAIS_DE_SERVICE', NULL, 'Allemagne', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(211, 36, 3, 503, '706503', 'FRAIS DE SERVICE ATS-Belgique', 'FRAIS_DE_SERVICE', NULL, 'Belgique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(212, 36, 3, 504, '706504', 'FRAIS DE SERVICE ATS-Cameroun', 'FRAIS_DE_SERVICE', NULL, 'Cameroun', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(213, 36, 3, 505, '706505', 'FRAIS DE SERVICE ATS-Sénégal', 'FRAIS_DE_SERVICE', NULL, 'Sénégal', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(214, 36, 3, 506, '706506', 'FRAIS DE SERVICE ATS-Côte d\'Ivoire', 'FRAIS_DE_SERVICE', NULL, 'Côte d\'Ivoire', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(215, 36, 3, 507, '706507', 'FRAIS DE SERVICE ATS-Benin', 'FRAIS_DE_SERVICE', NULL, 'Benin', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(216, 36, 3, 508, '706508', 'FRAIS DE SERVICE ATS-Burkina Faso', 'FRAIS_DE_SERVICE', NULL, 'Burkina Faso', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(217, 36, 3, 509, '706509', 'FRAIS DE SERVICE ATS-Congo Brazzaville', 'FRAIS_DE_SERVICE', NULL, 'Congo Brazzaville', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(218, 36, 3, 510, '706510', 'FRAIS DE SERVICE ATS-Congo Kinshasa', 'FRAIS_DE_SERVICE', NULL, 'Congo Kinshasa', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(219, 36, 3, 511, '706511', 'FRAIS DE SERVICE ATS-Gabon', 'FRAIS_DE_SERVICE', NULL, 'Gabon', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(220, 36, 3, 512, '706512', 'FRAIS DE SERVICE ATS-Tchad', 'FRAIS_DE_SERVICE', NULL, 'Tchad', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(221, 36, 3, 513, '706513', 'FRAIS DE SERVICE ATS-Mali', 'FRAIS_DE_SERVICE', NULL, 'Mali', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(222, 36, 3, 514, '706514', 'FRAIS DE SERVICE ATS-Togo', 'FRAIS_DE_SERVICE', NULL, 'Togo', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(223, 36, 3, 515, '706515', 'FRAIS DE SERVICE ATS-Mexique', 'FRAIS_DE_SERVICE', NULL, 'Mexique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(224, 36, 3, 516, '706516', 'FRAIS DE SERVICE ATS-Inde', 'FRAIS_DE_SERVICE', NULL, 'Inde', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(225, 36, 3, 517, '706517', 'FRAIS DE SERVICE ATS-Algérie', 'FRAIS_DE_SERVICE', NULL, 'Algérie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(226, 36, 3, 518, '706518', 'FRAIS DE SERVICE ATS-Guinée', 'FRAIS_DE_SERVICE', NULL, 'Guinée', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(227, 36, 3, 519, '706519', 'FRAIS DE SERVICE ATS-Tunisie', 'FRAIS_DE_SERVICE', NULL, 'Tunisie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(228, 36, 3, 520, '706520', 'FRAIS DE SERVICE ATS-Maroc', 'FRAIS_DE_SERVICE', NULL, 'Maroc', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(229, 36, 3, 521, '706521', 'FRAIS DE SERVICE ATS-Niger', 'FRAIS_DE_SERVICE', NULL, 'Niger', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(230, 36, 3, 522, '706522', 'FRAIS DE SERVICE ATS-Afrique de l\'est', 'FRAIS_DE_SERVICE', NULL, 'Afrique de l\'est', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(231, 36, 3, 523, '706523', 'FRAIS DE SERVICE ATS-Autres pays', 'FRAIS_DE_SERVICE', NULL, 'Autres pays', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(240, 37, 3, 601, '706601', 'CA PLACEMENT-France', 'VIREMENT_INTERNE', NULL, 'France', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(241, 37, 3, 602, '706602', 'CA PLACEMENT-Allemagne', 'VIREMENT_INTERNE', NULL, 'Allemagne', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(242, 37, 3, 603, '706603', 'CA PLACEMENT-Belgique', 'VIREMENT_INTERNE', NULL, 'Belgique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(243, 37, 3, 604, '706604', 'CA PLACEMENT-Cameroun', 'VIREMENT_INTERNE', NULL, 'Cameroun', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(244, 37, 3, 605, '706605', 'CA PLACEMENT-Sénégal', 'VIREMENT_INTERNE', NULL, 'Sénégal', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(245, 37, 3, 606, '706606', 'CA PLACEMENT-Côte d\'Ivoire', 'VIREMENT_INTERNE', NULL, 'Côte d\'Ivoire', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(246, 37, 3, 607, '706607', 'CA PLACEMENT-Benin', 'VIREMENT_INTERNE', NULL, 'Benin', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(247, 37, 3, 608, '706608', 'CA PLACEMENT-Burkina Faso', 'VIREMENT_INTERNE', NULL, 'Burkina Faso', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(248, 37, 3, 609, '706609', 'CA PLACEMENT-Congo Brazzaville', 'VIREMENT_INTERNE', NULL, 'Congo Brazzaville', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(249, 37, 3, 610, '706610', 'CA PLACEMENT-Congo Kinshasa', 'VIREMENT_INTERNE', NULL, 'Congo Kinshasa', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(250, 37, 3, 611, '706611', 'CA PLACEMENT-Gabon', 'VIREMENT_INTERNE', NULL, 'Gabon', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(251, 37, 3, 612, '706612', 'CA PLACEMENT-Tchad', 'VIREMENT_INTERNE', NULL, 'Tchad', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(252, 37, 3, 613, '706613', 'CA PLACEMENT-Mali', 'VIREMENT_INTERNE', NULL, 'Mali', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(253, 37, 3, 614, '706614', 'CA PLACEMENT-Togo', 'VIREMENT_INTERNE', NULL, 'Togo', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(254, 37, 3, 615, '706615', 'CA PLACEMENT-Mexique', 'VIREMENT_INTERNE', NULL, 'Mexique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(255, 37, 3, 616, '706616', 'CA PLACEMENT-Inde', 'VIREMENT_INTERNE', NULL, 'Inde', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(256, 37, 3, 617, '706617', 'CA PLACEMENT-Algérie', 'VIREMENT_INTERNE', NULL, 'Algérie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(257, 37, 3, 618, '706618', 'CA PLACEMENT-Guinée', 'VIREMENT_INTERNE', NULL, 'Guinée', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(258, 37, 3, 619, '706619', 'CA PLACEMENT-Tunisie', 'VIREMENT_INTERNE', NULL, 'Tunisie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(259, 37, 3, 620, '706620', 'CA PLACEMENT-Maroc', 'VIREMENT_INTERNE', NULL, 'Maroc', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(260, 37, 3, 621, '706621', 'CA PLACEMENT-Niger', 'VIREMENT_INTERNE', NULL, 'Niger', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(261, 37, 3, 622, '706622', 'CA PLACEMENT-Afrique de l\'est', 'VIREMENT_INTERNE', NULL, 'Afrique de l\'est', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23'),
-(262, 37, 3, 623, '706623', 'CA PLACEMENT-Autres pays', 'VIREMENT_INTERNE', NULL, 'Autres pays', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-01 21:45:23');
+(1, NULL, 1, 0, '706101', 'FRAIS DE SERVICES AVI', 'FRAIS DE SERVICE', 'France', 'France', 3, 1, 1, 6250.00, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(2, NULL, 1, 0, '706102', 'FRAIS DE GESTION', 'FRAIS BANCAIRES', 'International', 'International', 3, 1, 1, 15000.00, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(3, NULL, 1, 0, '706103', 'COMMISSION DE TRANSFERT', 'VIREMENT EXCEPTIONEL', 'International', 'International', 3, 1, 1, 0.00, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(4, NULL, 1, 0, '706104', 'FRAIS DE SERVICE ATS', 'FRAIS DE SERVICE', 'France', 'France', 3, 1, 1, 175.00, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(5, NULL, 1, 0, '706105', 'CA PLACEMENT', 'VIREMENT INTERNE', 'International', 'International', 3, 1, 1, 0.00, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(6, NULL, 1, 0, '706106', 'CA DIVERS', 'VIREMENT INTERNE', 'International', 'International', 3, 1, 1, 0.00, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(31, NULL, 1, 10, '706', 'Prestations de services', NULL, NULL, NULL, 1, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(32, 31, 2, 20, '7061', 'FRAIS DE SERVICES AVI', 'FRAIS_DE_SERVICE', NULL, NULL, 2, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(33, 31, 2, 30, '7062', 'FRAIS DE GESTION', 'FRAIS_BANCAIRES', NULL, NULL, 2, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(34, 31, 2, 40, '7063', 'COMMISSION DE TRANSFERT', 'VIREMENT_EXCEPTIONEL', NULL, NULL, 2, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(35, 31, 2, 50, '7064', 'CA DIVERS', 'VIREMENT_INTERNE', NULL, NULL, 2, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(36, 31, 2, 60, '7065', 'FRAIS DE SERVICE ATS', 'FRAIS_DE_SERVICE', NULL, NULL, 2, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(37, 31, 2, 70, '7066', 'CA PLACEMENT', 'VIREMENT_INTERNE', NULL, NULL, 2, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(39, 32, 3, 110, '70611', 'FRAIS DE SERVICE AVI ALLEMAGNE', 'FRAIS_DE_SERVICE', 'Allemagne', NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(40, 32, 3, 120, '70612', 'FRAIS DE SERVICES AVI BELGIQUE', 'FRAIS_DE_SERVICE', 'Belgique', NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(41, 32, 3, 130, '70613', 'FRAIS DE SERVICES AVI FRANCE', 'FRAIS_DE_SERVICE', 'France', NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(42, 35, 3, 410, '70641', 'CA DEBOURS LOGEMENT', 'VIREMENT_INTERNE', NULL, NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(43, 35, 3, 420, '70642', 'CA DEBOURS ASSURANCE', 'VIREMENT_INTERNE', NULL, NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(44, 35, 3, 430, '70643', 'FRAIS DEBOURS MICROFINANCE', 'VIREMENT_INTERNE', NULL, NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(45, 35, 3, 440, '70644', 'CA COURTAGE PRÊT', 'VIREMENT_INTERNE', NULL, NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(46, 35, 3, 450, '70645', 'CA LOGEMENT', 'VIREMENT_INTERNE', NULL, NULL, 3, 0, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(54, 39, 4, 1101, '7061101', 'FRAIS DE SERVICE AVI ALLEMAGNE-France', 'FRAIS_DE_SERVICE', 'Allemagne', 'France', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(55, 39, 4, 1102, '7061102', 'FRAIS DE SERVICE AVI ALLEMAGNE-Allemagne', 'FRAIS_DE_SERVICE', 'Allemagne', 'Allemagne', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(56, 39, 4, 1103, '7061103', 'FRAIS DE SERVICE AVI ALLEMAGNE-Belgique', 'FRAIS_DE_SERVICE', 'Allemagne', 'Belgique', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(57, 39, 4, 1104, '7061104', 'FRAIS DE SERVICE AVI ALLEMAGNE-Cameroun', 'FRAIS_DE_SERVICE', 'Allemagne', 'Cameroun', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(58, 39, 4, 1105, '7061105', 'FRAIS DE SERVICE AVI ALLEMAGNE-Sénégal', 'FRAIS_DE_SERVICE', 'Allemagne', 'Sénégal', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(59, 39, 4, 1106, '7061106', 'FRAIS DE SERVICE AVI ALLEMAGNE-Côte d\'Ivoire', 'FRAIS_DE_SERVICE', 'Allemagne', 'Côte d\'Ivoire', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(60, 39, 4, 1107, '7061107', 'FRAIS DE SERVICE AVI ALLEMAGNE-Benin', 'FRAIS_DE_SERVICE', 'Allemagne', 'Benin', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(61, 39, 4, 1108, '7061108', 'FRAIS DE SERVICE AVI ALLEMAGNE-Burkina Faso', 'FRAIS_DE_SERVICE', 'Allemagne', 'Burkina Faso', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(62, 39, 4, 1109, '7061109', 'FRAIS DE SERVICE AVI ALLEMAGNE-Congo Brazzaville', 'FRAIS_DE_SERVICE', 'Allemagne', 'Congo Brazzaville', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(63, 39, 4, 1110, '7061110', 'FRAIS DE SERVICE AVI ALLEMAGNE-Congo Kinshasa', 'FRAIS_DE_SERVICE', 'Allemagne', 'Congo Kinshasa', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(64, 39, 4, 1111, '7061111', 'FRAIS DE SERVICE AVI ALLEMAGNE-Gabon', 'FRAIS_DE_SERVICE', 'Allemagne', 'Gabon', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(65, 39, 4, 1112, '7061112', 'FRAIS DE SERVICE AVI ALLEMAGNE-Tchad', 'FRAIS_DE_SERVICE', 'Allemagne', 'Tchad', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(66, 39, 4, 1113, '7061113', 'FRAIS DE SERVICE AVI ALLEMAGNE-Mali', 'FRAIS_DE_SERVICE', 'Allemagne', 'Mali', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(67, 39, 4, 1114, '7061114', 'FRAIS DE SERVICE AVI ALLEMAGNE-Togo', 'FRAIS_DE_SERVICE', 'Allemagne', 'Togo', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(68, 39, 4, 1115, '7061115', 'FRAIS DE SERVICE AVI ALLEMAGNE-Mexique', 'FRAIS_DE_SERVICE', 'Allemagne', 'Mexique', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(69, 39, 4, 1116, '7061116', 'FRAIS DE SERVICE AVI ALLEMAGNE-Inde', 'FRAIS_DE_SERVICE', 'Allemagne', 'Inde', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(70, 39, 4, 1117, '7061117', 'FRAIS DE SERVICE AVI ALLEMAGNE-Algérie', 'FRAIS_DE_SERVICE', 'Allemagne', 'Algérie', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(71, 39, 4, 1118, '7061118', 'FRAIS DE SERVICE AVI ALLEMAGNE-Guinée', 'FRAIS_DE_SERVICE', 'Allemagne', 'Guinée', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(72, 39, 4, 1119, '7061119', 'FRAIS DE SERVICE AVI ALLEMAGNE-Tunisie', 'FRAIS_DE_SERVICE', 'Allemagne', 'Tunisie', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(73, 39, 4, 1120, '7061120', 'FRAIS DE SERVICE AVI ALLEMAGNE-Maroc', 'FRAIS_DE_SERVICE', 'Allemagne', 'Maroc', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(74, 39, 4, 1121, '7061121', 'FRAIS DE SERVICE AVI ALLEMAGNE-Niger', 'FRAIS_DE_SERVICE', 'Allemagne', 'Niger', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(75, 39, 4, 1122, '7061122', 'FRAIS DE SERVICE AVI ALLEMAGNE-Afrique de l\'est', 'FRAIS_DE_SERVICE', 'Allemagne', 'Afrique de l\'est', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(76, 39, 4, 1123, '7061123', 'FRAIS DE SERVICE AVI ALLEMAGNE-Autres pays', 'FRAIS_DE_SERVICE', 'Allemagne', 'Autres pays', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(85, 40, 4, 1201, '7061201', 'FRAIS DE SERVICES AVI BELGIQUE-France', 'FRAIS_DE_SERVICE', 'Belgique', 'France', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(86, 40, 4, 1202, '7061202', 'FRAIS DE SERVICES AVI BELGIQUE-Allemagne', 'FRAIS_DE_SERVICE', 'Belgique', 'Allemagne', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(87, 40, 4, 1203, '7061203', 'FRAIS DE SERVICES AVI BELGIQUE-Belgique', 'FRAIS_DE_SERVICE', 'Belgique', 'Belgique', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(88, 40, 4, 1204, '7061204', 'FRAIS DE SERVICES AVI BELGIQUE-Cameroun', 'FRAIS_DE_SERVICE', 'Belgique', 'Cameroun', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(89, 40, 4, 1205, '7061205', 'FRAIS DE SERVICES AVI BELGIQUE-Sénégal', 'FRAIS_DE_SERVICE', 'Belgique', 'Sénégal', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(90, 40, 4, 1206, '7061206', 'FRAIS DE SERVICES AVI BELGIQUE-Côte d\'Ivoire', 'FRAIS_DE_SERVICE', 'Belgique', 'Côte d\'Ivoire', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(91, 40, 4, 1207, '7061207', 'FRAIS DE SERVICES AVI BELGIQUE-Benin', 'FRAIS_DE_SERVICE', 'Belgique', 'Benin', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(92, 40, 4, 1208, '7061208', 'FRAIS DE SERVICES AVI BELGIQUE-Burkina Faso', 'FRAIS_DE_SERVICE', 'Belgique', 'Burkina Faso', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(93, 40, 4, 1209, '7061209', 'FRAIS DE SERVICES AVI BELGIQUE-Congo Brazzaville', 'FRAIS_DE_SERVICE', 'Belgique', 'Congo Brazzaville', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(94, 40, 4, 1210, '7061210', 'FRAIS DE SERVICES AVI BELGIQUE-Congo Kinshasa', 'FRAIS_DE_SERVICE', 'Belgique', 'Congo Kinshasa', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(95, 40, 4, 1211, '7061211', 'FRAIS DE SERVICES AVI BELGIQUE-Gabon', 'FRAIS_DE_SERVICE', 'Belgique', 'Gabon', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(96, 40, 4, 1212, '7061212', 'FRAIS DE SERVICES AVI BELGIQUE-Tchad', 'FRAIS_DE_SERVICE', 'Belgique', 'Tchad', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(97, 40, 4, 1213, '7061213', 'FRAIS DE SERVICES AVI BELGIQUE-Mali', 'FRAIS_DE_SERVICE', 'Belgique', 'Mali', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(98, 40, 4, 1214, '7061214', 'FRAIS DE SERVICES AVI BELGIQUE-Togo', 'FRAIS_DE_SERVICE', 'Belgique', 'Togo', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(99, 40, 4, 1215, '7061215', 'FRAIS DE SERVICES AVI BELGIQUE-Mexique', 'FRAIS_DE_SERVICE', 'Belgique', 'Mexique', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(100, 40, 4, 1216, '7061216', 'FRAIS DE SERVICES AVI BELGIQUE-Inde', 'FRAIS_DE_SERVICE', 'Belgique', 'Inde', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(101, 40, 4, 1217, '7061217', 'FRAIS DE SERVICES AVI BELGIQUE-Algérie', 'FRAIS_DE_SERVICE', 'Belgique', 'Algérie', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(102, 40, 4, 1218, '7061218', 'FRAIS DE SERVICES AVI BELGIQUE-Guinée', 'FRAIS_DE_SERVICE', 'Belgique', 'Guinée', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(103, 40, 4, 1219, '7061219', 'FRAIS DE SERVICES AVI BELGIQUE-Tunisie', 'FRAIS_DE_SERVICE', 'Belgique', 'Tunisie', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(104, 40, 4, 1220, '7061220', 'FRAIS DE SERVICES AVI BELGIQUE-Maroc', 'FRAIS_DE_SERVICE', 'Belgique', 'Maroc', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(105, 40, 4, 1221, '7061221', 'FRAIS DE SERVICES AVI BELGIQUE-Niger', 'FRAIS_DE_SERVICE', 'Belgique', 'Niger', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(106, 40, 4, 1222, '7061222', 'FRAIS DE SERVICES AVI BELGIQUE-Afrique de l\'est', 'FRAIS_DE_SERVICE', 'Belgique', 'Afrique de l\'est', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(107, 40, 4, 1223, '7061223', 'FRAIS DE SERVICES AVI BELGIQUE-Autres pays', 'FRAIS_DE_SERVICE', 'Belgique', 'Autres pays', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(116, 41, 4, 1301, '7061301', 'FRAIS DE SERVICES AVI France-France', 'FRAIS_DE_SERVICE', 'France', 'France', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(117, 41, 4, 1302, '7061302', 'FRAIS DE SERVICES AVI France-Allemagne', 'FRAIS_DE_SERVICE', 'France', 'Allemagne', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(118, 41, 4, 1303, '7061303', 'FRAIS DE SERVICES AVI France-Belgique', 'FRAIS_DE_SERVICE', 'France', 'Belgique', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(119, 41, 4, 1304, '7061304', 'FRAIS DE SERVICES AVI France-Cameroun', 'FRAIS_DE_SERVICE', 'France', 'Cameroun', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(120, 41, 4, 1305, '7061305', 'FRAIS DE SERVICES AVI France-Sénégal', 'FRAIS_DE_SERVICE', 'France', 'Sénégal', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(121, 41, 4, 1306, '7061306', 'FRAIS DE SERVICES AVI France-Côte d\'Ivoire', 'FRAIS_DE_SERVICE', 'France', 'Côte d\'Ivoire', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(122, 41, 4, 1307, '7061307', 'FRAIS DE SERVICES AVI France-Benin', 'FRAIS_DE_SERVICE', 'France', 'Benin', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(123, 41, 4, 1308, '7061308', 'FRAIS DE SERVICES AVI France-Burkina Faso', 'FRAIS_DE_SERVICE', 'France', 'Burkina Faso', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(124, 41, 4, 1309, '7061309', 'FRAIS DE SERVICES AVI France-Congo Brazzaville', 'FRAIS_DE_SERVICE', 'France', 'Congo Brazzaville', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(125, 41, 4, 1310, '7061310', 'FRAIS DE SERVICES AVI France-Congo Kinshasa', 'FRAIS_DE_SERVICE', 'France', 'Congo Kinshasa', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(126, 41, 4, 1311, '7061311', 'FRAIS DE SERVICES AVI France-Gabon', 'FRAIS_DE_SERVICE', 'France', 'Gabon', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(127, 41, 4, 1312, '7061312', 'FRAIS DE SERVICES AVI France-Tchad', 'FRAIS_DE_SERVICE', 'France', 'Tchad', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(128, 41, 4, 1313, '7061313', 'FRAIS DE SERVICES AVI France-Mali', 'FRAIS_DE_SERVICE', 'France', 'Mali', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(129, 41, 4, 1314, '7061314', 'FRAIS DE SERVICES AVI France-Togo', 'FRAIS_DE_SERVICE', 'France', 'Togo', 4, 1, 1, 150.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(130, 41, 4, 1315, '7061315', 'FRAIS DE SERVICES AVI France-Mexique', 'FRAIS_DE_SERVICE', 'France', 'Mexique', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(131, 41, 4, 1316, '7061316', 'FRAIS DE SERVICES AVI France-Inde', 'FRAIS_DE_SERVICE', 'France', 'Inde', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(132, 41, 4, 1317, '7061317', 'FRAIS DE SERVICES AVI France-Algérie', 'FRAIS_DE_SERVICE', 'France', 'Algérie', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(133, 41, 4, 1318, '7061318', 'FRAIS DE SERVICES AVI France-Guinée', 'FRAIS_DE_SERVICE', 'France', 'Guinée', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(134, 41, 4, 1319, '7061319', 'FRAIS DE SERVICES AVI France-Tunisie', 'FRAIS_DE_SERVICE', 'France', 'Tunisie', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(135, 41, 4, 1320, '7061320', 'FRAIS DE SERVICES AVI France-Maroc', 'FRAIS_DE_SERVICE', 'France', 'Maroc', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(136, 41, 4, 1321, '7061321', 'FRAIS DE SERVICES AVI France-Niger', 'FRAIS_DE_SERVICE', 'France', 'Niger', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(137, 41, 4, 1322, '7061322', 'FRAIS DE SERVICES AVI France-Afrique de l\'est', 'FRAIS_DE_SERVICE', 'France', 'Afrique de l\'est', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(138, 41, 4, 1323, '7061323', 'FRAIS DE SERVICES AVI France-Autres pays', 'FRAIS_DE_SERVICE', 'France', 'Autres pays', 4, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(147, 33, 3, 201, '706201', 'FRAIS DE GESTION-France', 'FRAIS_BANCAIRES', NULL, 'France', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(148, 33, 3, 202, '706202', 'FRAIS DE GESTION-Allemagne', 'FRAIS_BANCAIRES', NULL, 'Allemagne', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(149, 33, 3, 203, '706203', 'FRAIS DE GESTION-Belgique', 'FRAIS_BANCAIRES', NULL, 'Belgique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(150, 33, 3, 204, '706204', 'FRAIS DE GESTION-Cameroun', 'FRAIS_BANCAIRES', NULL, 'Cameroun', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(151, 33, 3, 205, '706205', 'FRAIS DE GESTION-Sénégal', 'FRAIS_BANCAIRES', NULL, 'Sénégal', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(152, 33, 3, 206, '706206', 'FRAIS DE GESTION-Côte d\'Ivoire', 'FRAIS_BANCAIRES', NULL, 'Côte d\'Ivoire', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(153, 33, 3, 207, '706207', 'FRAIS DE GESTION-Benin', 'FRAIS_BANCAIRES', NULL, 'Benin', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(154, 33, 3, 208, '706208', 'FRAIS DE GESTION-Burkina Faso', 'FRAIS_BANCAIRES', NULL, 'Burkina Faso', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(155, 33, 3, 209, '706209', 'FRAIS DE GESTION-Congo Brazzaville', 'FRAIS_BANCAIRES', NULL, 'Congo Brazzaville', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(156, 33, 3, 210, '706210', 'FRAIS DE GESTION-Congo Kinshasa', 'FRAIS_BANCAIRES', NULL, 'Congo Kinshasa', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(157, 33, 3, 211, '706211', 'FRAIS DE GESTION-Gabon', 'FRAIS_BANCAIRES', NULL, 'Gabon', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(158, 33, 3, 212, '706212', 'FRAIS DE GESTION-Tchad', 'FRAIS_BANCAIRES', NULL, 'Tchad', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(159, 33, 3, 213, '706213', 'FRAIS DE GESTION-Mali', 'FRAIS_BANCAIRES', NULL, 'Mali', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(160, 33, 3, 214, '706214', 'FRAIS DE GESTION-Togo', 'FRAIS_BANCAIRES', NULL, 'Togo', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(161, 33, 3, 215, '706215', 'FRAIS DE GESTION-Mexique', 'FRAIS_BANCAIRES', NULL, 'Mexique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(162, 33, 3, 216, '706216', 'FRAIS DE GESTION-Inde', 'FRAIS_BANCAIRES', NULL, 'Inde', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(163, 33, 3, 217, '706217', 'FRAIS DE GESTION-Algérie', 'FRAIS_BANCAIRES', NULL, 'Algérie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(164, 33, 3, 218, '706218', 'FRAIS DE GESTION-Guinée', 'FRAIS_BANCAIRES', NULL, 'Guinée', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(165, 33, 3, 219, '706219', 'FRAIS DE GESTION-Tunisie', 'FRAIS_BANCAIRES', NULL, 'Tunisie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(166, 33, 3, 220, '706220', 'FRAIS DE GESTION-Maroc', 'FRAIS_BANCAIRES', NULL, 'Maroc', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(167, 33, 3, 221, '706221', 'FRAIS DE GESTION-Niger', 'FRAIS_BANCAIRES', NULL, 'Niger', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(168, 33, 3, 222, '706222', 'FRAIS DE GESTION-Afrique de l\'est', 'FRAIS_BANCAIRES', NULL, 'Afrique de l\'est', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(169, 33, 3, 223, '706223', 'FRAIS DE GESTION-Autres pays', 'FRAIS_BANCAIRES', NULL, 'Autres pays', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(178, 34, 3, 301, '706301', 'COMMISSION DE TRANSFERT-France', 'VIREMENT_EXCEPTIONEL', NULL, 'France', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(179, 34, 3, 302, '706302', 'COMMISSION DE TRANSFERT-Allemagne', 'VIREMENT_EXCEPTIONEL', NULL, 'Allemagne', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(180, 34, 3, 303, '706303', 'COMMISSION DE TRANSFERT-Belgique', 'VIREMENT_EXCEPTIONEL', NULL, 'Belgique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(181, 34, 3, 304, '706304', 'COMMISSION DE TRANSFERT-Cameroun', 'VIREMENT_EXCEPTIONEL', NULL, 'Cameroun', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(182, 34, 3, 305, '706305', 'COMMISSION DE TRANSFERT-Sénégal', 'VIREMENT_EXCEPTIONEL', NULL, 'Sénégal', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(183, 34, 3, 306, '706306', 'COMMISSION DE TRANSFERT-Côte d\'Ivoire', 'VIREMENT_EXCEPTIONEL', NULL, 'Côte d\'Ivoire', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(184, 34, 3, 307, '706307', 'COMMISSION DE TRANSFERT-Benin', 'VIREMENT_EXCEPTIONEL', NULL, 'Benin', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(185, 34, 3, 308, '706308', 'COMMISSION DE TRANSFERT-Burkina Faso', 'VIREMENT_EXCEPTIONEL', NULL, 'Burkina Faso', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(186, 34, 3, 309, '706309', 'COMMISSION DE TRANSFERT-Congo Brazzaville', 'VIREMENT_EXCEPTIONEL', NULL, 'Congo Brazzaville', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(187, 34, 3, 310, '706310', 'COMMISSION DE TRANSFERT-Congo Kinshasa', 'VIREMENT_EXCEPTIONEL', NULL, 'Congo Kinshasa', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(188, 34, 3, 311, '706311', 'COMMISSION DE TRANSFERT-Gabon', 'VIREMENT_EXCEPTIONEL', NULL, 'Gabon', 3, 1, 1, -100.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(189, 34, 3, 312, '706312', 'COMMISSION DE TRANSFERT-Tchad', 'VIREMENT_EXCEPTIONEL', NULL, 'Tchad', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(190, 34, 3, 313, '706313', 'COMMISSION DE TRANSFERT-Mali', 'VIREMENT_EXCEPTIONEL', NULL, 'Mali', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(191, 34, 3, 314, '706314', 'COMMISSION DE TRANSFERT-Togo', 'VIREMENT_EXCEPTIONEL', NULL, 'Togo', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(192, 34, 3, 315, '706315', 'COMMISSION DE TRANSFERT-Mexique', 'VIREMENT_EXCEPTIONEL', NULL, 'Mexique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(193, 34, 3, 316, '706316', 'COMMISSION DE TRANSFERT-Inde', 'VIREMENT_EXCEPTIONEL', NULL, 'Inde', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(194, 34, 3, 317, '706317', 'COMMISSION DE TRANSFERT-Algérie', 'VIREMENT_EXCEPTIONEL', NULL, 'Algérie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(195, 34, 3, 318, '706318', 'COMMISSION DE TRANSFERT-Guinée', 'VIREMENT_EXCEPTIONEL', NULL, 'Guinée', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(196, 34, 3, 319, '706319', 'COMMISSION DE TRANSFERT-Tunisie', 'VIREMENT_EXCEPTIONEL', NULL, 'Tunisie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(197, 34, 3, 320, '706320', 'COMMISSION DE TRANSFERT-Maroc', 'VIREMENT_EXCEPTIONEL', NULL, 'Maroc', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(198, 34, 3, 321, '706321', 'COMMISSION DE TRANSFERT-Niger', 'VIREMENT_EXCEPTIONEL', NULL, 'Niger', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(199, 34, 3, 322, '706322', 'COMMISSION DE TRANSFERT-Afrique de l\'est', 'VIREMENT_EXCEPTIONEL', NULL, 'Afrique de l\'est', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(200, 34, 3, 323, '706323', 'COMMISSION DE TRANSFERT-Autres pays', 'VIREMENT_EXCEPTIONEL', NULL, 'Autres pays', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(209, 36, 3, 501, '706501', 'FRAIS DE SERVICE ATS-France', 'FRAIS_DE_SERVICE', NULL, 'France', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(210, 36, 3, 502, '706502', 'FRAIS DE SERVICE ATS-Allemagne', 'FRAIS_DE_SERVICE', NULL, 'Allemagne', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(211, 36, 3, 503, '706503', 'FRAIS DE SERVICE ATS-Belgique', 'FRAIS_DE_SERVICE', NULL, 'Belgique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(212, 36, 3, 504, '706504', 'FRAIS DE SERVICE ATS-Cameroun', 'FRAIS_DE_SERVICE', NULL, 'Cameroun', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(213, 36, 3, 505, '706505', 'FRAIS DE SERVICE ATS-Sénégal', 'FRAIS_DE_SERVICE', NULL, 'Sénégal', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(214, 36, 3, 506, '706506', 'FRAIS DE SERVICE ATS-Côte d\'Ivoire', 'FRAIS_DE_SERVICE', NULL, 'Côte d\'Ivoire', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(215, 36, 3, 507, '706507', 'FRAIS DE SERVICE ATS-Benin', 'FRAIS_DE_SERVICE', NULL, 'Benin', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(216, 36, 3, 508, '706508', 'FRAIS DE SERVICE ATS-Burkina Faso', 'FRAIS_DE_SERVICE', NULL, 'Burkina Faso', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(217, 36, 3, 509, '706509', 'FRAIS DE SERVICE ATS-Congo Brazzaville', 'FRAIS_DE_SERVICE', NULL, 'Congo Brazzaville', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(218, 36, 3, 510, '706510', 'FRAIS DE SERVICE ATS-Congo Kinshasa', 'FRAIS_DE_SERVICE', NULL, 'Congo Kinshasa', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(219, 36, 3, 511, '706511', 'FRAIS DE SERVICE ATS-Gabon', 'FRAIS_DE_SERVICE', NULL, 'Gabon', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(220, 36, 3, 512, '706512', 'FRAIS DE SERVICE ATS-Tchad', 'FRAIS_DE_SERVICE', NULL, 'Tchad', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(221, 36, 3, 513, '706513', 'FRAIS DE SERVICE ATS-Mali', 'FRAIS_DE_SERVICE', NULL, 'Mali', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(222, 36, 3, 514, '706514', 'FRAIS DE SERVICE ATS-Togo', 'FRAIS_DE_SERVICE', NULL, 'Togo', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(223, 36, 3, 515, '706515', 'FRAIS DE SERVICE ATS-Mexique', 'FRAIS_DE_SERVICE', NULL, 'Mexique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(224, 36, 3, 516, '706516', 'FRAIS DE SERVICE ATS-Inde', 'FRAIS_DE_SERVICE', NULL, 'Inde', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(225, 36, 3, 517, '706517', 'FRAIS DE SERVICE ATS-Algérie', 'FRAIS_DE_SERVICE', NULL, 'Algérie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(226, 36, 3, 518, '706518', 'FRAIS DE SERVICE ATS-Guinée', 'FRAIS_DE_SERVICE', NULL, 'Guinée', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(227, 36, 3, 519, '706519', 'FRAIS DE SERVICE ATS-Tunisie', 'FRAIS_DE_SERVICE', NULL, 'Tunisie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(228, 36, 3, 520, '706520', 'FRAIS DE SERVICE ATS-Maroc', 'FRAIS_DE_SERVICE', NULL, 'Maroc', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(229, 36, 3, 521, '706521', 'FRAIS DE SERVICE ATS-Niger', 'FRAIS_DE_SERVICE', NULL, 'Niger', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(230, 36, 3, 522, '706522', 'FRAIS DE SERVICE ATS-Afrique de l\'est', 'FRAIS_DE_SERVICE', NULL, 'Afrique de l\'est', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(231, 36, 3, 523, '706523', 'FRAIS DE SERVICE ATS-Autres pays', 'FRAIS_DE_SERVICE', NULL, 'Autres pays', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(240, 37, 3, 601, '706601', 'CA PLACEMENT-France', 'VIREMENT_INTERNE', NULL, 'France', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(241, 37, 3, 602, '706602', 'CA PLACEMENT-Allemagne', 'VIREMENT_INTERNE', NULL, 'Allemagne', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(242, 37, 3, 603, '706603', 'CA PLACEMENT-Belgique', 'VIREMENT_INTERNE', NULL, 'Belgique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(243, 37, 3, 604, '706604', 'CA PLACEMENT-Cameroun', 'VIREMENT_INTERNE', NULL, 'Cameroun', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(244, 37, 3, 605, '706605', 'CA PLACEMENT-Sénégal', 'VIREMENT_INTERNE', NULL, 'Sénégal', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(245, 37, 3, 606, '706606', 'CA PLACEMENT-Côte d\'Ivoire', 'VIREMENT_INTERNE', NULL, 'Côte d\'Ivoire', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(246, 37, 3, 607, '706607', 'CA PLACEMENT-Benin', 'VIREMENT_INTERNE', NULL, 'Benin', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(247, 37, 3, 608, '706608', 'CA PLACEMENT-Burkina Faso', 'VIREMENT_INTERNE', NULL, 'Burkina Faso', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(248, 37, 3, 609, '706609', 'CA PLACEMENT-Congo Brazzaville', 'VIREMENT_INTERNE', NULL, 'Congo Brazzaville', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(249, 37, 3, 610, '706610', 'CA PLACEMENT-Congo Kinshasa', 'VIREMENT_INTERNE', NULL, 'Congo Kinshasa', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(250, 37, 3, 611, '706611', 'CA PLACEMENT-Gabon', 'VIREMENT_INTERNE', NULL, 'Gabon', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(251, 37, 3, 612, '706612', 'CA PLACEMENT-Tchad', 'VIREMENT_INTERNE', NULL, 'Tchad', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(252, 37, 3, 613, '706613', 'CA PLACEMENT-Mali', 'VIREMENT_INTERNE', NULL, 'Mali', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(253, 37, 3, 614, '706614', 'CA PLACEMENT-Togo', 'VIREMENT_INTERNE', NULL, 'Togo', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(254, 37, 3, 615, '706615', 'CA PLACEMENT-Mexique', 'VIREMENT_INTERNE', NULL, 'Mexique', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(255, 37, 3, 616, '706616', 'CA PLACEMENT-Inde', 'VIREMENT_INTERNE', NULL, 'Inde', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(256, 37, 3, 617, '706617', 'CA PLACEMENT-Algérie', 'VIREMENT_INTERNE', NULL, 'Algérie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(257, 37, 3, 618, '706618', 'CA PLACEMENT-Guinée', 'VIREMENT_INTERNE', NULL, 'Guinée', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(258, 37, 3, 619, '706619', 'CA PLACEMENT-Tunisie', 'VIREMENT_INTERNE', NULL, 'Tunisie', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(259, 37, 3, 620, '706620', 'CA PLACEMENT-Maroc', 'VIREMENT_INTERNE', NULL, 'Maroc', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(260, 37, 3, 621, '706621', 'CA PLACEMENT-Niger', 'VIREMENT_INTERNE', NULL, 'Niger', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(261, 37, 3, 622, '706622', 'CA PLACEMENT-Afrique de l\'est', 'VIREMENT_INTERNE', NULL, 'Afrique de l\'est', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43'),
+(262, 37, 3, 623, '706623', 'CA PLACEMENT-Autres pays', 'VIREMENT_INTERNE', NULL, 'Autres pays', 3, 1, 1, 0.00, '2026-03-29 00:32:50', '2026-04-04 23:36:43');
 
 -- --------------------------------------------------------
 
@@ -990,61 +1055,61 @@ CREATE TABLE `treasury_accounts` (
 --
 
 INSERT INTO `treasury_accounts` (`id`, `account_code`, `account_label`, `bank_name`, `subsidiary_name`, `zone_code`, `country_label`, `country_type`, `payment_place`, `currency_code`, `opening_balance`, `current_balance`, `is_active`, `created_at`, `updated_at`) VALUES
-(1, '5120101', 'Fr_LCL_C - France', 'Fr_LCL_C', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, -36700.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(2, '5120102', 'Fr_LCL_M - France', 'Fr_LCL_M', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 16320.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(3, '5120103', 'FR_CIC - France', 'FR_CIC', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(4, '5120104', 'FR_CCOOP - France', 'FR_CCOOP', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(5, '5120105', 'Fr_MANGO - France', 'Fr_MANGO', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(6, '5120106', 'FR_SG - France', 'FR_SG', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(7, '5120107', 'FR_SG_EXPL - France', 'FR_SG_EXPL', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(8, '5120108', 'FR_SPENDESK - France', 'FR_SPENDESK', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, -50000.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(9, '5120109', 'FR_TRUST - France', 'FR_TRUST', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 50000.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(10, '5120301', 'BE_QUONTO - Belgique', 'BE_QUONTO', 'Studely', 'EU', 'Belgique', 'Filiale', 'France', 'EUR', 0.00, -14580.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(11, '5120302', 'BE_REVOLUT - Belgique', 'BE_REVOLUT', 'Studely', 'EU', 'Belgique', 'Filiale', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(12, '5120401', 'CM_BAC - Cameroun', 'CM_BAC', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, -599900.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(13, '5120402', 'CM_BAC_EXPL - Cameroun', 'CM_BAC_EXPL', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(14, '5120403', 'CM_BAC_REM - Cameroun', 'CM_BAC_REM', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(15, '5120404', 'CM_BGFI_DE - Cameroun', 'CM_BGFI_DE', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(16, '5120405', 'CM_BGFI_EXPL - Cameroun', 'CM_BGFI_EXPL', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(17, '5120406', 'CM_BGFI_FR - Cameroun', 'CM_BGFI_FR', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(18, '5120407', 'CM_CBC - Cameroun', 'CM_CBC', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(19, '5120408', 'CM_UBA - Cameroun', 'CM_UBA', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(20, '5120409', 'SF_CM_ACCESS_BANK - Cameroun', 'SF_CM_ACCESS_BANK', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(21, '5120410', 'SF_CM_AFD_BANK - Cameroun', 'SF_CM_AFD_BANK', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(22, '5120411', 'SF_CM_AFD_EXPL - Cameroun', 'SF_CM_AFD_EXPL', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(23, '5120412', 'SF_CM_BAC - Cameroun', 'SF_CM_BAC', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(24, '5120413', 'SF_CM_BAC_EXPL - Cameroun', 'SF_CM_BAC_EXPL', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(25, '5120414', 'SF_CM_BGFI - Cameroun', 'SF_CM_BGFI', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(26, '5120415', 'SF_CM_CCA_BANK - Cameroun', 'SF_CM_CCA_BANK', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(27, '5120416', 'SF_CM_UBA - Cameroun', 'SF_CM_UBA', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(28, '5120501', 'SF_SN_EcoBQ - Sénégal', 'SF_SN_EcoBQ', 'Studely Finance', 'AO', 'Sénégal', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(29, '5120502', 'SN_ECOBQ - Sénégal', 'SN_ECOBQ', 'Studely', 'AO', 'Sénégal', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(30, '5120601', 'CIV_ECOBQ - Côte d\'Ivoire', 'CIV_ECOBQ', 'Studely', 'AO', 'Côte d\'Ivoire', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(31, '5120602', 'SF_CIV_AFG - Côte d\'Ivoire', 'SF_CIV_AFG', 'Studely Finance', 'AO', 'Côte d\'Ivoire', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(32, '5120603', 'SF_CIV_EcoBQ - Côte d\'Ivoire', 'SF_CIV_EcoBQ', 'Studely Finance', 'AO', 'Côte d\'Ivoire', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(33, '5120701', 'BN_ECOBQ - Benin', 'BN_ECOBQ', 'Studely', 'AO', 'Benin', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(34, '5120702', 'SF_BN_EcoBQ - Benin', 'SF_BN_EcoBQ', 'Studely Finance', 'AO', 'Benin', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(35, '5120801', 'BFA_ECOBQ - Burkina Faso', 'BFA_ECOBQ', 'Studely', 'AO', 'Burkina Faso', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(36, '5120901', 'CD_BGFI - Congo Brazzaville', 'CD_BGFI', 'Studely', 'AC', 'Congo Brazzaville', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(37, '5120902', 'CD_BGFI_EXPL - Congo Brazzaville', 'CD_BGFI_EXPL', 'Studely', 'AC', 'Congo Brazzaville', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(38, '5120903', 'MUP_MF - Congo Brazzaville', 'MUP_MF', 'Studely', 'AC', 'Congo Brazzaville', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(39, '5121001', 'RD_BGFI - Congo Kinshasa', 'RD_BGFI', 'Studely', 'AC', 'Congo Kinshasa', 'Filiale', 'Local', 'USD', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(40, '5121002', 'RD_BGFI_EURO - Congo Kinshasa', 'RD_BGFI_EURO', 'Studely', 'AC', 'Congo Kinshasa', 'Filiale', 'Local', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(41, '5121101', 'GB_BGFI - Gabon', 'GB_BGFI', 'Studely', 'AC', 'Gabon', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(42, '5121102', 'GB_BGFI_EXPL - Gabon', 'GB_BGFI_EXPL', 'Studely', 'AC', 'Gabon', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(43, '5121103', 'SF_GB_ECOBQ - Gabon', 'SF_GB_ECOBQ', 'Studely Finance', 'AC', 'Gabon', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(44, '5121201', 'SF_CHD_ECOBAQ - Tchad', 'SF_CHD_ECOBAQ', 'Studely Finance', 'AC', 'Tchad', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(45, '5121202', 'SF_TCHAD_UBA - Tchad', 'SF_TCHAD_UBA', 'Studely Finance', 'AC', 'Tchad', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(46, '5121301', 'ML_ECOBQ - Mali', 'ML_ECOBQ', 'Studely', 'AO', 'Mali', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(47, '5121302', 'ML_SCOLARIS FI - Mali', 'ML_SCOLARIS FI', 'Studely', 'AO', 'Mali', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(48, '5121401', 'TGO_ECOBQ - Togo', 'TGO_ECOBQ', 'Studely', 'AO', 'Togo', 'Filiale', 'Local', 'XOF', 0.00, -725542.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(49, '5121403', 'SF_TG_EcoBQ - Togo', 'SF_TG_EcoBQ', 'Studely Finance', 'AO', 'Togo', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(50, '5121701', 'ALG_BNP - Algérie', 'ALG_BNP', 'Studely', 'AN', 'Algérie', 'Filiale', 'Local', 'DZD', 0.00, -288000.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(51, '5121801', 'GUI_ECOBQ - Guinée', 'GUI_ECOBQ', 'Studely', 'AO', 'Guinée', 'Filiale', 'Local', 'GNF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(52, '5121802', 'SF_GUI_EcoBQ - Guinée', 'SF_GUI_EcoBQ', 'Studely Finance', 'AO', 'Guinée', 'Filiale', 'Local', 'GNF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(53, '5121901', 'TN_ATTI - Tunisie', 'TN_ATTI', 'Studely', 'AN', 'Tunisie', 'Filiale', 'Local', 'TND', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(54, '5122001', 'MA_ATTI - Maroc', 'MA_ATTI', 'Studely', 'AN', 'Maroc', 'Filiale', 'Local', 'MAD', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23'),
-(55, '5122101', 'NG_ECOBQ - Niger', 'NG_ECOBQ', 'Studely', 'AO', 'Niger', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-01 21:45:23');
+(1, '5120101', 'Fr_LCL_C - France', 'Fr_LCL_C', 'Studely', 'EU', 'France', 'Filiale', 'Local', 'EUR', 100000.00, 63300.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(2, '5120102', 'Fr_LCL_M - France', 'Fr_LCL_M', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 16320.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(3, '5120103', 'FR_CIC - France', 'FR_CIC', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(4, '5120104', 'FR_CCOOP - France', 'FR_CCOOP', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(5, '5120105', 'Fr_MANGO - France', 'Fr_MANGO', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(6, '5120106', 'FR_SG - France', 'FR_SG', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(7, '5120107', 'FR_SG_EXPL - France', 'FR_SG_EXPL', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(8, '5120108', 'FR_SPENDESK - France', 'FR_SPENDESK', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, -50000.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(9, '5120109', 'FR_TRUST - France', 'FR_TRUST', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 50000.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(10, '5120301', 'BE_QUONTO - Belgique', 'BE_QUONTO', 'Studely', 'EU', 'Belgique', 'Filiale', 'France', 'EUR', 0.00, -14580.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(11, '5120302', 'BE_REVOLUT - Belgique', 'BE_REVOLUT', 'Studely', 'EU', 'Belgique', 'Filiale', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(12, '5120401', 'CM_BAC - Cameroun', 'CM_BAC', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, -599900.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(13, '5120402', 'CM_BAC_EXPL - Cameroun', 'CM_BAC_EXPL', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(14, '5120403', 'CM_BAC_REM - Cameroun', 'CM_BAC_REM', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(15, '5120404', 'CM_BGFI_DE - Cameroun', 'CM_BGFI_DE', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(16, '5120405', 'CM_BGFI_EXPL - Cameroun', 'CM_BGFI_EXPL', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(17, '5120406', 'CM_BGFI_FR - Cameroun', 'CM_BGFI_FR', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(18, '5120407', 'CM_CBC - Cameroun', 'CM_CBC', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(19, '5120408', 'CM_UBA - Cameroun', 'CM_UBA', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(20, '5120409', 'SF_CM_ACCESS_BANK - Cameroun', 'SF_CM_ACCESS_BANK', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(21, '5120410', 'SF_CM_AFD_BANK - Cameroun', 'SF_CM_AFD_BANK', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(22, '5120411', 'SF_CM_AFD_EXPL - Cameroun', 'SF_CM_AFD_EXPL', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(23, '5120412', 'SF_CM_BAC - Cameroun', 'SF_CM_BAC', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(24, '5120413', 'SF_CM_BAC_EXPL - Cameroun', 'SF_CM_BAC_EXPL', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(25, '5120414', 'SF_CM_BGFI - Cameroun', 'SF_CM_BGFI', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(26, '5120415', 'SF_CM_CCA_BANK - Cameroun', 'SF_CM_CCA_BANK', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(27, '5120416', 'SF_CM_UBA - Cameroun', 'SF_CM_UBA', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(28, '5120501', 'SF_SN_EcoBQ - Sénégal', 'SF_SN_EcoBQ', 'Studely Finance', 'AO', 'Sénégal', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(29, '5120502', 'SN_ECOBQ - Sénégal', 'SN_ECOBQ', 'Studely', 'AO', 'Sénégal', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(30, '5120601', 'CIV_ECOBQ - Côte d\'Ivoire', 'CIV_ECOBQ', 'Studely', 'AO', 'Côte d\'Ivoire', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(31, '5120602', 'SF_CIV_AFG - Côte d\'Ivoire', 'SF_CIV_AFG', 'Studely Finance', 'AO', 'Côte d\'Ivoire', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(32, '5120603', 'SF_CIV_EcoBQ - Côte d\'Ivoire', 'SF_CIV_EcoBQ', 'Studely Finance', 'AO', 'Côte d\'Ivoire', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(33, '5120701', 'BN_ECOBQ - Benin', 'BN_ECOBQ', 'Studely', 'AO', 'Benin', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(34, '5120702', 'SF_BN_EcoBQ - Benin', 'SF_BN_EcoBQ', 'Studely Finance', 'AO', 'Benin', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(35, '5120801', 'BFA_ECOBQ - Burkina Faso', 'BFA_ECOBQ', 'Studely', 'AO', 'Burkina Faso', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(36, '5120901', 'CD_BGFI - Congo Brazzaville', 'CD_BGFI', 'Studely', 'AC', 'Congo Brazzaville', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(37, '5120902', 'CD_BGFI_EXPL - Congo Brazzaville', 'CD_BGFI_EXPL', 'Studely', 'AC', 'Congo Brazzaville', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(38, '5120903', 'MUP_MF - Congo Brazzaville', 'MUP_MF', 'Studely', 'AC', 'Congo Brazzaville', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(39, '5121001', 'RD_BGFI - Congo Kinshasa', 'RD_BGFI', 'Studely', 'AC', 'Congo Kinshasa', 'Filiale', 'Local', 'USD', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(40, '5121002', 'RD_BGFI_EURO - Congo Kinshasa', 'RD_BGFI_EURO', 'Studely', 'AC', 'Congo Kinshasa', 'Filiale', 'Local', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(41, '5121101', 'GB_BGFI - Gabon', 'GB_BGFI', 'Studely', 'AC', 'Gabon', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(42, '5121102', 'GB_BGFI_EXPL - Gabon', 'GB_BGFI_EXPL', 'Studely', 'AC', 'Gabon', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(43, '5121103', 'SF_GB_ECOBQ - Gabon', 'SF_GB_ECOBQ', 'Studely Finance', 'AC', 'Gabon', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(44, '5121201', 'SF_CHD_ECOBAQ - Tchad', 'SF_CHD_ECOBAQ', 'Studely Finance', 'AC', 'Tchad', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(45, '5121202', 'SF_TCHAD_UBA - Tchad', 'SF_TCHAD_UBA', 'Studely Finance', 'AC', 'Tchad', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(46, '5121301', 'ML_ECOBQ - Mali', 'ML_ECOBQ', 'Studely', 'AO', 'Mali', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(47, '5121302', 'ML_SCOLARIS FI - Mali', 'ML_SCOLARIS FI', 'Studely', 'AO', 'Mali', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(48, '5121401', 'TGO_ECOBQ - Togo', 'TGO_ECOBQ', 'Studely', 'AO', 'Togo', 'Filiale', 'Local', 'XOF', 0.00, -725542.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(49, '5121403', 'SF_TG_EcoBQ - Togo', 'SF_TG_EcoBQ', 'Studely Finance', 'AO', 'Togo', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(50, '5121701', 'ALG_BNP - Algérie', 'ALG_BNP', 'Studely', 'AN', 'Algérie', 'Filiale', 'Local', 'DZD', 0.00, -288000.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(51, '5121801', 'GUI_ECOBQ - Guinée', 'GUI_ECOBQ', 'Studely', 'AO', 'Guinée', 'Filiale', 'Local', 'GNF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(52, '5121802', 'SF_GUI_EcoBQ - Guinée', 'SF_GUI_EcoBQ', 'Studely Finance', 'AO', 'Guinée', 'Filiale', 'Local', 'GNF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(53, '5121901', 'TN_ATTI - Tunisie', 'TN_ATTI', 'Studely', 'AN', 'Tunisie', 'Filiale', 'Local', 'TND', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(54, '5122001', 'MA_ATTI - Maroc', 'MA_ATTI', 'Studely', 'AN', 'Maroc', 'Filiale', 'Local', 'MAD', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43'),
+(55, '5122101', 'NG_ECOBQ - Niger', 'NG_ECOBQ', 'Studely', 'AO', 'Niger', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-04 23:36:43');
 
 -- --------------------------------------------------------
 
@@ -1142,11 +1207,20 @@ INSERT INTO `user_logs` (`id`, `user_id`, `action`, `module`, `entity_type`, `en
 (21, 1, 'logout', 'auth', 'user', 1, 'Déconnexion utilisateur', '2026-04-01 16:42:48'),
 (22, 1, 'login', 'auth', 'user', 1, 'Connexion utilisateur', '2026-04-01 16:42:55'),
 (23, 1, 'create_operation', 'operations', 'operation', 22, 'Création d’une opération corrigée', '2026-04-01 21:44:06'),
-(24, 1, 'create_operation', 'operations', 'operation', 23, 'Création d’une opération corrigée', '2026-04-01 21:45:23');
+(24, 1, 'create_operation', 'operations', 'operation', 23, 'Création d’une opération corrigée', '2026-04-01 21:45:23'),
+(25, 1, 'login', 'auth', 'user', 1, 'Connexion utilisateur', '2026-04-04 23:10:45'),
+(26, 1, 'edit_treasury_account', 'treasury', 'treasury_account', 1, 'Modification d’un compte de trésorerie', '2026-04-04 23:36:43');
 
 --
 -- Index pour les tables déchargées
 --
+
+--
+-- Index pour la table `accounting_rules`
+--
+ALTER TABLE `accounting_rules`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `uniq_rule_pair` (`operation_type_id`,`service_id`);
 
 --
 -- Index pour la table `account_categories`
@@ -1161,6 +1235,14 @@ ALTER TABLE `account_categories`
 ALTER TABLE `account_types`
   ADD PRIMARY KEY (`id`),
   ADD UNIQUE KEY `name` (`name`);
+
+--
+-- Index pour la table `audit_trail`
+--
+ALTER TABLE `audit_trail`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_audit_trail_entity` (`entity_type`,`entity_id`),
+  ADD KEY `idx_audit_trail_created_at` (`created_at`);
 
 --
 -- Index pour la table `bank_accounts`
@@ -1225,6 +1307,14 @@ ALTER TABLE `import_rows`
   ADD PRIMARY KEY (`id`),
   ADD KEY `idx_import_rows_status` (`status`),
   ADD KEY `idx_import_rows_import` (`import_id`);
+
+--
+-- Index pour la table `notifications`
+--
+ALTER TABLE `notifications`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_notifications_is_read` (`is_read`),
+  ADD KEY `idx_notifications_created_at` (`created_at`);
 
 --
 -- Index pour la table `operations`
@@ -1350,6 +1440,12 @@ ALTER TABLE `user_logs`
 --
 
 --
+-- AUTO_INCREMENT pour la table `accounting_rules`
+--
+ALTER TABLE `accounting_rules`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT pour la table `account_categories`
 --
 ALTER TABLE `account_categories`
@@ -1360,6 +1456,12 @@ ALTER TABLE `account_categories`
 --
 ALTER TABLE `account_types`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
+
+--
+-- AUTO_INCREMENT pour la table `audit_trail`
+--
+ALTER TABLE `audit_trail`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
 -- AUTO_INCREMENT pour la table `bank_accounts`
@@ -1389,7 +1491,7 @@ ALTER TABLE `client_bank_accounts`
 -- AUTO_INCREMENT pour la table `currencies`
 --
 ALTER TABLE `currencies`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=16;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
 
 --
 -- AUTO_INCREMENT pour la table `imports`
@@ -1401,6 +1503,12 @@ ALTER TABLE `imports`
 -- AUTO_INCREMENT pour la table `import_rows`
 --
 ALTER TABLE `import_rows`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT pour la table `notifications`
+--
+ALTER TABLE `notifications`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
@@ -1473,7 +1581,7 @@ ALTER TABLE `users`
 -- AUTO_INCREMENT pour la table `user_logs`
 --
 ALTER TABLE `user_logs`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=25;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=27;
 
 --
 -- Contraintes pour les tables déchargées
