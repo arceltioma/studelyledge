@@ -14,7 +14,7 @@ if (function_exists('studelyEnforceAccess')) {
 }
 
 $pageTitle = 'Créer une opération';
-$pageSubtitle = 'Création sécurisée avec aperçu comptable';
+$pageSubtitle = 'Création sécurisée avec prévisualisation comptable avant validation';
 
 $operationTypes = tableExists($pdo, 'ref_operation_types')
     ? $pdo->query("
@@ -106,32 +106,65 @@ if (!function_exists('sl_find_by_id')) {
     }
 }
 
+$formData = [
+    'operation_date' => date('Y-m-d'),
+    'amount' => '',
+    'currency_code' => 'EUR',
+    'client_id' => '',
+    'operation_type_id' => '',
+    'service_id' => '',
+    'linked_bank_account_id' => '',
+    'reference' => '',
+    'label' => '',
+    'notes' => '',
+    'source_account_code' => '',
+    'destination_account_code' => '',
+];
+
 $preview = null;
 $errorMessage = '';
 $successMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $formData = [
+        'operation_date' => trim((string)($_POST['operation_date'] ?? date('Y-m-d'))),
+        'amount' => trim((string)($_POST['amount'] ?? '')),
+        'currency_code' => trim((string)($_POST['currency_code'] ?? 'EUR')),
+        'client_id' => trim((string)($_POST['client_id'] ?? '')),
+        'operation_type_id' => trim((string)($_POST['operation_type_id'] ?? '')),
+        'service_id' => trim((string)($_POST['service_id'] ?? '')),
+        'linked_bank_account_id' => trim((string)($_POST['linked_bank_account_id'] ?? '')),
+        'reference' => trim((string)($_POST['reference'] ?? '')),
+        'label' => trim((string)($_POST['label'] ?? '')),
+        'notes' => trim((string)($_POST['notes'] ?? '')),
+        'source_account_code' => trim((string)($_POST['source_account_code'] ?? '')),
+        'destination_account_code' => trim((string)($_POST['destination_account_code'] ?? '')),
+    ];
+
     try {
         if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
             throw new RuntimeException('Jeton CSRF invalide.');
         }
 
-        $operationDate = trim((string)($_POST['operation_date'] ?? date('Y-m-d')));
-        $amount = (float)($_POST['amount'] ?? 0);
-        $currencyCode = trim((string)($_POST['currency_code'] ?? 'EUR'));
-        $clientId = ($_POST['client_id'] ?? '') !== '' ? (int)$_POST['client_id'] : null;
-        $operationTypeId = (int)($_POST['operation_type_id'] ?? 0);
-        $serviceId = ($_POST['service_id'] ?? '') !== '' ? (int)$_POST['service_id'] : null;
-        $linkedBankAccountId = ($_POST['linked_bank_account_id'] ?? '') !== '' ? (int)$_POST['linked_bank_account_id'] : null;
-        $reference = trim((string)($_POST['reference'] ?? ''));
-        $label = trim((string)($_POST['label'] ?? ''));
-        $notes = trim((string)($_POST['notes'] ?? ''));
-        $sourceAccountCode = trim((string)($_POST['source_account_code'] ?? ''));
-        $destinationAccountCode = trim((string)($_POST['destination_account_code'] ?? ''));
+        $operationDate = $formData['operation_date'];
+        $amount = (float)$formData['amount'];
+        $currencyCode = $formData['currency_code'] !== '' ? $formData['currency_code'] : 'EUR';
+        $clientId = $formData['client_id'] !== '' ? (int)$formData['client_id'] : null;
+        $operationTypeId = $formData['operation_type_id'] !== '' ? (int)$formData['operation_type_id'] : 0;
+        $serviceId = $formData['service_id'] !== '' ? (int)$formData['service_id'] : null;
+        $linkedBankAccountId = $formData['linked_bank_account_id'] !== '' ? (int)$formData['linked_bank_account_id'] : null;
+        $reference = $formData['reference'];
+        $label = $formData['label'];
+        $notes = $formData['notes'];
+        $sourceAccountCode = $formData['source_account_code'];
+        $destinationAccountCode = $formData['destination_account_code'];
         $actionMode = trim((string)($_POST['action_mode'] ?? 'preview'));
 
         if ($operationDate === '') {
             throw new RuntimeException('Date obligatoire.');
+        }
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $operationDate)) {
+            throw new RuntimeException('Date invalide.');
         }
         if ($amount <= 0) {
             throw new RuntimeException('Montant invalide.');
@@ -171,7 +204,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'CA_DEBOURDS_ASSURANCE::CA_DEBOURDS_ASSURANCE',
             'FRAIS_DEBOURDS_MICROFINANCE::FRAIS_DEBOURDS_MICROFINANCE',
             'CA_COURTAGE_PRET::CA_COURTAGE_PRET',
-            'CA_LOGEMENT::CA_LOGEMENT'
+            'CA_LOGEMENT::CA_LOGEMENT',
         ];
 
         $manualKey = $typeCode . '::' . $serviceCode;
@@ -184,7 +217,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $payload = [
             'operation_date' => $operationDate,
             'amount' => $amount,
-            'currency_code' => $currencyCode !== '' ? $currencyCode : 'EUR',
+            'currency_code' => $currencyCode,
             'client_id' => $clientId,
             'service_id' => $serviceId,
             'service_code' => $serviceCode,
@@ -221,9 +254,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 );
             }
 
+            if (function_exists('createNotification') && isset($_SESSION['user_id'])) {
+                createNotification(
+                    $pdo,
+                    'operation_create',
+                    'Nouvelle opération créée : ' . ($payload['label'] ?? 'Opération'),
+                    'success',
+                    APP_URL . 'modules/operations/operation_view.php?id=' . $newId,
+                    'operation',
+                    $newId,
+                    (int)$_SESSION['user_id']
+                );
+            }
+
             $pdo->commit();
+
             $successMessage = 'Opération créée avec succès.';
-            $_POST = [];
+            $formData = [
+                'operation_date' => date('Y-m-d'),
+                'amount' => '',
+                'currency_code' => 'EUR',
+                'client_id' => '',
+                'operation_type_id' => '',
+                'service_id' => '',
+                'linked_bank_account_id' => '',
+                'reference' => '',
+                'label' => '',
+                'notes' => '',
+                'source_account_code' => '',
+                'destination_account_code' => '',
+            ];
+            $preview = null;
         }
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
@@ -247,26 +308,28 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
         <div class="dashboard-grid-2">
             <div class="form-card">
+                <h3>Paramétrage de l’opération</h3>
+                <p class="muted">Renseigne les champs puis lance une prévisualisation avant validation.</p>
+
                 <form method="POST">
                     <?= csrf_input() ?>
 
                     <div class="dashboard-grid-2">
                         <div>
                             <label>Date</label>
-                            <input type="date" name="operation_date" value="<?= e($_POST['operation_date'] ?? date('Y-m-d')) ?>" required>
+                            <input type="date" name="operation_date" value="<?= e($formData['operation_date']) ?>" required>
                         </div>
 
                         <div>
                             <label>Montant</label>
-                            <input type="number" step="0.01" name="amount" value="<?= e($_POST['amount'] ?? '') ?>" required>
+                            <input type="number" step="0.01" name="amount" value="<?= e($formData['amount']) ?>" required>
                         </div>
 
                         <div>
                             <label>Devise</label>
-                            <?php $selectedCurrency = (string)($_POST['currency_code'] ?? 'EUR'); ?>
                             <select name="currency_code" required>
                                 <?php foreach ($currencies as $currency): ?>
-                                    <option value="<?= e($currency['code']) ?>" <?= $selectedCurrency === $currency['code'] ? 'selected' : '' ?>>
+                                    <option value="<?= e($currency['code']) ?>" <?= $formData['currency_code'] === $currency['code'] ? 'selected' : '' ?>>
                                         <?= e($currency['code'] . ' - ' . $currency['label']) ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -275,7 +338,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <div id="client-wrapper">
                             <label>Client</label>
-                            <?php $selectedClient = (string)($_POST['client_id'] ?? ''); ?>
                             <select name="client_id" id="client_id">
                                 <option value="">Choisir</option>
                                 <?php foreach ($clients as $client): ?>
@@ -285,7 +347,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                         data-country-destination="<?= e($client['country_destination'] ?? '') ?>"
                                         data-client-account="<?= e($client['generated_client_account'] ?? '') ?>"
                                         data-treasury-account="<?= e($client['treasury_account_code'] ?? '') ?>"
-                                        <?= $selectedClient == $client['id'] ? 'selected' : '' ?>
+                                        <?= $formData['client_id'] == $client['id'] ? 'selected' : '' ?>
                                     >
                                         <?= e(($client['client_code'] ?? '') . ' - ' . ($client['full_name'] ?? '')) ?>
                                     </option>
@@ -295,11 +357,10 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <div>
                             <label>Type opération</label>
-                            <?php $selectedTypeId = (string)($_POST['operation_type_id'] ?? ''); ?>
                             <select name="operation_type_id" id="operation_type_id" required>
                                 <option value="">Choisir</option>
                                 <?php foreach ($operationTypes as $typeRow): ?>
-                                    <option value="<?= (int)$typeRow['id'] ?>" data-type-code="<?= e(sl_normalize_code($typeRow['code'] ?? '')) ?>" <?= $selectedTypeId == $typeRow['id'] ? 'selected' : '' ?>>
+                                    <option value="<?= (int)$typeRow['id'] ?>" data-type-code="<?= e(sl_normalize_code($typeRow['code'] ?? '')) ?>" <?= $formData['operation_type_id'] == $typeRow['id'] ? 'selected' : '' ?>>
                                         <?= e($typeRow['label']) ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -308,7 +369,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <div>
                             <label>Type service</label>
-                            <?php $selectedServiceId = (string)($_POST['service_id'] ?? ''); ?>
                             <select name="service_id" id="service_id" required>
                                 <option value="">Choisir d’abord un type</option>
                                 <?php foreach ($services as $serviceRow): ?>
@@ -317,7 +377,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                         data-type-id="<?= (int)($serviceRow['operation_type_id'] ?? 0) ?>"
                                         data-type-code="<?= e(sl_normalize_code($serviceRow['operation_type_code'] ?? '')) ?>"
                                         data-service-code="<?= e(sl_normalize_code($serviceRow['code'] ?? '')) ?>"
-                                        <?= $selectedServiceId == $serviceRow['id'] ? 'selected' : '' ?>
+                                        <?= $formData['service_id'] == $serviceRow['id'] ? 'selected' : '' ?>
                                     >
                                         <?= e($serviceRow['label']) ?>
                                     </option>
@@ -329,9 +389,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <label>Compte bancaire lié</label>
                             <select name="linked_bank_account_id" id="linked_bank_account_id">
                                 <option value="">Choisir</option>
-                                <?php $selectedBank = (string)($_POST['linked_bank_account_id'] ?? ''); ?>
                                 <?php foreach ($bankAccounts as $acc): ?>
-                                    <option value="<?= (int)$acc['id'] ?>" <?= $selectedBank == $acc['id'] ? 'selected' : '' ?>>
+                                    <option value="<?= (int)$acc['id'] ?>" <?= $formData['linked_bank_account_id'] == $acc['id'] ? 'selected' : '' ?>>
                                         <?= e(($acc['account_name'] ?? 'Compte') . ' - ' . ($acc['account_number'] ?? '')) ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -340,26 +399,25 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <div>
                             <label>Référence / Intitulé</label>
-                            <input type="text" name="reference" value="<?= e($_POST['reference'] ?? '') ?>">
+                            <input type="text" name="reference" value="<?= e($formData['reference']) ?>">
                         </div>
 
-                        <div style="grid-column: 1 / -1;">
+                        <div style="grid-column:1 / -1;">
                             <label>Note / Motif</label>
-                            <textarea name="notes" rows="4"><?= e($_POST['notes'] ?? '') ?></textarea>
+                            <textarea name="notes" rows="4"><?= e($formData['notes']) ?></textarea>
                         </div>
 
                         <div id="source-account-wrapper">
                             <label>Compte source (débit)</label>
-                            <?php $selectedSource = (string)($_POST['source_account_code'] ?? ''); ?>
                             <select name="source_account_code" id="source_account_code">
                                 <option value="">Choisir</option>
                                 <?php foreach ($treasuryAccounts as $acc): ?>
-                                    <option value="<?= e($acc['account_code']) ?>" <?= $selectedSource === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
+                                    <option value="<?= e($acc['account_code']) ?>" <?= $formData['source_account_code'] === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
                                         <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
                                     </option>
                                 <?php endforeach; ?>
                                 <?php foreach ($serviceAccounts as $acc): ?>
-                                    <option value="<?= e($acc['account_code']) ?>" <?= $selectedSource === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
+                                    <option value="<?= e($acc['account_code']) ?>" <?= $formData['source_account_code'] === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
                                         <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -368,36 +426,25 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <div id="destination-account-wrapper">
                             <label>Compte destination (crédit)</label>
-                            <?php $selectedDestination = (string)($_POST['destination_account_code'] ?? ''); ?>
                             <select name="destination_account_code" id="destination_account_code">
                                 <option value="">Choisir</option>
                                 <?php foreach ($treasuryAccounts as $acc): ?>
-                                    <option value="<?= e($acc['account_code']) ?>" <?= $selectedDestination === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
+                                    <option value="<?= e($acc['account_code']) ?>" <?= $formData['destination_account_code'] === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
                                         <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
                                     </option>
                                 <?php endforeach; ?>
                                 <?php foreach ($serviceAccounts as $acc): ?>
-                                    <option value="<?= e($acc['account_code']) ?>" <?= $selectedDestination === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
+                                    <option value="<?= e($acc['account_code']) ?>" <?= $formData['destination_account_code'] === ($acc['account_code'] ?? '') ? 'selected' : '' ?>>
                                         <?= e($acc['account_code'] . ' - ' . $acc['account_label']) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
 
-                        <div>
-                            <label>Compte débité calculé</label>
-                            <input type="text" value="<?= e($preview['debit_account_code'] ?? '') ?>" readonly>
+                        <div style="grid-column:1 / -1;">
+                            <label>Libellé libre</label>
+                            <input type="text" name="label" value="<?= e($formData['label']) ?>">
                         </div>
-
-                        <div>
-                            <label>Compte crédité calculé</label>
-                            <input type="text" value="<?= e($preview['credit_account_code'] ?? '') ?>" readonly>
-                        </div>
-                    </div>
-
-                    <div style="margin-top:16px;">
-                        <label>Libellé libre</label>
-                        <input type="text" name="label" value="<?= e($_POST['label'] ?? '') ?>">
                     </div>
 
                     <div class="btn-group" style="margin-top:20px;">
@@ -409,11 +456,66 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </div>
 
             <div class="card">
-                <h3>Aperçu Comptable</h3>
-                <div class="stat-row"><span class="metric-label">Débit</span><span class="metric-value"><?= e($preview['debit_account_code'] ?? '') ?></span></div>
-                <div class="stat-row"><span class="metric-label">Crédit</span><span class="metric-value"><?= e($preview['credit_account_code'] ?? '') ?></span></div>
-                <div class="stat-row"><span class="metric-label">Mode manuel</span><span class="metric-value"><?= !empty($preview['is_manual_accounting']) ? 'Oui' : 'Non' ?></span></div>
-                <div class="stat-row"><span class="metric-label">Hash anti-doublon</span><span class="metric-value"><?= e($preview['operation_hash'] ?? '') ?></span></div>
+                <h3>Prévisualisation avant validation</h3>
+
+                <?php if ($preview): ?>
+                    <div class="sl-data-list">
+                        <div class="sl-data-list__row">
+                            <span>Date</span>
+                            <strong><?= e($formData['operation_date']) ?></strong>
+                        </div>
+                        <div class="sl-data-list__row">
+                            <span>Montant</span>
+                            <strong><?= e(number_format((float)$formData['amount'], 2, ',', ' ')) ?> <?= e($formData['currency_code']) ?></strong>
+                        </div>
+                        <div class="sl-data-list__row">
+                            <span>Compte débité</span>
+                            <strong><?= e($preview['debit_account_code'] ?? '') ?></strong>
+                        </div>
+                        <div class="sl-data-list__row">
+                            <span>Compte crédité</span>
+                            <strong><?= e($preview['credit_account_code'] ?? '') ?></strong>
+                        </div>
+                        <div class="sl-data-list__row">
+                            <span>Mode manuel</span>
+                            <strong><?= !empty($preview['is_manual_accounting']) ? 'Oui' : 'Non' ?></strong>
+                        </div>
+                        <div class="sl-data-list__row">
+                            <span>Hash anti-doublon</span>
+                            <strong style="word-break:break-all;"><?= e($preview['operation_hash'] ?? '') ?></strong>
+                        </div>
+                    </div>
+
+                    <?php if (!empty($preview['preview_lines']) && is_array($preview['preview_lines'])): ?>
+                        <div class="sl-table-wrap" style="margin-top:18px;">
+                            <table class="sl-table">
+                                <thead>
+                                    <tr>
+                                        <th>Sens</th>
+                                        <th>Compte</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($preview['preview_lines'] as $line): ?>
+                                        <tr>
+                                            <td><?= e((string)($line['side'] ?? '')) ?></td>
+                                            <td><?= e((string)($line['account'] ?? '')) ?></td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php endif; ?>
+
+                    <div class="dashboard-note" style="margin-top:18px;">
+                        La prévisualisation est correcte. Tu peux maintenant valider l’enregistrement à gauche.
+                    </div>
+                <?php else: ?>
+                    <div class="dashboard-note">
+                        Remplis le formulaire puis clique sur <strong>Prévisualiser</strong>.  
+                        L’aperçu comptable complet apparaîtra ici avant validation définitive.
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
 

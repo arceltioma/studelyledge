@@ -1,0 +1,120 @@
+StudelyLedger/
+├── assets/
+│   ├── css/
+│   │   ├── style.css
+│   │   └── dashboard.css
+│   ├── js/
+│   │   ├── app.js
+│   │   └── charts.js
+│   └── img/
+│       ├── logo.png
+│       └── logo-sidebar.png
+│
+├── config/
+│   ├── app.php
+│   ├── database.php
+│   └── security.php
+│
+├── includes/
+│   ├── admin_functions.php
+│   ├── auth_check.php
+│   ├── permission_middleware.php
+│   ├── header.php
+│   ├── sidebar.php
+│   ├── footer.php
+│   ├── document_start.php
+│   ├── document_end.php
+│   ├── rules_engine.php
+│   ├── anomaly_engine.php
+│   └── import_mapper.php
+│
+├── modules/
+│   ├── dashboard/
+│   │   └── dashboard.php
+│   │
+│   ├── clients/
+│   │   ├── clients_list.php
+│   │   ├── client_create.php
+│   │   ├── client_edit.php
+│   │   ├── client_view.php
+│   │   ├── clients_archive.php
+│   │   ├── import_clients_csv.php
+│   │   └── client_profiles.php
+│   │
+│   ├── operations/
+│   │   ├── operations_list.php
+│   │   ├── operation_create.php
+│   │   ├── operation_edit.php
+│   │   ├── operation_view.php
+│   │   └── operation_delete.php
+│   │
+│   ├── imports/
+│   │   ├── index.php
+│   │   ├── import_upload.php
+│   │   ├── import_mapping.php
+│   │   ├── import_preview.php
+│   │   ├── import_journal.php
+│   │   └── import_rejected.php
+│   │
+│   ├── treasury/
+│   │   ├── index.php
+│   │   ├── treasury_create.php
+│   │   ├── treasury_edit.php
+│   │   ├── treasury_view.php
+│   │   ├── treasury_archive.php
+│   │   └── import_treasury_csv.php
+│   │
+│   ├── service_accounts/
+│   │   ├── index.php
+│   │   ├── create.php
+│   │   ├── edit.php
+│   │   ├── view.php
+│   │   ├── archive.php
+│   │   └── import_service_accounts_csv.php
+│   │
+│   ├── analytics/
+│   │   └── revenue_analysis.php
+│   │
+│   ├── statements/
+│   │   ├── index.php
+│   │   ├── account_statements.php
+│   │   ├── client_profiles.php
+│   │   └── generate_bulk_pdf.php
+│   │
+│   ├── notifications/
+│   │   └── notifications.php
+│   │
+│   ├── search/
+│   │   └── global_search.php
+│   │
+│   ├── support/
+│   │   ├── support_requests.php
+│   │   ├── ask_question.php
+│   │   ├── report_bug.php
+│   │   └── request_access.php
+│   │
+│   ├── admin/
+│   │   ├── dashboard_admin.php
+│   │   ├── audit_logs.php
+│   │   ├── user_logs.php
+│   │   ├── users.php
+│   │   ├── roles.php
+│   │   ├── access_matrix.php
+│   │   ├── settings.php
+│   │   └── support_requests.php
+│   │
+│   └── admin_functional/
+│       ├── dashboard.php
+│       ├── manage_services.php
+│       ├── manage_operation_types.php
+│       ├── manage_accounts.php
+│       ├── manage_accounting_rules.php
+│       ├── accounting_rule_create.php
+│       └── accounting_rule_edit.php
+│
+├── vendor/
+│   └── ...
+│
+├── logout.php
+├── index.php
+└── .htaccess

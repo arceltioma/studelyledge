@@ -3009,3 +3009,33 @@ if (!function_exists('slClearPreviewPayload')) {
         unset($_SESSION[slPreviewSessionKey($scope)]);
     }
 }
+if (!function_exists('slRenderPreviewCard')) {
+    function slRenderPreviewCard(string $title, array $rows = [], string $emptyMessage = 'Aucun aperçu disponible.'): string
+    {
+        ob_start();
+        ?>
+        <div class="sl-card sl-stable-block">
+            <div class="sl-card-head">
+                <div>
+                    <h3><?= e($title) ?></h3>
+                    <p class="sl-card-head-subtitle">Contrôle avant validation</p>
+                </div>
+            </div>
+
+            <?php if ($rows): ?>
+                <div class="sl-data-list">
+                    <?php foreach ($rows as $label => $value): ?>
+                        <div class="sl-data-list__row">
+                            <span><?= e((string)$label) ?></span>
+                            <strong><?= e(is_scalar($value) || $value === null ? (string)$value : json_encode($value, JSON_UNESCAPED_UNICODE)) ?></strong>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+            <?php else: ?>
+                <div class="dashboard-note"><?= e($emptyMessage) ?></div>
+            <?php endif; ?>
+        </div>
+        <?php
+        return (string)ob_get_clean();
+    }
+}

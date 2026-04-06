@@ -7,7 +7,6 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-/* LOT 2 - nouveaux moteurs additifs */
 require_once __DIR__ . '/../../includes/rules_engine.php';
 require_once __DIR__ . '/../../includes/anomaly_engine.php';
 require_once __DIR__ . '/../../includes/import_mapper.php';
@@ -23,7 +22,7 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 $pageTitle = 'Prévisualisation import intelligent';
-$pageSubtitle = 'Validation métier, mapping validé et règles avant insertion';
+$pageSubtitle = 'Validation métier et contrôle avant insertion définitive';
 
 const SL_IMPORT_SESSION_KEY = 'studelyledger_operations_import_preview_v3';
 
@@ -184,8 +183,6 @@ $preparedRows = [];
 $importableCount = 0;
 $errorCount = 0;
 $duplicateCount = 0;
-
-/* LOT 2 - stats intelligentes */
 $warningCount = 0;
 $infoCount = 0;
 $dangerCount = 0;
@@ -248,8 +245,6 @@ foreach ($rawRows as $index => $row) {
         }
 
         $requiresClient = !($typeCode === 'VIREMENT' && $serviceCode === 'INTERNE');
-        $client = null;
-
         if ($requiresClient) {
             $client = sl_preview_find_client($pdo, $clientCode);
             if (!$client) {
@@ -294,7 +289,6 @@ foreach ($rawRows as $index => $row) {
             'manual_credit_account_code' => $isManualCase ? $destinationAccountCode : '',
         ];
 
-        /* LOT 2 - résumé des règles */
         $rulesSummary = function_exists('sl_rules_build_summary')
             ? sl_rules_build_summary(
                 $typeCode,
@@ -304,11 +298,15 @@ foreach ($rawRows as $index => $row) {
             )
             : [];
 
-        if (!empty($rulesSummary['service_account_search_text']) || !empty($rulesSummary['requires_client']) || !empty($rulesSummary['requires_linked_bank']) || !empty($rulesSummary['requires_manual_accounts'])) {
+        if (
+            !empty($rulesSummary['service_account_search_text']) ||
+            !empty($rulesSummary['requires_client']) ||
+            !empty($rulesSummary['requires_linked_bank']) ||
+            !empty($rulesSummary['requires_manual_accounts'])
+        ) {
             $rowsWithRulesCount++;
         }
 
-        /* LOT 2 - anomalies non destructives */
         $anomalies = function_exists('sl_detect_operation_anomalies')
             ? sl_detect_operation_anomalies(array_merge($payload, [
                 'country_commercial' => (string)($client['country_commercial'] ?? ''),
@@ -416,7 +414,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        /* LOT 2 - notification succès additive */
         if (function_exists('createNotification')) {
             createNotification(
                 $pdo,
@@ -470,64 +467,78 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
 
-        <div class="dashboard-grid-4" style="margin-bottom:20px;">
-            <div class="card stat-card">
-                <div class="stat-title">Fichier</div>
-                <div class="stat-value" style="font-size:1rem;"><?= e($fileName) ?></div>
-                <div class="stat-subtitle">Source analysée</div>
+        <div class="dashboard-grid-2">
+            <div class="form-card">
+                <h3>Validation de l’import</h3>
+                <p class="muted">Contrôle final avant insertion des lignes valides.</p>
+
+                <form method="POST">
+                    <?= csrf_input() ?>
+
+                    <div class="sl-data-list">
+                        <div class="sl-data-list__row">
+                            <span>Fichier</span>
+                            <strong><?= e($fileName) ?></strong>
+                        </div>
+                        <div class="sl-data-list__row">
+                            <span>Champs mappés</span>
+                            <strong><?= count(array_filter($finalMapping)) ?></strong>
+                        </div>
+                        <div class="sl-data-list__row">
+                            <span>Lignes importables</span>
+                            <strong><?= (int)$importableCount ?></strong>
+                        </div>
+                        <div class="sl-data-list__row">
+                            <span>Lignes bloquées</span>
+                            <strong><?= (int)($errorCount + $duplicateCount) ?></strong>
+                        </div>
+                    </div>
+
+                    <div class="btn-group" style="margin-top:20px;">
+                        <button type="submit" name="import_action" value="confirm_import" class="btn btn-success" <?= $importableCount <= 0 ? 'disabled' : '' ?>>
+                            Confirmer l’import
+                        </button>
+                        <button type="submit" name="import_action" value="cancel" class="btn btn-outline">
+                            Annuler
+                        </button>
+                        <a href="<?= e(APP_URL) ?>modules/imports/import_mapping.php" class="btn btn-secondary">Revoir le mapping</a>
+                    </div>
+                </form>
             </div>
 
-            <div class="card stat-card">
-                <div class="stat-title">Champs mappés</div>
-                <div class="stat-value"><?= count(array_filter($finalMapping)) ?></div>
-                <div class="stat-subtitle">Mapping validé</div>
-            </div>
+            <div class="card">
+                <h3>Prévisualisation avant validation</h3>
 
-            <div class="card stat-card">
-                <div class="stat-title">Importables</div>
-                <div class="stat-value"><?= (int)$importableCount ?></div>
-                <div class="stat-subtitle">Lignes prêtes</div>
-            </div>
+                <div class="sl-data-list">
+                    <div class="sl-data-list__row">
+                        <span>Règles intelligentes</span>
+                        <strong><?= (int)$rowsWithRulesCount ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Warnings</span>
+                        <strong><?= (int)$warningCount ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Infos</span>
+                        <strong><?= (int)$infoCount ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Headers détectés</span>
+                        <strong><?= count($rawHeaders) ?></strong>
+                    </div>
+                </div>
 
-            <div class="card stat-card">
-                <div class="stat-title">Bloquées</div>
-                <div class="stat-value"><?= (int)($errorCount + $duplicateCount) ?></div>
-                <div class="stat-subtitle">Erreurs + doublons</div>
-            </div>
-        </div>
-
-        <!-- LOT 2 : résumé intelligent additif -->
-        <div class="dashboard-grid-4" style="margin-bottom:20px;">
-            <div class="card stat-card">
-                <div class="stat-title">Règles intelligentes</div>
-                <div class="stat-value"><?= (int)$rowsWithRulesCount ?></div>
-                <div class="stat-subtitle">Lignes enrichies par les règles</div>
-            </div>
-
-            <div class="card stat-card">
-                <div class="stat-title">Warnings</div>
-                <div class="stat-value"><?= (int)$warningCount ?></div>
-                <div class="stat-subtitle">Anomalies de niveau warning</div>
-            </div>
-
-            <div class="card stat-card">
-                <div class="stat-title">Infos</div>
-                <div class="stat-value"><?= (int)$infoCount ?></div>
-                <div class="stat-subtitle">Anomalies de niveau info</div>
-            </div>
-
-            <div class="card stat-card">
-                <div class="stat-title">Headers détectés</div>
-                <div class="stat-value"><?= count($rawHeaders) ?></div>
-                <div class="stat-subtitle">Source brute du mapping</div>
+                <div class="dashboard-note" style="margin-top:18px;">
+                    Vérifie les comptes débit/crédit, les règles et les messages de contrôle dans le tableau ci-dessous avant de confirmer.
+                </div>
             </div>
         </div>
 
         <?php if ($suggestedMapping): ?>
-            <div class="card" style="margin-bottom:20px;">
-                <h3>Suggestions intelligentes de mapping (LOT 2)</h3>
-                <div class="table-responsive">
-                    <table class="modern-table">
+            <div class="card" style="margin-top:20px;">
+                <h3>Suggestions intelligentes de mapping</h3>
+                <div class="sl-table-wrap">
+                    <table class="sl-table">
                         <thead>
                             <tr>
                                 <th>Colonne source</th>
@@ -551,24 +562,11 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </div>
         <?php endif; ?>
 
-        <div class="card">
-            <form method="POST" style="margin-bottom:20px;">
-                <?= csrf_input() ?>
-                <div class="btn-group">
-                    <button type="submit" name="import_action" value="confirm_import" class="btn btn-success" <?= $importableCount <= 0 ? 'disabled' : '' ?>>
-                        Confirmer l’import
-                    </button>
-                    <button type="submit" name="import_action" value="cancel" class="btn btn-outline">
-                        Annuler
-                    </button>
-                    <a href="<?= e(APP_URL) ?>modules/imports/import_mapping.php" class="btn btn-secondary">Revoir le mapping</a>
-                </div>
-            </form>
-
+        <div class="card" style="margin-top:20px;">
             <h3>Prévisualisation détaillée</h3>
 
-            <div class="table-responsive">
-                <table class="modern-table">
+            <div class="sl-table-wrap">
+                <table class="sl-table">
                     <thead>
                         <tr>
                             <th>Ligne</th>
