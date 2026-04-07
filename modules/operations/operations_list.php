@@ -13,12 +13,14 @@ if (function_exists('studelyEnforceAccess')) {
 }
 
 $pageTitle = 'Liste des opérations';
-$pageSubtitle = 'Suivi, contrôle et audit des opérations';
+$pageSubtitle = 'Suivi, contrôle, dashboard et audit des opérations';
 
-$search = trim($_GET['search'] ?? '');
-$type = trim($_GET['type'] ?? '');
-$service = trim($_GET['service'] ?? '');
-$client = trim($_GET['client'] ?? '');
+$search   = trim((string)($_GET['search'] ?? ''));
+$type     = trim((string)($_GET['type'] ?? ''));
+$service  = trim((string)($_GET['service'] ?? ''));
+$client   = trim((string)($_GET['client'] ?? ''));
+$dateFrom = trim((string)($_GET['date_from'] ?? ''));
+$dateTo   = trim((string)($_GET['date_to'] ?? ''));
 
 $where = ["1=1"];
 $params = [];
@@ -28,7 +30,9 @@ $params = [];
 ================================ */
 
 if ($search !== '') {
-    $where[] = "(o.reference LIKE ? OR o.label LIKE ?)";
+    $where[] = "(o.reference LIKE ? OR o.label LIKE ? OR o.debit_account_code LIKE ? OR o.credit_account_code LIKE ?)";
+    $params[] = "%$search%";
+    $params[] = "%$search%";
     $params[] = "%$search%";
     $params[] = "%$search%";
 }
@@ -46,6 +50,16 @@ if ($service !== '') {
 if ($client !== '') {
     $where[] = "c.id = ?";
     $params[] = $client;
+}
+
+if ($dateFrom !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom)) {
+    $where[] = "o.operation_date >= ?";
+    $params[] = $dateFrom;
+}
+
+if ($dateTo !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo)) {
+    $where[] = "o.operation_date <= ?";
+    $params[] = $dateTo;
 }
 
 $whereSQL = implode(' AND ', $where);
@@ -75,6 +89,38 @@ $stmt->execute($params);
 $operations = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 /* ===============================
+   STATS DASHBOARD
+================================ */
+
+$statsSql = "
+SELECT
+    COUNT(*) AS total_operations,
+    COALESCE(SUM(o.amount), 0) AS total_amount,
+    COALESCE(SUM(CASE WHEN COALESCE(o.is_manual_accounting,0) = 1 THEN 1 ELSE 0 END), 0) AS manual_operations,
+    COALESCE(SUM(CASE WHEN COALESCE(o.source_type,'') = 'manual' THEN 1 ELSE 0 END), 0) AS source_manual_operations
+FROM operations o
+LEFT JOIN clients c ON c.id = o.client_id
+LEFT JOIN ref_services rs ON rs.id = o.service_id
+WHERE {$whereSQL}
+";
+$statsStmt = $pdo->prepare($statsSql);
+$statsStmt->execute($params);
+$stats = $statsStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+$creditStatsSql = "
+SELECT
+    COALESCE(SUM(CASE WHEN o.amount > 0 THEN o.amount ELSE 0 END), 0) AS total_positive_amount,
+    COUNT(DISTINCT o.client_id) AS impacted_clients
+FROM operations o
+LEFT JOIN clients c ON c.id = o.client_id
+LEFT JOIN ref_services rs ON rs.id = o.service_id
+WHERE {$whereSQL}
+";
+$creditStatsStmt = $pdo->prepare($creditStatsSql);
+$creditStatsStmt->execute($params);
+$creditStats = $creditStatsStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+/* ===============================
    DATA POUR FILTRES
 ================================ */
 
@@ -100,59 +146,110 @@ require_once __DIR__ . '/../../includes/document_start.php';
 <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
 <div class="page-hero">
-
     <div class="btn-group">
         <a href="operation_create.php" class="btn btn-success">+ Nouvelle opération</a>
     </div>
 </div>
 
-<!-- =========================
-     FILTRES
-========================= -->
+<div class="dashboard-grid-4" style="margin-bottom:20px;">
+    <div class="card stat-card">
+        <div class="stat-title">Opérations</div>
+        <div class="stat-value"><?= (int)($stats['total_operations'] ?? 0) ?></div>
+        <div class="stat-subtitle">Résultats filtrés</div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="stat-title">Montant total</div>
+        <div class="stat-value" style="font-size:1.4rem;"><?= number_format((float)($stats['total_amount'] ?? 0), 2, ',', ' ') ?></div>
+        <div class="stat-subtitle">Somme des montants</div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="stat-title">Écritures manuelles</div>
+        <div class="stat-value"><?= (int)($stats['manual_operations'] ?? 0) ?></div>
+        <div class="stat-subtitle">is_manual_accounting = 1</div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="stat-title">Source manuelle</div>
+        <div class="stat-value"><?= (int)($stats['source_manual_operations'] ?? 0) ?></div>
+        <div class="stat-subtitle">source_type = manual</div>
+    </div>
+</div>
+
+<div class="dashboard-grid-2" style="margin-bottom:20px;">
+    <div class="card stat-card">
+        <div class="stat-title">Clients impactés</div>
+        <div class="stat-value"><?= (int)($creditStats['impacted_clients'] ?? 0) ?></div>
+        <div class="stat-subtitle">Clients distincts concernés</div>
+    </div>
+
+    <div class="card stat-card">
+        <div class="stat-title">Montants positifs</div>
+        <div class="stat-value" style="font-size:1.4rem;"><?= number_format((float)($creditStats['total_positive_amount'] ?? 0), 2, ',', ' ') ?></div>
+        <div class="stat-subtitle">Cumul des montants > 0</div>
+    </div>
+</div>
 
 <div class="card">
     <form method="GET" class="dashboard-grid-4">
+        <div>
+            <label>Recherche</label>
+            <input type="text" name="search" placeholder="Référence, libellé, comptes..." value="<?= e($search) ?>">
+        </div>
 
-        <input type="text" name="search" placeholder="Recherche..." value="<?= e($search) ?>">
+        <div>
+            <label>Type</label>
+            <select name="type">
+                <option value="">Tous</option>
+                <?php foreach ($types as $t): ?>
+                    <option value="<?= e($t['code']) ?>" <?= $type === $t['code'] ? 'selected' : '' ?>>
+                        <?= e($t['label']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
 
-        <select name="type">
-            <option value="">Type</option>
-            <?php foreach ($types as $t): ?>
-                <option value="<?= e($t['code']) ?>" <?= $type === $t['code'] ? 'selected' : '' ?>>
-                    <?= e($t['label']) ?>
-                </option>
-            <?php endforeach; ?>
-        </select>
+        <div>
+            <label>Service</label>
+            <select name="service">
+                <option value="">Tous</option>
+                <?php foreach ($services as $s): ?>
+                    <option value="<?= e($s['code']) ?>" <?= $service === $s['code'] ? 'selected' : '' ?>>
+                        <?= e($s['label']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
 
-        <select name="service">
-            <option value="">Service</option>
-            <?php foreach ($services as $s): ?>
-                <option value="<?= e($s['code']) ?>" <?= $service === $s['code'] ? 'selected' : '' ?>>
-                    <?= e($s['label']) ?>
-                </option>
-            <?php endforeach; ?>
-        </select>
+        <div>
+            <label>Client</label>
+            <select name="client">
+                <option value="">Tous</option>
+                <?php foreach ($clients as $c): ?>
+                    <option value="<?= (int)$c['id'] ?>" <?= $client == $c['id'] ? 'selected' : '' ?>>
+                        <?= e($c['client_code'] . ' - ' . $c['full_name']) ?>
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
 
-        <select name="client">
-            <option value="">Client</option>
-            <?php foreach ($clients as $c): ?>
-                <option value="<?= $c['id'] ?>" <?= $client == $c['id'] ? 'selected' : '' ?>>
-                    <?= e($c['client_code'] . ' - ' . $c['full_name']) ?>
-                </option>
-            <?php endforeach; ?>
-        </select>
+        <div>
+            <label>Date du</label>
+            <input type="date" name="date_from" value="<?= e($dateFrom) ?>">
+        </div>
 
-        <div class="btn-group">
+        <div>
+            <label>Date au</label>
+            <input type="date" name="date_to" value="<?= e($dateTo) ?>">
+        </div>
+
+        <div class="btn-group" style="margin-top:26px;">
             <button class="btn btn-primary">Filtrer</button>
             <a href="operations_list.php" class="btn btn-outline">Reset</a>
         </div>
-
     </form>
 </div>
-
-<!-- =========================
-     TABLEAU
-========================= -->
 
 <div class="card">
     <h3>Résultats (<?= count($operations) ?>)</h3>
@@ -175,30 +272,26 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <tbody>
                 <?php foreach ($operations as $op): ?>
                     <tr>
-                        <td><?= e($op['operation_date']) ?></td>
-
-                        <td>
-                            <?= e(($op['client_code'] ?? '') . ' - ' . ($op['full_name'] ?? '')) ?>
-                        </td>
-
-                        <td><?= e($op['type_label'] ?? '') ?></td>
-                        <td><?= e($op['service_label'] ?? '') ?></td>
-
-                        <td class="amount">
-                            <?= number_format((float)$op['amount'], 2, ',', ' ') ?>
-                        </td>
-
-                        <td><?= e($op['debit_account_code']) ?></td>
-                        <td><?= e($op['credit_account_code']) ?></td>
-
+                        <td><?= e((string)$op['operation_date']) ?></td>
+                        <td><?= e(trim((string)($op['client_code'] ?? '') . ' - ' . (string)($op['full_name'] ?? ''))) ?></td>
+                        <td><?= e((string)($op['type_label'] ?? $op['operation_type_code'] ?? '')) ?></td>
+                        <td><?= e((string)($op['service_label'] ?? '')) ?></td>
+                        <td class="amount"><?= number_format((float)$op['amount'], 2, ',', ' ') ?></td>
+                        <td><?= e((string)($op['debit_account_code'] ?? '')) ?></td>
+                        <td><?= e((string)($op['credit_account_code'] ?? '')) ?></td>
                         <td class="actions">
-                            <a href="operation_view.php?id=<?= $op['id'] ?>" class="btn btn-sm">Voir</a>
-                            <a href="operation_edit.php?id=<?= $op['id'] ?>" class="btn btn-sm btn-warning">Modifier</a>
-                            <a href="operation_delete.php?id=<?= $op['id'] ?>" class="btn btn-sm btn-danger"
-                               onclick="return confirm('Confirmer ?')">Supprimer</a>
+                            <a href="operation_view.php?id=<?= (int)$op['id'] ?>" class="btn btn-sm">Voir</a>
+                            <a href="operation_edit.php?id=<?= (int)$op['id'] ?>" class="btn btn-sm btn-warning">Modifier</a>
+                            <a href="operation_delete.php?id=<?= (int)$op['id'] ?>" class="btn btn-sm btn-danger" onclick="return confirm('Confirmer ?')">Supprimer</a>
                         </td>
                     </tr>
                 <?php endforeach; ?>
+
+                <?php if (!$operations): ?>
+                    <tr>
+                        <td colspan="8">Aucune opération trouvée.</td>
+                    </tr>
+                <?php endif; ?>
             </tbody>
 
         </table>
