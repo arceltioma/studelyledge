@@ -83,6 +83,26 @@ if (!function_exists('aam_group_permissions')) {
     }
 }
 
+if (!function_exists('aam_permission_matches_search')) {
+    function aam_permission_matches_search(array $permission, string $search): bool
+    {
+        if ($search === '') {
+            return true;
+        }
+
+        $haystack = mb_strtolower(
+            trim(
+                (string)($permission['label'] ?? '')
+                . ' '
+                . (string)($permission['code'] ?? '')
+            ),
+            'UTF-8'
+        );
+
+        return mb_strpos($haystack, mb_strtolower($search, 'UTF-8')) !== false;
+    }
+}
+
 $successMessage = '';
 $errorMessage = '';
 $previewMode = false;
@@ -95,6 +115,10 @@ $selectedRoleId = (int)($_GET['role_id'] ?? $_POST['role_id'] ?? 0);
 if ($selectedRoleId <= 0 && !empty($roles)) {
     $selectedRoleId = (int)$roles[0]['id'];
 }
+
+$filterPermissionSearch = trim((string)($_GET['filter_permission_search'] ?? $_POST['filter_permission_search'] ?? ''));
+$filterGroup = trim((string)($_GET['filter_group'] ?? $_POST['filter_group'] ?? ''));
+$filterChecked = trim((string)($_GET['filter_checked'] ?? $_POST['filter_checked'] ?? ''));
 
 $currentPermissionIds = $selectedRoleId > 0 ? aam_fetch_current_permission_ids($pdo, $selectedRoleId) : [];
 $formPermissionIds = $currentPermissionIds;
@@ -173,7 +197,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['form_action'])) {
     }
 }
 
+$selectedRole = $selectedRoleId > 0 ? aam_find_role($pdo, $selectedRoleId) : null;
 $groupedPermissions = aam_group_permissions($permissions);
+
+$filteredGroupedPermissions = [];
+foreach ($groupedPermissions as $group => $items) {
+    if ($filterGroup !== '' && $filterGroup !== $group) {
+        continue;
+    }
+
+    $kept = [];
+    foreach ($items as $permission) {
+        $permissionId = (int)($permission['id'] ?? 0);
+        $isChecked = in_array($permissionId, $formPermissionIds, true);
+
+        if ($filterChecked === 'checked' && !$isChecked) {
+            continue;
+        }
+        if ($filterChecked === 'unchecked' && $isChecked) {
+            continue;
+        }
+        if (!aam_permission_matches_search($permission, $filterPermissionSearch)) {
+            continue;
+        }
+
+        $kept[] = $permission;
+    }
+
+    if ($kept) {
+        $filteredGroupedPermissions[$group] = $kept;
+    }
+}
+
+$dashboard = [
+    'total_permissions' => count($permissions),
+    'checked_permissions' => count($formPermissionIds),
+    'unchecked_permissions' => max(0, count($permissions) - count($formPermissionIds)),
+    'groups_count' => count($groupedPermissions),
+    'visible_groups_count' => count($filteredGroupedPermissions),
+];
+
 $pageTitle = 'Matrice d’accès';
 $pageSubtitle = 'Affectation des permissions par rôle.';
 require_once __DIR__ . '/../../includes/document_start.php';
@@ -192,53 +255,16 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
 
-        <div class="form-card" style="margin-bottom:20px;">
-            <form method="GET" class="inline-form">
-                <select name="role_id">
-                    <?php foreach ($roles as $role): ?>
-                        <option value="<?= (int)$role['id'] ?>" <?= $selectedRoleId === (int)$role['id'] ? 'selected' : '' ?>>
-                            <?= e($role['label']) ?> (<?= e($role['code']) ?>)
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                <button type="submit" class="btn btn-secondary">Charger</button>
-            </form>
-        </div>
-
-        <div class="dashboard-grid-2">
-            <div class="form-card">
-                <form method="POST">
-                    <?= csrf_input() ?>
-                    <input type="hidden" name="role_id" value="<?= (int)$selectedRoleId ?>">
-
-                    <h3 class="section-title">Permissions</h3>
-
-                    <?php foreach ($groupedPermissions as $group => $items): ?>
-                        <div class="table-card" style="margin-top:14px;">
-                            <h4 class="section-title" style="margin-bottom:10px;"><?= e(strtoupper($group)) ?></h4>
-
-                            <div class="dashboard-grid-2">
-                                <?php foreach ($items as $permission): ?>
-                                    <label style="display:flex;gap:10px;align-items:center;">
-                                        <input
-                                            type="checkbox"
-                                            name="permission_ids[]"
-                                            value="<?= (int)$permission['id'] ?>"
-                                            <?= in_array((int)$permission['id'], $formPermissionIds, true) ? 'checked' : '' ?>
-                                        >
-                                        <?= e($permission['label']) ?>
-                                        <span class="muted">(<?= e($permission['code']) ?>)</span>
-                                    </label>
-                                <?php endforeach; ?>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-
-                    <div class="btn-group" style="margin-top:20px;">
-                        <button type="submit" name="form_action" value="preview" class="btn btn-secondary">Prévisualiser</button>
-                        <button type="submit" name="form_action" value="save_matrix" class="btn btn-success">Enregistrer la matrice</button>
-                    </div>
-                </form>
+        <div class="dashboard-grid-2" style="margin-bottom:20px;">
+            <div class="card">
+                <h3 class="section-title">Dashboard matrice</h3>
+                <div class="sl-data-list">
+                    <div class="sl-data-list__row"><span>Permissions totales</span><strong><?= (int)$dashboard['total_permissions'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Cochées pour ce rôle</span><strong><?= (int)$dashboard['checked_permissions'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Non cochées</span><strong><?= (int)$dashboard['unchecked_permissions'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Groupes disponibles</span><strong><?= (int)$dashboard['groups_count'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Groupes visibles</span><strong><?= (int)$dashboard['visible_groups_count'] ?></strong></div>
+                </div>
             </div>
 
             <div class="dashboard-panel">
@@ -276,6 +302,82 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     </div>
                 <?php endif; ?>
             </div>
+        </div>
+
+        <div class="form-card" style="margin-bottom:20px;">
+            <form method="GET" class="inline-form">
+                <select name="role_id">
+                    <?php foreach ($roles as $role): ?>
+                        <option value="<?= (int)$role['id'] ?>" <?= $selectedRoleId === (int)$role['id'] ? 'selected' : '' ?>>
+                            <?= e($role['label']) ?> (<?= e($role['code']) ?>)
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+
+                <input type="text" name="filter_permission_search" value="<?= e($filterPermissionSearch) ?>" placeholder="Rechercher une permission">
+
+                <select name="filter_group">
+                    <option value="">Tous les groupes</option>
+                    <?php foreach (array_keys($groupedPermissions) as $group): ?>
+                        <option value="<?= e($group) ?>" <?= $filterGroup === $group ? 'selected' : '' ?>>
+                            <?= e(strtoupper($group)) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+
+                <select name="filter_checked">
+                    <option value="">Toutes</option>
+                    <option value="checked" <?= $filterChecked === 'checked' ? 'selected' : '' ?>>Cochées</option>
+                    <option value="unchecked" <?= $filterChecked === 'unchecked' ? 'selected' : '' ?>>Non cochées</option>
+                </select>
+
+                <button type="submit" class="btn btn-secondary">Charger / filtrer</button>
+                <a href="<?= e(APP_URL) ?>modules/admin/access_matrix.php?role_id=<?= (int)$selectedRoleId ?>" class="btn btn-outline">Réinitialiser</a>
+            </form>
+        </div>
+
+        <div class="form-card">
+            <form method="POST">
+                <?= csrf_input() ?>
+                <input type="hidden" name="role_id" value="<?= (int)$selectedRoleId ?>">
+                <input type="hidden" name="filter_permission_search" value="<?= e($filterPermissionSearch) ?>">
+                <input type="hidden" name="filter_group" value="<?= e($filterGroup) ?>">
+                <input type="hidden" name="filter_checked" value="<?= e($filterChecked) ?>">
+
+                <h3 class="section-title">
+                    Permissions<?= $selectedRole ? ' - ' . e($selectedRole['label'] . ' (' . $selectedRole['code'] . ')') : '' ?>
+                </h3>
+
+                <?php foreach ($filteredGroupedPermissions as $group => $items): ?>
+                    <div class="table-card" style="margin-top:14px;">
+                        <h4 class="section-title" style="margin-bottom:10px;"><?= e(strtoupper($group)) ?></h4>
+
+                        <div class="dashboard-grid-2">
+                            <?php foreach ($items as $permission): ?>
+                                <label style="display:flex;gap:10px;align-items:center;">
+                                    <input
+                                        type="checkbox"
+                                        name="permission_ids[]"
+                                        value="<?= (int)$permission['id'] ?>"
+                                        <?= in_array((int)$permission['id'], $formPermissionIds, true) ? 'checked' : '' ?>
+                                    >
+                                    <?= e($permission['label']) ?>
+                                    <span class="muted">(<?= e($permission['code']) ?>)</span>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+
+                <?php if (!$filteredGroupedPermissions): ?>
+                    <div class="dashboard-note" style="margin-top:16px;">Aucune permission ne correspond aux filtres actuels.</div>
+                <?php endif; ?>
+
+                <div class="btn-group" style="margin-top:20px;">
+                    <button type="submit" name="form_action" value="preview" class="btn btn-secondary">Prévisualiser</button>
+                    <button type="submit" name="form_action" value="save_matrix" class="btn btn-success">Enregistrer la matrice</button>
+                </div>
+            </form>
         </div>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>

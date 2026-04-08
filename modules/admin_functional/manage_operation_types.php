@@ -53,6 +53,13 @@ if (!function_exists('sl_manage_operation_type_preview')) {
     }
 }
 
+if (!function_exists('mot_like')) {
+    function mot_like(string $value): string
+    {
+        return '%' . $value . '%';
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $formData = [
         'code' => strtoupper(trim((string)($_POST['code'] ?? ''))),
@@ -157,11 +164,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$rows = $pdo->query("
-    SELECT *
-    FROM ref_operation_types
-    ORDER BY label ASC, id DESC
-")->fetchAll(PDO::FETCH_ASSOC);
+$filterSearch = trim((string)($_GET['filter_search'] ?? ''));
+$filterDirection = trim((string)($_GET['filter_direction'] ?? ''));
+$filterStatus = trim((string)($_GET['filter_status'] ?? ''));
+
+$sqlRows = "
+    SELECT rot.*,
+           (
+               SELECT COUNT(*)
+               FROM ref_services rs
+               WHERE rs.operation_type_id = rot.id
+           ) AS linked_services_count
+    FROM ref_operation_types rot
+    WHERE 1=1
+";
+$paramsRows = [];
+
+if ($filterSearch !== '') {
+    $sqlRows .= " AND (rot.code LIKE ? OR rot.label LIKE ?) ";
+    $paramsRows[] = mot_like($filterSearch);
+    $paramsRows[] = mot_like($filterSearch);
+}
+
+if ($filterDirection !== '') {
+    $sqlRows .= " AND COALESCE(rot.direction, 'mixed') = ? ";
+    $paramsRows[] = $filterDirection;
+}
+
+if ($filterStatus === 'active') {
+    $sqlRows .= " AND COALESCE(rot.is_active, 1) = 1 ";
+} elseif ($filterStatus === 'inactive') {
+    $sqlRows .= " AND COALESCE(rot.is_active, 1) = 0 ";
+} elseif ($filterStatus === 'linked') {
+    $sqlRows .= " AND EXISTS (SELECT 1 FROM ref_services rs WHERE rs.operation_type_id = rot.id) ";
+} elseif ($filterStatus === 'unlinked') {
+    $sqlRows .= " AND NOT EXISTS (SELECT 1 FROM ref_services rs WHERE rs.operation_type_id = rot.id) ";
+}
+
+$sqlRows .= " ORDER BY rot.label ASC, rot.id DESC ";
+
+$stmtRows = $pdo->prepare($sqlRows);
+$stmtRows->execute($paramsRows);
+$rows = $stmtRows->fetchAll(PDO::FETCH_ASSOC);
+
+$dashboard = [
+    'total' => count($rows),
+    'active' => count(array_filter($rows, fn($r) => (int)($r['is_active'] ?? 1) === 1)),
+    'inactive' => count(array_filter($rows, fn($r) => (int)($r['is_active'] ?? 1) !== 1)),
+    'credit' => count(array_filter($rows, fn($r) => (string)($r['direction'] ?? '') === 'credit')),
+    'debit' => count(array_filter($rows, fn($r) => (string)($r['direction'] ?? '') === 'debit')),
+    'mixed' => count(array_filter($rows, fn($r) => (string)($r['direction'] ?? '') === 'mixed')),
+];
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -178,6 +231,37 @@ require_once __DIR__ . '/../../includes/document_start.php';
         <?php if ($errorMessage !== ''): ?>
             <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
+
+        <div class="dashboard-grid-2" style="margin-bottom:20px;">
+            <div class="card">
+                <h3 class="section-title">Dashboard types d’opérations</h3>
+                <div class="sl-data-list">
+                    <div class="sl-data-list__row"><span>Total</span><strong><?= (int)$dashboard['total'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Actifs</span><strong><?= (int)$dashboard['active'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Inactifs</span><strong><?= (int)$dashboard['inactive'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Crédit</span><strong><?= (int)$dashboard['credit'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Débit</span><strong><?= (int)$dashboard['debit'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Mixte</span><strong><?= (int)$dashboard['mixed'] ?></strong></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Prévisualisation</h3>
+
+                <?php if ($previewMode && $previewData): ?>
+                    <div class="sl-data-list">
+                        <div class="sl-data-list__row"><span>Code</span><strong><?= e($previewData['code']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Libellé</span><strong><?= e($previewData['label']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Direction</span><strong><?= e($previewData['direction']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Statut</span><strong><?= (int)$previewData['is_active'] === 1 ? 'Actif' : 'Inactif' ?></strong></div>
+                    </div>
+                <?php else: ?>
+                    <div class="dashboard-note">
+                        Vérifie ici le type d’opération avant validation : code métier, libellé, direction comptable et statut.
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
 
         <div class="dashboard-grid-2">
             <div class="form-card">
@@ -221,21 +305,44 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 </form>
             </div>
 
-            <div class="card">
-                <h3>Prévisualisation</h3>
+            <div class="form-card">
+                <h3 class="section-title">Filtres liste</h3>
+                <form method="GET">
+                    <div class="dashboard-grid-2">
+                        <div>
+                            <label>Recherche</label>
+                            <input type="text" name="filter_search" value="<?= e($filterSearch) ?>" placeholder="Code ou libellé">
+                        </div>
 
-                <?php if ($previewMode && $previewData): ?>
-                    <div class="sl-data-list">
-                        <div class="sl-data-list__row"><span>Code</span><strong><?= e($previewData['code']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Libellé</span><strong><?= e($previewData['label']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Direction</span><strong><?= e($previewData['direction']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Statut</span><strong><?= (int)$previewData['is_active'] === 1 ? 'Actif' : 'Inactif' ?></strong></div>
+                        <div>
+                            <label>Direction</label>
+                            <select name="filter_direction">
+                                <option value="">Toutes</option>
+                                <?php foreach ($directions as $direction): ?>
+                                    <option value="<?= e($direction) ?>" <?= $filterDirection === $direction ? 'selected' : '' ?>>
+                                        <?= e($direction) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Statut / liaison</label>
+                            <select name="filter_status">
+                                <option value="">Tous</option>
+                                <option value="active" <?= $filterStatus === 'active' ? 'selected' : '' ?>>Actifs</option>
+                                <option value="inactive" <?= $filterStatus === 'inactive' ? 'selected' : '' ?>>Inactifs</option>
+                                <option value="linked" <?= $filterStatus === 'linked' ? 'selected' : '' ?>>Avec services liés</option>
+                                <option value="unlinked" <?= $filterStatus === 'unlinked' ? 'selected' : '' ?>>Sans service lié</option>
+                            </select>
+                        </div>
                     </div>
-                <?php else: ?>
-                    <div class="dashboard-note">
-                        Vérifie ici le type d’opération avant validation : code métier, libellé, direction comptable et statut.
+
+                    <div class="btn-group" style="margin-top:20px;">
+                        <button type="submit" class="btn btn-secondary">Filtrer</button>
+                        <a href="<?= e(APP_URL) ?>modules/admin_functional/manage_operation_types.php" class="btn btn-outline">Réinitialiser</a>
                     </div>
-                <?php endif; ?>
+                </form>
             </div>
         </div>
 
@@ -250,6 +357,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <th>Libellé</th>
                             <th>Direction</th>
                             <th>Statut</th>
+                            <th>Services liés</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -260,6 +368,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <td><?= e((string)($row['label'] ?? '')) ?></td>
                                 <td><?= e((string)($row['direction'] ?? '')) ?></td>
                                 <td><?= !empty($row['is_active']) ? 'Actif' : 'Inactif' ?></td>
+                                <td><?= (int)($row['linked_services_count'] ?? 0) ?></td>
                                 <td>
                                     <div class="btn-group">
                                         <a class="btn btn-secondary" href="<?= e(APP_URL) ?>modules/admin_functional/edit_operation_type.php?id=<?= (int)$row['id'] ?>">Modifier</a>
@@ -270,7 +379,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <?php if (!$rows): ?>
                             <tr>
-                                <td colspan="5">Aucun type d’opération trouvé.</td>
+                                <td colspan="6">Aucun type d’opération trouvé.</td>
                             </tr>
                         <?php endif; ?>
                     </tbody>

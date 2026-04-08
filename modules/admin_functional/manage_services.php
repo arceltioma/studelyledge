@@ -95,6 +95,13 @@ if (!function_exists('sl_manage_service_preview')) {
     }
 }
 
+if (!function_exists('ms_like')) {
+    function ms_like(string $value): string
+    {
+        return '%' . $value . '%';
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $formData = [
         'code' => strtoupper(trim((string)($_POST['code'] ?? ''))),
@@ -232,7 +239,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$rows = $pdo->query("
+$filterSearch = trim((string)($_GET['filter_search'] ?? ''));
+$filterTypeId = trim((string)($_GET['filter_type_id'] ?? ''));
+$filter706Id = trim((string)($_GET['filter_706_id'] ?? ''));
+$filter512Id = trim((string)($_GET['filter_512_id'] ?? ''));
+$filterStatus = trim((string)($_GET['filter_status'] ?? ''));
+
+$sqlRows = "
     SELECT
         rs.*,
         rot.label AS operation_type_label,
@@ -245,8 +258,69 @@ $rows = $pdo->query("
     LEFT JOIN ref_operation_types rot ON rot.id = rs.operation_type_id
     LEFT JOIN service_accounts sa ON sa.id = rs.service_account_id
     LEFT JOIN treasury_accounts ta ON ta.id = rs.treasury_account_id
-    ORDER BY rot.label ASC, rs.label ASC, rs.id DESC
-")->fetchAll(PDO::FETCH_ASSOC);
+    WHERE 1=1
+";
+$paramsRows = [];
+
+if ($filterSearch !== '') {
+    $sqlRows .= "
+        AND (
+            rs.code LIKE ?
+            OR rs.label LIKE ?
+            OR COALESCE(rot.label, '') LIKE ?
+            OR COALESCE(rot.code, '') LIKE ?
+            OR COALESCE(sa.account_code, '') LIKE ?
+            OR COALESCE(sa.account_label, '') LIKE ?
+            OR COALESCE(ta.account_code, '') LIKE ?
+            OR COALESCE(ta.account_label, '') LIKE ?
+        )
+    ";
+    for ($i = 0; $i < 8; $i++) {
+        $paramsRows[] = ms_like($filterSearch);
+    }
+}
+
+if ($filterTypeId !== '') {
+    $sqlRows .= " AND rs.operation_type_id = ? ";
+    $paramsRows[] = (int)$filterTypeId;
+}
+
+if ($filter706Id !== '') {
+    $sqlRows .= " AND rs.service_account_id = ? ";
+    $paramsRows[] = (int)$filter706Id;
+}
+
+if ($filter512Id !== '') {
+    $sqlRows .= " AND rs.treasury_account_id = ? ";
+    $paramsRows[] = (int)$filter512Id;
+}
+
+if ($filterStatus === 'active') {
+    $sqlRows .= " AND COALESCE(rs.is_active, 1) = 1 ";
+} elseif ($filterStatus === 'inactive') {
+    $sqlRows .= " AND COALESCE(rs.is_active, 1) = 0 ";
+} elseif ($filterStatus === 'with_706') {
+    $sqlRows .= " AND rs.service_account_id IS NOT NULL ";
+} elseif ($filterStatus === 'with_512') {
+    $sqlRows .= " AND rs.treasury_account_id IS NOT NULL ";
+} elseif ($filterStatus === 'without_link') {
+    $sqlRows .= " AND rs.service_account_id IS NULL AND rs.treasury_account_id IS NULL ";
+}
+
+$sqlRows .= " ORDER BY rot.label ASC, rs.label ASC, rs.id DESC ";
+
+$stmtRows = $pdo->prepare($sqlRows);
+$stmtRows->execute($paramsRows);
+$rows = $stmtRows->fetchAll(PDO::FETCH_ASSOC);
+
+$dashboard = [
+    'total' => count($rows),
+    'active' => count(array_filter($rows, fn($r) => (int)($r['is_active'] ?? 1) === 1)),
+    'inactive' => count(array_filter($rows, fn($r) => (int)($r['is_active'] ?? 1) !== 1)),
+    'with_706' => count(array_filter($rows, fn($r) => !empty($r['service_account_id']))),
+    'with_512' => count(array_filter($rows, fn($r) => !empty($r['treasury_account_id']))),
+    'without_link' => count(array_filter($rows, fn($r) => empty($r['service_account_id']) && empty($r['treasury_account_id']))),
+];
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -263,6 +337,40 @@ require_once __DIR__ . '/../../includes/document_start.php';
         <?php if ($errorMessage !== ''): ?>
             <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
+
+        <div class="dashboard-grid-2" style="margin-bottom:20px;">
+            <div class="card">
+                <h3 class="section-title">Dashboard services</h3>
+                <div class="sl-data-list">
+                    <div class="sl-data-list__row"><span>Total</span><strong><?= (int)$dashboard['total'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Actifs</span><strong><?= (int)$dashboard['active'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Inactifs</span><strong><?= (int)$dashboard['inactive'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Liés à un 706</span><strong><?= (int)$dashboard['with_706'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Liés à un 512</span><strong><?= (int)$dashboard['with_512'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Sans liaison</span><strong><?= (int)$dashboard['without_link'] ?></strong></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Prévisualisation</h3>
+
+                <?php if ($previewMode && $previewData): ?>
+                    <div class="sl-data-list">
+                        <div class="sl-data-list__row"><span>Code</span><strong><?= e($previewData['code']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Libellé</span><strong><?= e($previewData['label']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Type d’opération</span><strong><?= e($previewData['operation_type_label']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Code type</span><strong><?= e($previewData['operation_type_code']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Compte 706</span><strong><?= e($previewData['service_account'] !== '' ? $previewData['service_account'] : '—') ?></strong></div>
+                        <div class="sl-data-list__row"><span>Compte 512</span><strong><?= e($previewData['treasury_account'] !== '' ? $previewData['treasury_account'] : '—') ?></strong></div>
+                        <div class="sl-data-list__row"><span>Statut</span><strong><?= (int)$previewData['is_active'] === 1 ? 'Actif' : 'Inactif' ?></strong></div>
+                    </div>
+                <?php else: ?>
+                    <div class="dashboard-note">
+                        Vérifie ici le futur service : rattachement au type d’opération, compte 706, compte 512 et statut.
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
 
         <div class="dashboard-grid-2">
             <div class="form-card">
@@ -331,24 +439,69 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 </form>
             </div>
 
-            <div class="card">
-                <h3>Prévisualisation</h3>
+            <div class="form-card">
+                <h3 class="section-title">Filtres liste services</h3>
+                <form method="GET">
+                    <div class="dashboard-grid-2">
+                        <div>
+                            <label>Recherche</label>
+                            <input type="text" name="filter_search" value="<?= e($filterSearch) ?>" placeholder="Code, libellé, type, compte...">
+                        </div>
 
-                <?php if ($previewMode && $previewData): ?>
-                    <div class="sl-data-list">
-                        <div class="sl-data-list__row"><span>Code</span><strong><?= e($previewData['code']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Libellé</span><strong><?= e($previewData['label']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Type d’opération</span><strong><?= e($previewData['operation_type_label']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Code type</span><strong><?= e($previewData['operation_type_code']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Compte 706</span><strong><?= e($previewData['service_account'] !== '' ? $previewData['service_account'] : '—') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Compte 512</span><strong><?= e($previewData['treasury_account'] !== '' ? $previewData['treasury_account'] : '—') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Statut</span><strong><?= (int)$previewData['is_active'] === 1 ? 'Actif' : 'Inactif' ?></strong></div>
+                        <div>
+                            <label>Type d’opération</label>
+                            <select name="filter_type_id">
+                                <option value="">Tous</option>
+                                <?php foreach ($operationTypes as $type): ?>
+                                    <option value="<?= (int)$type['id'] ?>" <?= $filterTypeId === (string)$type['id'] ? 'selected' : '' ?>>
+                                        <?= e(($type['label'] ?? '') . ' (' . ($type['code'] ?? '') . ')') ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Compte 706</label>
+                            <select name="filter_706_id">
+                                <option value="">Tous</option>
+                                <?php foreach ($serviceAccounts as $account): ?>
+                                    <option value="<?= (int)$account['id'] ?>" <?= $filter706Id === (string)$account['id'] ? 'selected' : '' ?>>
+                                        <?= e(($account['account_code'] ?? '') . ' - ' . ($account['account_label'] ?? '')) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Compte 512</label>
+                            <select name="filter_512_id">
+                                <option value="">Tous</option>
+                                <?php foreach ($treasuryAccounts as $account): ?>
+                                    <option value="<?= (int)$account['id'] ?>" <?= $filter512Id === (string)$account['id'] ? 'selected' : '' ?>>
+                                        <?= e(($account['account_code'] ?? '') . ' - ' . ($account['account_label'] ?? '')) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Statut / liaison</label>
+                            <select name="filter_status">
+                                <option value="">Tous</option>
+                                <option value="active" <?= $filterStatus === 'active' ? 'selected' : '' ?>>Actifs</option>
+                                <option value="inactive" <?= $filterStatus === 'inactive' ? 'selected' : '' ?>>Inactifs</option>
+                                <option value="with_706" <?= $filterStatus === 'with_706' ? 'selected' : '' ?>>Avec 706</option>
+                                <option value="with_512" <?= $filterStatus === 'with_512' ? 'selected' : '' ?>>Avec 512</option>
+                                <option value="without_link" <?= $filterStatus === 'without_link' ? 'selected' : '' ?>>Sans liaison</option>
+                            </select>
+                        </div>
                     </div>
-                <?php else: ?>
-                    <div class="dashboard-note">
-                        Vérifie ici le futur service : rattachement au type d’opération, compte 706, compte 512 et statut.
+
+                    <div class="btn-group" style="margin-top:20px;">
+                        <button type="submit" class="btn btn-secondary">Filtrer</button>
+                        <a href="<?= e(APP_URL) ?>modules/admin_functional/manage_services.php" class="btn btn-outline">Réinitialiser</a>
                     </div>
-                <?php endif; ?>
+                </form>
             </div>
         </div>
 

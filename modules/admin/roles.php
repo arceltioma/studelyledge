@@ -106,6 +106,13 @@ if (!function_exists('ar_preview_summary')) {
     }
 }
 
+if (!function_exists('roles_like')) {
+    function roles_like(string $value): string
+    {
+        return '%' . $value . '%';
+    }
+}
+
 $successMessage = '';
 $errorMessage = '';
 $previewMode = false;
@@ -202,7 +209,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$roles = ar_fetch_roles($pdo);
+$filterSearch = trim((string)($_GET['filter_search'] ?? ''));
+$filterUsage = trim((string)($_GET['filter_usage'] ?? ''));
+
+$sqlRoles = "
+    SELECT
+        r.*,
+        (SELECT COUNT(*) FROM users u WHERE u.role_id = r.id) AS users_count,
+        (SELECT COUNT(*) FROM role_permissions rp WHERE rp.role_id = r.id) AS permissions_count
+    FROM roles r
+    WHERE 1=1
+";
+$paramsRoles = [];
+
+if ($filterSearch !== '') {
+    $sqlRoles .= " AND (r.code LIKE ? OR r.label LIKE ?) ";
+    $paramsRoles[] = roles_like($filterSearch);
+    $paramsRoles[] = roles_like($filterSearch);
+}
+
+if ($filterUsage === 'with_users') {
+    $sqlRoles .= " AND EXISTS (SELECT 1 FROM users u WHERE u.role_id = r.id) ";
+} elseif ($filterUsage === 'without_users') {
+    $sqlRoles .= " AND NOT EXISTS (SELECT 1 FROM users u WHERE u.role_id = r.id) ";
+} elseif ($filterUsage === 'with_permissions') {
+    $sqlRoles .= " AND EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.role_id = r.id) ";
+} elseif ($filterUsage === 'without_permissions') {
+    $sqlRoles .= " AND NOT EXISTS (SELECT 1 FROM role_permissions rp WHERE rp.role_id = r.id) ";
+}
+
+$sqlRoles .= " ORDER BY r.label ASC, r.id ASC ";
+
+$stmtRoles = $pdo->prepare($sqlRoles);
+$stmtRoles->execute($paramsRoles);
+$roles = $stmtRoles->fetchAll(PDO::FETCH_ASSOC);
+
+$dashboard = [
+    'total' => count($roles),
+    'with_users' => count(array_filter($roles, fn($r) => (int)($r['users_count'] ?? 0) > 0)),
+    'without_users' => count(array_filter($roles, fn($r) => (int)($r['users_count'] ?? 0) === 0)),
+    'with_permissions' => count(array_filter($roles, fn($r) => (int)($r['permissions_count'] ?? 0) > 0)),
+    'without_permissions' => count(array_filter($roles, fn($r) => (int)($r['permissions_count'] ?? 0) === 0)),
+];
 
 $pageTitle = 'Rôles';
 $pageSubtitle = 'Gestion centralisée des rôles applicatifs.';
@@ -222,39 +270,16 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
 
-        <div class="dashboard-grid-2">
-            <div class="form-card">
-                <h3 class="section-title"><?= $editId > 0 ? 'Modifier un rôle' : 'Créer un rôle' ?></h3>
-
-                <form method="POST">
-                    <?= csrf_input() ?>
-                    <?php if ($editId > 0): ?>
-                        <input type="hidden" name="edit_id" value="<?= (int)$editId ?>">
-                    <?php endif; ?>
-
-                    <div class="dashboard-grid-2">
-                        <div>
-                            <label>Code</label>
-                            <input type="text" name="code" value="<?= e($formData['code']) ?>" required>
-                        </div>
-
-                        <div>
-                            <label>Libellé</label>
-                            <input type="text" name="label" value="<?= e($formData['label']) ?>" required>
-                        </div>
-                    </div>
-
-                    <div class="btn-group" style="margin-top:20px;">
-                        <button type="submit" name="form_action" value="preview" class="btn btn-secondary">Prévisualiser</button>
-                        <button type="submit" name="form_action" value="save_role" class="btn btn-success">
-                            <?= $editId > 0 ? 'Enregistrer' : 'Créer' ?>
-                        </button>
-
-                        <?php if ($editId > 0): ?>
-                            <a class="btn btn-outline" href="<?= e(APP_URL) ?>modules/admin/roles.php">Annuler</a>
-                        <?php endif; ?>
-                    </div>
-                </form>
+        <div class="dashboard-grid-2" style="margin-bottom:20px;">
+            <div class="card">
+                <h3 class="section-title">Dashboard rôles</h3>
+                <div class="sl-data-list">
+                    <div class="sl-data-list__row"><span>Total</span><strong><?= (int)$dashboard['total'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Avec utilisateurs</span><strong><?= (int)$dashboard['with_users'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Sans utilisateur</span><strong><?= (int)$dashboard['without_users'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Avec permissions</span><strong><?= (int)$dashboard['with_permissions'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Sans permission</span><strong><?= (int)$dashboard['without_permissions'] ?></strong></div>
+                </div>
             </div>
 
             <div class="dashboard-panel">
@@ -298,12 +323,78 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </div>
         </div>
 
+        <div class="dashboard-grid-2">
+            <div class="form-card">
+                <h3 class="section-title"><?= $editId > 0 ? 'Modifier un rôle' : 'Créer un rôle' ?></h3>
+
+                <form method="POST">
+                    <?= csrf_input() ?>
+                    <?php if ($editId > 0): ?>
+                        <input type="hidden" name="edit_id" value="<?= (int)$editId ?>">
+                    <?php endif; ?>
+
+                    <div class="dashboard-grid-2">
+                        <div>
+                            <label>Code</label>
+                            <input type="text" name="code" value="<?= e($formData['code']) ?>" required>
+                        </div>
+
+                        <div>
+                            <label>Libellé</label>
+                            <input type="text" name="label" value="<?= e($formData['label']) ?>" required>
+                        </div>
+                    </div>
+
+                    <div class="btn-group" style="margin-top:20px;">
+                        <button type="submit" name="form_action" value="preview" class="btn btn-secondary">Prévisualiser</button>
+                        <button type="submit" name="form_action" value="save_role" class="btn btn-success">
+                            <?= $editId > 0 ? 'Enregistrer' : 'Créer' ?>
+                        </button>
+
+                        <?php if ($editId > 0): ?>
+                            <a class="btn btn-outline" href="<?= e(APP_URL) ?>modules/admin/roles.php">Annuler</a>
+                        <?php endif; ?>
+                    </div>
+                </form>
+            </div>
+
+            <div class="form-card">
+                <h3 class="section-title">Filtres liste rôles</h3>
+                <form method="GET">
+                    <div class="dashboard-grid-2">
+                        <div>
+                            <label>Recherche</label>
+                            <input type="text" name="filter_search" value="<?= e($filterSearch) ?>" placeholder="Code ou libellé">
+                        </div>
+
+                        <div>
+                            <label>Usage</label>
+                            <select name="filter_usage">
+                                <option value="">Tous</option>
+                                <option value="with_users" <?= $filterUsage === 'with_users' ? 'selected' : '' ?>>Avec utilisateurs</option>
+                                <option value="without_users" <?= $filterUsage === 'without_users' ? 'selected' : '' ?>>Sans utilisateur</option>
+                                <option value="with_permissions" <?= $filterUsage === 'with_permissions' ? 'selected' : '' ?>>Avec permissions</option>
+                                <option value="without_permissions" <?= $filterUsage === 'without_permissions' ? 'selected' : '' ?>>Sans permission</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="btn-group" style="margin-top:20px;">
+                        <button type="submit" class="btn btn-secondary">Filtrer</button>
+                        <a href="<?= e(APP_URL) ?>modules/admin/roles.php" class="btn btn-outline">Réinitialiser</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+
         <div class="table-card">
             <table>
                 <thead>
                     <tr>
                         <th>Code</th>
                         <th>Libellé</th>
+                        <th>Utilisateurs</th>
+                        <th>Permissions</th>
                         <th>Créé le</th>
                         <th>Actions</th>
                     </tr>
@@ -313,6 +404,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <tr>
                             <td><?= e($role['code'] ?? '') ?></td>
                             <td><?= e($role['label'] ?? '') ?></td>
+                            <td><?= (int)($role['users_count'] ?? 0) ?></td>
+                            <td><?= (int)($role['permissions_count'] ?? 0) ?></td>
                             <td><?= e($role['created_at'] ?? '') ?></td>
                             <td>
                                 <div class="btn-group">
@@ -324,7 +417,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <?php endforeach; ?>
 
                     <?php if (!$roles): ?>
-                        <tr><td colspan="4">Aucun rôle.</td></tr>
+                        <tr><td colspan="6">Aucun rôle.</td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>
