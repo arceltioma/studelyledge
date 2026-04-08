@@ -38,6 +38,11 @@ if (isset($_GET['cancel_preview']) && $_GET['cancel_preview'] === '1') {
     exit;
 }
 
+$prefillClientId = (int)($_GET['prefill_client_id'] ?? 0);
+$dateFrom = trim((string)($_GET['date_from'] ?? ''));
+$dateTo = trim((string)($_GET['date_to'] ?? ''));
+$fromClientAccounts = (int)($_GET['source_client_accounts'] ?? 0) === 1;
+
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -56,6 +61,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <?php unset($_SESSION['error_message']); ?>
         <?php endif; ?>
 
+        <?php if ($fromClientAccounts && $prefillClientId > 0): ?>
+            <div class="dashboard-note" style="margin-bottom:16px;">
+                Le client concerné a été présélectionné depuis la page des comptes clients 411.
+            </div>
+        <?php endif; ?>
+
         <div class="dashboard-grid-2">
             <div class="card">
                 <h3>Préparer l’export</h3>
@@ -67,11 +78,11 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <div class="dashboard-grid-2" style="margin-bottom:16px;">
                         <div>
                             <label>Du</label>
-                            <input type="date" name="date_from" required>
+                            <input type="date" name="date_from" value="<?= e($dateFrom) ?>" required>
                         </div>
                         <div>
                             <label>Au</label>
-                            <input type="date" name="date_to" required>
+                            <input type="date" name="date_to" value="<?= e($dateTo) ?>" required>
                         </div>
                     </div>
 
@@ -89,7 +100,14 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <?php if ($clients): ?>
                                     <?php foreach ($clients as $client): ?>
                                         <tr>
-                                            <td><input type="checkbox" name="client_ids[]" value="<?= (int)$client['id'] ?>"></td>
+                                            <td>
+                                                <input
+                                                    type="checkbox"
+                                                    name="client_ids[]"
+                                                    value="<?= (int)$client['id'] ?>"
+                                                    <?= $prefillClientId === (int)$client['id'] ? 'checked' : '' ?>
+                                                >
+                                            </td>
                                             <td><?= e((string)$client['client_code']) ?></td>
                                             <td><?= e((string)$client['full_name']) ?></td>
                                             <td><?= e((string)($client['country_commercial'] ?? '—')) ?></td>

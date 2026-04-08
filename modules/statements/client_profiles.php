@@ -38,6 +38,9 @@ if (isset($_GET['cancel_preview']) && $_GET['cancel_preview'] === '1') {
     exit;
 }
 
+$prefillClientId = (int)($_GET['prefill_client_id'] ?? 0);
+$fromClientAccounts = (int)($_GET['source_client_accounts'] ?? 0) === 1;
+
 $fields = [
     'identity' => 'Identité',
     'contact' => 'Coordonnées',
@@ -78,6 +81,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <?php unset($_SESSION['error_message']); ?>
         <?php endif; ?>
 
+        <?php if ($fromClientAccounts && $prefillClientId > 0): ?>
+            <div class="dashboard-note" style="margin-bottom:16px;">
+                Le client concerné a été présélectionné depuis la page des comptes clients 411.
+            </div>
+        <?php endif; ?>
+
         <div class="dashboard-grid-2">
             <div class="card">
                 <h3>Préparer l’export</h3>
@@ -101,7 +110,14 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <?php if ($clients): ?>
                                     <?php foreach ($clients as $client): ?>
                                         <tr>
-                                            <td><input type="checkbox" name="client_ids[]" value="<?= (int)$client['id'] ?>"></td>
+                                            <td>
+                                                <input
+                                                    type="checkbox"
+                                                    name="client_ids[]"
+                                                    value="<?= (int)$client['id'] ?>"
+                                                    <?= $prefillClientId === (int)$client['id'] ? 'checked' : '' ?>
+                                                >
+                                            </td>
                                             <td><?= e((string)$client['client_code']) ?></td>
                                             <td><?= e((string)$client['full_name']) ?></td>
                                             <td><?= e((string)($client['country_commercial'] ?? '—')) ?></td>

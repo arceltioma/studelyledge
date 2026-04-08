@@ -11,6 +11,18 @@ if (!function_exists('sidebarActive')) {
     }
 }
 
+if (!function_exists('sidebarActiveMulti')) {
+    function sidebarActiveMulti(array $needles, string $currentUri): string
+    {
+        foreach ($needles as $needle) {
+            if (str_contains($currentUri, $needle)) {
+                return 'active';
+            }
+        }
+        return '';
+    }
+}
+
 if (!function_exists('sidebarGroupOpen')) {
     function sidebarGroupOpen(array $needles, string $currentUri): bool
     {
@@ -96,7 +108,7 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
                     <?php endif; ?>
 
                     <?php if ($can('clients_view_page')): ?>
-                        <a class="sidebar-link <?= sidebarActive('/modules/clients/', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/clients/clients_list.php">
+                        <a class="sidebar-link <?= sidebarActive('/modules/clients/clients_list.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/clients/clients_list.php">
                             <span>👤</span><span>Clients</span>
                         </a>
                     <?php endif; ?>
@@ -104,6 +116,12 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
                     <?php if ($can('operations_view_page')): ?>
                         <a class="sidebar-link <?= sidebarActive('/modules/operations/', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/operations/operations_list.php">
                             <span>💰</span><span>Opérations</span>
+                        </a>
+                    <?php endif; ?>
+
+                    <?php if ($can('clients_view_page')): ?>
+                        <a class="sidebar-link <?= sidebarActive('/modules/clients/client_accounts.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/clients/client_accounts.php">
+                            <span>🏦</span><span>Comptes Clients (411)</span>
                         </a>
                     <?php endif; ?>
 
@@ -136,7 +154,7 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
                         </a>
 
                         <?php if ($can('imports_preview_page')): ?>
-                            <a class="sidebar-link <?= sidebarActive('/modules/imports/import_preview.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/imports/import_preview.php">
+                            <a class="sidebar-link <?= sidebarActiveMulti(['/modules/imports/import_preview.php', '/modules/imports/import_upload.php', '/modules/imports/import_mapping.php'], $currentUri) ?>" href="<?= e(APP_URL) ?>modules/imports/import_preview.php">
                                 <span>📥</span><span>Import Opérations</span>
                             </a>
                         <?php endif; ?>
