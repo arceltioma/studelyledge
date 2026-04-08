@@ -7,159 +7,192 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-enforcePagePermission($pdo, 'operations_create');
+if (function_exists('studelyEnforceAccess')) {
+    studelyEnforceAccess($pdo, 'operation_types_manage_page');
+} else {
+    enforcePagePermission($pdo, 'operation_types_manage');
+}
 
 $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
 if ($id <= 0) {
     exit('Type invalide.');
 }
 
-function eot_fetch_services(PDO $pdo): array
-{
-    if (!tableExists($pdo, 'ref_services')) {
-        return [];
-    }
+if (!function_exists('eot_fetch_services')) {
+    function eot_fetch_services(PDO $pdo): array
+    {
+        if (!tableExists($pdo, 'ref_services')) {
+            return [];
+        }
 
-    return $pdo->query("
-        SELECT id, code, label, operation_type_id, is_active
-        FROM ref_services
-        ORDER BY label ASC
-    ")->fetchAll(PDO::FETCH_ASSOC);
+        return $pdo->query("
+            SELECT id, code, label, operation_type_id, service_account_id, treasury_account_id, is_active
+            FROM ref_services
+            ORDER BY label ASC
+        ")->fetchAll(PDO::FETCH_ASSOC);
+    }
 }
 
-function eot_fetch_service_accounts(PDO $pdo): array
-{
-    if (!tableExists($pdo, 'service_accounts')) {
-        return [];
-    }
+if (!function_exists('eot_fetch_service_accounts')) {
+    function eot_fetch_service_accounts(PDO $pdo): array
+    {
+        if (!tableExists($pdo, 'service_accounts')) {
+            return [];
+        }
 
-    $hasParent = false;
-    $hasSort = false;
+        $hasParent = false;
+        $hasSort = false;
 
-    try {
-        $columns = $pdo->query("SHOW COLUMNS FROM service_accounts")->fetchAll(PDO::FETCH_ASSOC);
-        $names = array_map(fn($c) => $c['Field'], $columns);
-        $hasParent = in_array('parent_account_id', $names, true);
-        $hasSort = in_array('sort_order', $names, true);
-    } catch (Throwable $e) {
-        // fallback silencieux
-    }
+        try {
+            $columns = $pdo->query("SHOW COLUMNS FROM service_accounts")->fetchAll(PDO::FETCH_ASSOC);
+            $names = array_map(static fn($c) => $c['Field'], $columns);
+            $hasParent = in_array('parent_account_id', $names, true);
+            $hasSort = in_array('sort_order', $names, true);
+        } catch (Throwable $e) {
+        }
 
-    $sql = "
-        SELECT
-            sa.id,
-            sa.account_code,
-            sa.account_label,
-            sa.operation_type_label,
-            sa.destination_country_label,
-            sa.commercial_country_label,
-            sa.is_postable,
-            sa.is_active
-    ";
-
-    if ($hasParent) {
-        $sql .= ",
-            sa.parent_account_id,
-            p.account_code AS parent_account_code,
-            p.account_label AS parent_account_label
+        $sql = "
+            SELECT
+                sa.id,
+                sa.account_code,
+                sa.account_label,
+                sa.operation_type_label,
+                sa.destination_country_label,
+                sa.commercial_country_label,
+                sa.is_postable,
+                sa.is_active
         ";
-    } else {
-        $sql .= ",
-            NULL AS parent_account_id,
-            NULL AS parent_account_code,
-            NULL AS parent_account_label
+
+        if ($hasParent) {
+            $sql .= ",
+                sa.parent_account_id,
+                p.account_code AS parent_account_code,
+                p.account_label AS parent_account_label
+            ";
+        } else {
+            $sql .= ",
+                NULL AS parent_account_id,
+                NULL AS parent_account_code,
+                NULL AS parent_account_label
+            ";
+        }
+
+        if ($hasSort) {
+            $sql .= ", sa.sort_order";
+        } else {
+            $sql .= ", 0 AS sort_order";
+        }
+
+        $sql .= "
+            FROM service_accounts sa
         ";
+
+        if ($hasParent) {
+            $sql .= " LEFT JOIN service_accounts p ON p.id = sa.parent_account_id ";
+        }
+
+        $sql .= "
+            WHERE COALESCE(sa.is_active,1) = 1
+              AND COALESCE(sa.is_postable,0) = 1
+            ORDER BY COALESCE(sa.sort_order,0) ASC, sa.account_code ASC
+        ";
+
+        return $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
     }
-
-    if ($hasSort) {
-        $sql .= ", sa.sort_order";
-    } else {
-        $sql .= ", 0 AS sort_order";
-    }
-
-    $sql .= "
-        FROM service_accounts sa
-    ";
-
-    if ($hasParent) {
-        $sql .= " LEFT JOIN service_accounts p ON p.id = sa.parent_account_id ";
-    }
-
-    $sql .= "
-        WHERE COALESCE(sa.is_active,1) = 1
-          AND COALESCE(sa.is_postable,0) = 1
-        ORDER BY COALESCE(sa.sort_order,0) ASC, sa.account_code ASC
-    ";
-
-    return $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 }
 
-function eot_fetch_treasury_accounts(PDO $pdo): array
-{
-    if (!tableExists($pdo, 'treasury_accounts')) {
-        return [];
-    }
+if (!function_exists('eot_fetch_treasury_accounts')) {
+    function eot_fetch_treasury_accounts(PDO $pdo): array
+    {
+        if (!tableExists($pdo, 'treasury_accounts')) {
+            return [];
+        }
 
-    return $pdo->query("
-        SELECT id, account_code, account_label, is_active
-        FROM treasury_accounts
-        WHERE COALESCE(is_active,1) = 1
-        ORDER BY account_code ASC
-    ")->fetchAll(PDO::FETCH_ASSOC);
+        return $pdo->query("
+            SELECT id, account_code, account_label, is_active
+            FROM treasury_accounts
+            WHERE COALESCE(is_active,1) = 1
+            ORDER BY account_code ASC
+        ")->fetchAll(PDO::FETCH_ASSOC);
+    }
 }
 
-function eot_service_account_display(array $account): string
-{
-    $parts = [];
-    $parts[] = $account['account_code'] ?? '';
-    $parts[] = $account['account_label'] ?? '';
+if (!function_exists('eot_service_account_display')) {
+    function eot_service_account_display(array $account): string
+    {
+        $parts = [];
+        $parts[] = $account['account_code'] ?? '';
+        $parts[] = $account['account_label'] ?? '';
 
-    $meta = [];
-    if (!empty($account['parent_account_code']) || !empty($account['parent_account_label'])) {
-        $meta[] = 'Parent: ' . trim(($account['parent_account_code'] ?? '') . ' ' . ($account['parent_account_label'] ?? ''));
-    }
-    if (!empty($account['operation_type_label'])) {
-        $meta[] = $account['operation_type_label'];
-    }
-    if (!empty($account['destination_country_label'])) {
-        $meta[] = 'Destination: ' . $account['destination_country_label'];
-    }
-    if (!empty($account['commercial_country_label'])) {
-        $meta[] = 'Commercial: ' . $account['commercial_country_label'];
-    }
+        $meta = [];
+        if (!empty($account['parent_account_code']) || !empty($account['parent_account_label'])) {
+            $meta[] = 'Parent: ' . trim((string)($account['parent_account_code'] ?? '') . ' ' . (string)($account['parent_account_label'] ?? ''));
+        }
+        if (!empty($account['operation_type_label'])) {
+            $meta[] = (string)$account['operation_type_label'];
+        }
+        if (!empty($account['destination_country_label'])) {
+            $meta[] = 'Destination: ' . (string)$account['destination_country_label'];
+        }
+        if (!empty($account['commercial_country_label'])) {
+            $meta[] = 'Commercial: ' . (string)$account['commercial_country_label'];
+        }
 
-    $label = trim(implode(' - ', array_filter($parts)));
-    if ($meta) {
-        $label .= ' [' . implode(' | ', $meta) . ']';
-    }
+        $label = trim(implode(' - ', array_filter($parts)));
+        if ($meta) {
+            $label .= ' [' . implode(' | ', $meta) . ']';
+        }
 
-    return $label;
+        return $label;
+    }
 }
 
-function eot_find_service_account(PDO $pdo, ?int $serviceAccountId): ?array
-{
-    if ($serviceAccountId === null || $serviceAccountId <= 0) {
-        return null;
+if (!function_exists('eot_find_service_account')) {
+    function eot_find_service_account(PDO $pdo, ?int $serviceAccountId): ?array
+    {
+        if ($serviceAccountId === null || $serviceAccountId <= 0 || !tableExists($pdo, 'service_accounts')) {
+            return null;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT
+                sa.id,
+                sa.account_code,
+                sa.account_label,
+                sa.operation_type_label,
+                sa.destination_country_label,
+                sa.commercial_country_label,
+                sa.is_postable,
+                sa.is_active
+            FROM service_accounts sa
+            WHERE sa.id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$serviceAccountId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $row ?: null;
     }
+}
 
-    $stmt = $pdo->prepare("
-        SELECT
-            sa.id,
-            sa.account_code,
-            sa.account_label,
-            sa.operation_type_label,
-            sa.destination_country_label,
-            sa.commercial_country_label,
-            sa.is_postable,
-            sa.is_active
-        FROM service_accounts sa
-        WHERE sa.id = ?
-        LIMIT 1
-    ");
-    $stmt->execute([$serviceAccountId]);
-    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+if (!function_exists('eot_find_treasury_account')) {
+    function eot_find_treasury_account(PDO $pdo, ?int $treasuryAccountId): ?array
+    {
+        if ($treasuryAccountId === null || $treasuryAccountId <= 0 || !tableExists($pdo, 'treasury_accounts')) {
+            return null;
+        }
 
-    return $row ?: null;
+        $stmt = $pdo->prepare("
+            SELECT id, account_code, account_label, is_active
+            FROM treasury_accounts
+            WHERE id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$treasuryAccountId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $row ?: null;
+    }
 }
 
 $stmt = $pdo->prepare("
@@ -181,31 +214,49 @@ $treasuryAccounts = eot_fetch_treasury_accounts($pdo);
 
 $successMessage = '';
 $errorMessage = '';
+$previewMode = false;
+
+$formData = [
+    'code' => (string)($row['code'] ?? ''),
+    'label' => (string)($row['label'] ?? ''),
+    'direction' => (string)($row['direction'] ?? 'mixed'),
+    'is_active' => (int)($row['is_active'] ?? 1),
+    'attach_service_ids' => [],
+    'new_service_code' => ['', '', ''],
+    'new_service_label' => ['', '', ''],
+    'new_service_account_id' => ['', '', ''],
+    'new_treasury_account_id' => ['', '', ''],
+];
+
+$previewData = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $formData = [
+        'code' => trim((string)($_POST['code'] ?? '')),
+        'label' => trim((string)($_POST['label'] ?? '')),
+        'direction' => trim((string)($_POST['direction'] ?? 'mixed')),
+        'is_active' => isset($_POST['is_active']) ? 1 : 0,
+        'attach_service_ids' => array_values(array_filter(array_map('intval', $_POST['attach_service_ids'] ?? []), static fn($v) => $v > 0)),
+        'new_service_code' => $_POST['new_service_code'] ?? ['', '', ''],
+        'new_service_label' => $_POST['new_service_label'] ?? ['', '', ''],
+        'new_service_account_id' => $_POST['new_service_account_id'] ?? ['', '', ''],
+        'new_treasury_account_id' => $_POST['new_treasury_account_id'] ?? ['', '', ''],
+    ];
+
+    $actionMode = trim((string)($_POST['action_mode'] ?? 'preview'));
+
     try {
         if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
             throw new RuntimeException('Jeton CSRF invalide.');
         }
 
-        $code = trim((string)($_POST['code'] ?? ''));
-        $label = trim((string)($_POST['label'] ?? ''));
-        $direction = trim((string)($_POST['direction'] ?? 'mixed'));
-        $isActive = isset($_POST['is_active']) ? 1 : 0;
-
-        $attachServiceIds = array_values(array_filter(array_map('intval', $_POST['attach_service_ids'] ?? []), fn($v) => $v > 0));
-
-        $newServiceCodes = $_POST['new_service_code'] ?? [];
-        $newServiceLabels = $_POST['new_service_label'] ?? [];
-        $newService706 = $_POST['new_service_account_id'] ?? [];
-        $newService512 = $_POST['new_treasury_account_id'] ?? [];
+        $code = strtoupper($formData['code']);
+        $label = $formData['label'];
+        $direction = in_array($formData['direction'], ['credit', 'debit', 'mixed'], true) ? $formData['direction'] : 'mixed';
+        $isActive = (int)$formData['is_active'];
 
         if ($code === '' || $label === '') {
             throw new RuntimeException('Le code et le libellé sont obligatoires.');
-        }
-
-        if (!in_array($direction, ['credit', 'debit', 'mixed'], true)) {
-            $direction = 'mixed';
         }
 
         $stmtDup = $pdo->prepare("
@@ -220,78 +271,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Ce code existe déjà.');
         }
 
-        $pdo->beginTransaction();
-
-        $stmtUpdate = $pdo->prepare("
-            UPDATE ref_operation_types
-            SET
-                code = ?,
-                label = ?,
-                direction = ?,
-                is_active = ?,
-                updated_at = NOW()
-            WHERE id = ?
-        ");
-        $stmtUpdate->execute([$code, $label, $direction, $isActive, $id]);
-
-        if ($attachServiceIds) {
-            $stmtAttachCheck = $pdo->prepare("
-                SELECT is_active
-                FROM ref_services
-                WHERE id = ?
-                LIMIT 1
-            ");
-
-            $stmtAttach = $pdo->prepare("
-                UPDATE ref_services
-                SET operation_type_id = ?, updated_at = NOW()
-                WHERE id = ?
-            ");
-
-            foreach ($attachServiceIds as $serviceId) {
-                $stmtAttachCheck->execute([$serviceId]);
-                $serviceActive = $stmtAttachCheck->fetchColumn();
-
-                if ($serviceActive === false) {
-                    throw new RuntimeException('Un service à rattacher est introuvable.');
+        $attachServicesPreview = [];
+        foreach ($formData['attach_service_ids'] as $serviceId) {
+            $found = null;
+            foreach ($allServices as $service) {
+                if ((int)$service['id'] === (int)$serviceId) {
+                    $found = $service;
+                    break;
                 }
-
-                if ($isActive === 0 && (int)$serviceActive === 1) {
-                    throw new RuntimeException('Impossible de rattacher un service actif à un type d’opération archivé.');
-                }
-
-                $stmtAttach->execute([$id, $serviceId]);
             }
+
+            if (!$found) {
+                throw new RuntimeException('Un service à rattacher est introuvable.');
+            }
+
+            if ($isActive === 0 && (int)($found['is_active'] ?? 1) === 1) {
+                throw new RuntimeException('Impossible de rattacher un service actif à un type d’opération archivé.');
+            }
+
+            $attachServicesPreview[] = $found;
         }
 
-        $stmtDupService = $pdo->prepare("
-            SELECT id
-            FROM ref_services
-            WHERE code = ?
-            LIMIT 1
-        ");
-
-        $stmtInsertService = $pdo->prepare("
-            INSERT INTO ref_services (
-                code, label, operation_type_id, service_account_id, treasury_account_id,
-                is_active, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
-        ");
-
+        $newServicesPreview = [];
         $rowCount = max(
-            count($newServiceCodes),
-            count($newServiceLabels),
-            count($newService706),
-            count($newService512)
+            count($formData['new_service_code']),
+            count($formData['new_service_label']),
+            count($formData['new_service_account_id']),
+            count($formData['new_treasury_account_id'])
         );
 
         for ($i = 0; $i < $rowCount; $i++) {
-            $serviceCode = trim((string)($newServiceCodes[$i] ?? ''));
-            $serviceLabel = trim((string)($newServiceLabels[$i] ?? ''));
-            $serviceAccountId = (($newService706[$i] ?? '') !== '') ? (int)$newService706[$i] : null;
-            $treasuryAccountId = (($newService512[$i] ?? '') !== '') ? (int)$newService512[$i] : null;
+            $serviceCode = strtoupper(trim((string)($formData['new_service_code'][$i] ?? '')));
+            $serviceLabel = trim((string)($formData['new_service_label'][$i] ?? ''));
+            $serviceAccountId = (($formData['new_service_account_id'][$i] ?? '') !== '') ? (int)$formData['new_service_account_id'][$i] : null;
+            $treasuryAccountId = (($formData['new_treasury_account_id'][$i] ?? '') !== '') ? (int)$formData['new_treasury_account_id'][$i] : null;
 
-            if ($serviceCode === '' && $serviceLabel === '') {
+            if ($serviceCode === '' && $serviceLabel === '' && $serviceAccountId === null && $treasuryAccountId === null) {
                 continue;
             }
 
@@ -303,6 +318,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('Chaque nouveau service doit être lié à un compte 706 ou 512.');
             }
 
+            $stmtDupService = $pdo->prepare("
+                SELECT id
+                FROM ref_services
+                WHERE code = ?
+                LIMIT 1
+            ");
             $stmtDupService->execute([$serviceCode]);
             if ($stmtDupService->fetch()) {
                 throw new RuntimeException('Le code service "' . $serviceCode . '" existe déjà.');
@@ -332,55 +353,116 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
-            if ($treasuryAccountId !== null) {
-                $stmtTreasury = $pdo->prepare("
-                    SELECT is_active
-                    FROM treasury_accounts
+            $selected512 = eot_find_treasury_account($pdo, $treasuryAccountId);
+            if ($treasuryAccountId !== null && !$selected512) {
+                throw new RuntimeException('Le compte 512 sélectionné pour le service "' . $serviceCode . '" est introuvable.');
+            }
+
+            if ($selected512 && (int)($selected512['is_active'] ?? 0) !== 1) {
+                throw new RuntimeException('Le compte 512 sélectionné pour le service "' . $serviceCode . '" est archivé.');
+            }
+
+            $newServicesPreview[] = [
+                'code' => $serviceCode,
+                'label' => $serviceLabel,
+                'service_account' => $selected706,
+                'treasury_account' => $selected512,
+                'is_active' => $isActive,
+            ];
+        }
+
+        $previewData = [
+            'code' => $code,
+            'label' => $label,
+            'direction' => $direction,
+            'is_active' => $isActive,
+            'attach_services' => $attachServicesPreview,
+            'new_services' => $newServicesPreview,
+        ];
+
+        $previewMode = true;
+
+        if ($actionMode === 'save') {
+            $pdo->beginTransaction();
+
+            $stmtUpdate = $pdo->prepare("
+                UPDATE ref_operation_types
+                SET
+                    code = ?,
+                    label = ?,
+                    direction = ?,
+                    is_active = ?,
+                    updated_at = NOW()
+                WHERE id = ?
+            ");
+            $stmtUpdate->execute([$code, $label, $direction, $isActive, $id]);
+
+            if ($formData['attach_service_ids']) {
+                $stmtAttach = $pdo->prepare("
+                    UPDATE ref_services
+                    SET operation_type_id = ?, updated_at = NOW()
                     WHERE id = ?
-                    LIMIT 1
                 ");
-                $stmtTreasury->execute([$treasuryAccountId]);
-                $treasuryActive = $stmtTreasury->fetchColumn();
 
-                if ($treasuryActive === false) {
-                    throw new RuntimeException('Le compte 512 sélectionné pour le service "' . $serviceCode . '" est introuvable.');
-                }
-
-                if ((int)$treasuryActive !== 1) {
-                    throw new RuntimeException('Le compte 512 sélectionné pour le service "' . $serviceCode . '" est archivé.');
+                foreach ($formData['attach_service_ids'] as $serviceId) {
+                    $stmtAttach->execute([$id, $serviceId]);
                 }
             }
 
-            $stmtInsertService->execute([
-                $serviceCode,
-                $serviceLabel,
-                $id,
-                $serviceAccountId,
-                $treasuryAccountId,
-                $isActive
-            ]);
+            if ($newServicesPreview) {
+                $stmtInsertService = $pdo->prepare("
+                    INSERT INTO ref_services (
+                        code, label, operation_type_id, service_account_id, treasury_account_id,
+                        is_active, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())
+                ");
+
+                foreach ($newServicesPreview as $newService) {
+                    $stmtInsertService->execute([
+                        $newService['code'],
+                        $newService['label'],
+                        $id,
+                        $newService['service_account']['id'] ?? null,
+                        $newService['treasury_account']['id'] ?? null,
+                        $newService['is_active'],
+                    ]);
+                }
+            }
+
+            if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+                logUserAction(
+                    $pdo,
+                    (int)$_SESSION['user_id'],
+                    'edit_operation_type',
+                    'admin_functional',
+                    'operation_type',
+                    $id,
+                    'Modification d’un type d’opération avec hiérarchie 706'
+                );
+            }
+
+            $pdo->commit();
+            $successMessage = 'Type d’opération mis à jour.';
+            $previewMode = false;
+
+            $stmt->execute([$id]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: $row;
+
+            $allServices = eot_fetch_services($pdo);
+            $serviceAccounts = eot_fetch_service_accounts($pdo);
+
+            $formData = [
+                'code' => (string)($row['code'] ?? ''),
+                'label' => (string)($row['label'] ?? ''),
+                'direction' => (string)($row['direction'] ?? 'mixed'),
+                'is_active' => (int)($row['is_active'] ?? 1),
+                'attach_service_ids' => [],
+                'new_service_code' => ['', '', ''],
+                'new_service_label' => ['', '', ''],
+                'new_service_account_id' => ['', '', ''],
+                'new_treasury_account_id' => ['', '', ''],
+            ];
         }
-
-        if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
-            logUserAction(
-                $pdo,
-                (int)$_SESSION['user_id'],
-                'edit_operation_type',
-                'admin_functional',
-                'operation_type',
-                $id,
-                'Modification d’un type d’opération avec hiérarchie 706'
-            );
-        }
-
-        $pdo->commit();
-        $successMessage = 'Type d’opération mis à jour.';
-
-        $stmt->execute([$id]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        $allServices = eot_fetch_services($pdo);
-        $serviceAccounts = eot_fetch_service_accounts($pdo);
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
@@ -396,7 +478,8 @@ $linkedServices = tableExists($pdo, 'ref_services')
                 rs.*,
                 sa.account_code AS service_account_code,
                 sa.account_label AS service_account_label,
-                ta.account_code AS treasury_account_code
+                ta.account_code AS treasury_account_code,
+                ta.account_label AS treasury_account_label
             FROM ref_services rs
             LEFT JOIN service_accounts sa ON sa.id = rs.service_account_id
             LEFT JOIN treasury_accounts ta ON ta.id = rs.treasury_account_id
@@ -436,12 +519,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <div class="dashboard-grid-2">
                         <div>
                             <label>Code</label>
-                            <input type="text" name="code" value="<?= e($row['code'] ?? '') ?>" required>
+                            <input type="text" name="code" value="<?= e($formData['code']) ?>" required>
                         </div>
 
                         <div>
                             <label>Libellé</label>
-                            <input type="text" name="label" value="<?= e($row['label'] ?? '') ?>" required>
+                            <input type="text" name="label" value="<?= e($formData['label']) ?>" required>
                         </div>
                     </div>
 
@@ -449,15 +532,15 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <div>
                             <label>Direction</label>
                             <select name="direction">
-                                <option value="mixed" <?= (($row['direction'] ?? 'mixed') === 'mixed') ? 'selected' : '' ?>>Mixte</option>
-                                <option value="credit" <?= (($row['direction'] ?? '') === 'credit') ? 'selected' : '' ?>>Crédit</option>
-                                <option value="debit" <?= (($row['direction'] ?? '') === 'debit') ? 'selected' : '' ?>>Débit</option>
+                                <option value="mixed" <?= $formData['direction'] === 'mixed' ? 'selected' : '' ?>>Mixte</option>
+                                <option value="credit" <?= $formData['direction'] === 'credit' ? 'selected' : '' ?>>Crédit</option>
+                                <option value="debit" <?= $formData['direction'] === 'debit' ? 'selected' : '' ?>>Débit</option>
                             </select>
                         </div>
 
                         <div style="display:flex;align-items:flex-end;">
                             <label style="display:flex;gap:8px;align-items:center;">
-                                <input type="checkbox" name="is_active" <?= ((int)($row['is_active'] ?? 1) === 1) ? 'checked' : '' ?>>
+                                <input type="checkbox" name="is_active" value="1" <?= (int)$formData['is_active'] === 1 ? 'checked' : '' ?>>
                                 Type actif
                             </label>
                         </div>
@@ -467,7 +550,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <label>Rattacher des services existants</label>
                         <select name="attach_service_ids[]" multiple size="8">
                             <?php foreach ($allServices as $service): ?>
-                                <option value="<?= (int)$service['id'] ?>">
+                                <option value="<?= (int)$service['id'] ?>" <?= in_array((int)$service['id'], $formData['attach_service_ids'], true) ? 'selected' : '' ?>>
                                     <?= e(($service['code'] ?? '') . ' - ' . ($service['label'] ?? '')) ?><?= (int)($service['is_active'] ?? 1) !== 1 ? ' [archivé]' : '' ?>
                                 </option>
                             <?php endforeach; ?>
@@ -489,13 +572,17 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <tbody>
                                 <?php for ($i = 0; $i < 3; $i++): ?>
                                     <tr>
-                                        <td><input type="text" name="new_service_code[]"></td>
-                                        <td><input type="text" name="new_service_label[]"></td>
+                                        <td>
+                                            <input type="text" name="new_service_code[]" value="<?= e((string)($formData['new_service_code'][$i] ?? '')) ?>">
+                                        </td>
+                                        <td>
+                                            <input type="text" name="new_service_label[]" value="<?= e((string)($formData['new_service_label'][$i] ?? '')) ?>">
+                                        </td>
                                         <td>
                                             <select name="new_service_account_id[]">
                                                 <option value="">Aucun</option>
                                                 <?php foreach ($serviceAccounts as $account): ?>
-                                                    <option value="<?= (int)$account['id'] ?>">
+                                                    <option value="<?= (int)$account['id'] ?>" <?= (string)($formData['new_service_account_id'][$i] ?? '') === (string)$account['id'] ? 'selected' : '' ?>>
                                                         <?= e(eot_service_account_display($account)) ?>
                                                     </option>
                                                 <?php endforeach; ?>
@@ -505,8 +592,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                             <select name="new_treasury_account_id[]">
                                                 <option value="">Aucun</option>
                                                 <?php foreach ($treasuryAccounts as $account): ?>
-                                                    <option value="<?= (int)$account['id'] ?>">
-                                                        <?= e($account['account_code'] . ' - ' . $account['account_label']) ?>
+                                                    <option value="<?= (int)$account['id'] ?>" <?= (string)($formData['new_treasury_account_id'][$i] ?? '') === (string)$account['id'] ? 'selected' : '' ?>>
+                                                        <?= e(($account['account_code'] ?? '') . ' - ' . ($account['account_label'] ?? '')) ?>
                                                     </option>
                                                 <?php endforeach; ?>
                                             </select>
@@ -517,42 +604,102 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         </table>
                     </div>
 
-                    <div class="btn-group">
-                        <button type="submit" class="btn btn-success">Enregistrer</button>
+                    <div class="btn-group" style="margin-top:20px;">
+                        <button type="submit" name="action_mode" value="preview" class="btn btn-secondary">Prévisualiser</button>
+                        <button type="submit" name="action_mode" value="save" class="btn btn-success">Enregistrer</button>
                         <a href="<?= e(APP_URL) ?>modules/admin_functional/manage_operation_types.php" class="btn btn-outline">Retour</a>
                     </div>
                 </form>
             </div>
 
             <div class="table-card">
-                <h3 class="section-title">Services déjà liés</h3>
+                <h3 class="section-title"><?= $previewMode ? 'Prévisualisation avant validation' : 'Services déjà liés' ?></h3>
 
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Code</th>
-                            <th>Libellé</th>
-                            <th>706</th>
-                            <th>512</th>
-                            <th>État</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($linkedServices as $service): ?>
+                <?php if ($previewMode): ?>
+                    <div class="sl-data-list" style="margin-bottom:16px;">
+                        <div class="sl-data-list__row"><span>Code</span><strong><?= e($previewData['code'] ?? '') ?></strong></div>
+                        <div class="sl-data-list__row"><span>Libellé</span><strong><?= e($previewData['label'] ?? '') ?></strong></div>
+                        <div class="sl-data-list__row"><span>Direction</span><strong><?= e($previewData['direction'] ?? '') ?></strong></div>
+                        <div class="sl-data-list__row"><span>Statut</span><strong><?= ((int)($previewData['is_active'] ?? 0) === 1) ? 'Actif' : 'Archivé' ?></strong></div>
+                    </div>
+
+                    <h4 style="margin:16px 0 10px;">Services existants à rattacher</h4>
+                    <table>
+                        <thead>
                             <tr>
-                                <td><?= e($service['code'] ?? '') ?></td>
-                                <td><?= e($service['label'] ?? '') ?></td>
-                                <td><?= e(trim((string)($service['service_account_code'] ?? '') . ' - ' . (string)($service['service_account_label'] ?? ''))) ?></td>
-                                <td><?= e($service['treasury_account_code'] ?? '') ?></td>
-                                <td><?= ((int)($service['is_active'] ?? 1) === 1) ? 'Actif' : 'Archivé' ?></td>
+                                <th>Code</th>
+                                <th>Libellé</th>
+                                <th>État</th>
                             </tr>
-                        <?php endforeach; ?>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($previewData['attach_services'])): ?>
+                                <?php foreach ($previewData['attach_services'] as $service): ?>
+                                    <tr>
+                                        <td><?= e($service['code'] ?? '') ?></td>
+                                        <td><?= e($service['label'] ?? '') ?></td>
+                                        <td><?= ((int)($service['is_active'] ?? 1) === 1) ? 'Actif' : 'Archivé' ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr><td colspan="3">Aucun rattachement supplémentaire.</td></tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
 
-                        <?php if (!$linkedServices): ?>
-                            <tr><td colspan="5">Aucun service rattaché.</td></tr>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
+                    <h4 style="margin:16px 0 10px;">Nouveaux services à créer</h4>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Code</th>
+                                <th>Libellé</th>
+                                <th>706</th>
+                                <th>512</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($previewData['new_services'])): ?>
+                                <?php foreach ($previewData['new_services'] as $service): ?>
+                                    <tr>
+                                        <td><?= e($service['code'] ?? '') ?></td>
+                                        <td><?= e($service['label'] ?? '') ?></td>
+                                        <td><?= e($service['service_account'] ? eot_service_account_display($service['service_account']) : 'Aucun') ?></td>
+                                        <td><?= e(trim((string)(($service['treasury_account']['account_code'] ?? '') . ' - ' . ($service['treasury_account']['account_label'] ?? ''))) ?: 'Aucun') ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr><td colspan="4">Aucun nouveau service à créer.</td></tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                <?php else: ?>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Code</th>
+                                <th>Libellé</th>
+                                <th>706</th>
+                                <th>512</th>
+                                <th>État</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($linkedServices as $service): ?>
+                                <tr>
+                                    <td><?= e($service['code'] ?? '') ?></td>
+                                    <td><?= e($service['label'] ?? '') ?></td>
+                                    <td><?= e(trim((string)($service['service_account_code'] ?? '') . ' - ' . (string)($service['service_account_label'] ?? ''))) ?></td>
+                                    <td><?= e(trim((string)($service['treasury_account_code'] ?? '') . ' - ' . (string)($service['treasury_account_label'] ?? ''))) ?></td>
+                                    <td><?= ((int)($service['is_active'] ?? 1) === 1) ? 'Actif' : 'Archivé' ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+
+                            <?php if (!$linkedServices): ?>
+                                <tr><td colspan="5">Aucun service rattaché.</td></tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
             </div>
         </div>
 

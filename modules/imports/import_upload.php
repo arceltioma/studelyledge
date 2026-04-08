@@ -18,7 +18,7 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 $pageTitle = 'Import intelligent des opérations';
-$pageSubtitle = 'Upload du fichier puis vérification du mapping avant prévisualisation';
+$pageSubtitle = 'Upload avec prévisualisation avant passage au mapping';
 
 const SL_IMPORT_SESSION_KEY = 'studelyledger_operations_import_preview_v3';
 
@@ -222,6 +222,7 @@ if (!function_exists('sl_import_ai_read_xlsx_raw')) {
 }
 
 $errorMessage = '';
+$previewData = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
@@ -279,8 +280,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ],
         ];
 
-        header('Location: ' . APP_URL . 'modules/imports/import_mapping.php');
-        exit;
+        $previewData = [
+            'file_name' => $originalName,
+            'extension' => strtoupper($extension),
+            'headers' => $parsed['headers'],
+            'headers_count' => count($parsed['headers']),
+            'rows_count' => count($parsed['rows']),
+            'mapped_count' => count(array_filter($suggestedMapping)),
+            'sample_rows' => array_slice($parsed['rows'], 0, 5),
+        ];
+
+        $actionMode = trim((string)($_POST['action_mode'] ?? 'preview'));
+        if ($actionMode === 'save') {
+            header('Location: ' . APP_URL . 'modules/imports/import_mapping.php');
+            exit;
+        }
     } catch (Throwable $e) {
         $errorMessage = $e->getMessage();
     }
@@ -301,6 +315,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
         <div class="dashboard-grid-2">
             <div class="form-card">
                 <h3>Uploader un fichier</h3>
+
                 <form method="POST" enctype="multipart/form-data">
                     <?= csrf_input() ?>
 
@@ -310,22 +325,65 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     </div>
 
                     <div class="btn-group" style="margin-top:20px;">
-                        <button type="submit" class="btn btn-success">Continuer vers le mapping</button>
+                        <button type="submit" name="action_mode" value="preview" class="btn btn-secondary">Prévisualiser</button>
+                        <button type="submit" name="action_mode" value="save" class="btn btn-success">Continuer vers le mapping</button>
                         <a href="<?= e(APP_URL) ?>modules/imports/import_journal.php" class="btn btn-outline">Journal imports</a>
                     </div>
                 </form>
             </div>
 
             <div class="card">
-                <h3>Étapes</h3>
-                <div class="sl-data-list">
-                    <div class="sl-data-list__row"><span>1. Upload</span><strong>Fichier brut</strong></div>
-                    <div class="sl-data-list__row"><span>2. Mapping</span><strong>Correction colonnes</strong></div>
-                    <div class="sl-data-list__row"><span>3. Prévisualisation</span><strong>Validation métier</strong></div>
-                    <div class="sl-data-list__row"><span>4. Import</span><strong>Insertion transactionnelle</strong></div>
-                </div>
+                <h3>Prévisualisation</h3>
+
+                <?php if ($previewData): ?>
+                    <div class="sl-data-list">
+                        <div class="sl-data-list__row"><span>Fichier</span><strong><?= e($previewData['file_name']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Format</span><strong><?= e($previewData['extension']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Colonnes détectées</span><strong><?= (int)$previewData['headers_count'] ?></strong></div>
+                        <div class="sl-data-list__row"><span>Lignes détectées</span><strong><?= (int)$previewData['rows_count'] ?></strong></div>
+                        <div class="sl-data-list__row"><span>Pré-mapping reconnu</span><strong><?= (int)$previewData['mapped_count'] ?></strong></div>
+                    </div>
+
+                    <div class="dashboard-note" style="margin-top:16px;">
+                        <?= e(implode(' | ', $previewData['headers'])) ?>
+                    </div>
+                <?php else: ?>
+                    <div class="sl-data-list">
+                        <div class="sl-data-list__row"><span>1. Upload</span><strong>Fichier brut</strong></div>
+                        <div class="sl-data-list__row"><span>2. Mapping</span><strong>Correction colonnes</strong></div>
+                        <div class="sl-data-list__row"><span>3. Prévisualisation</span><strong>Validation métier</strong></div>
+                        <div class="sl-data-list__row"><span>4. Import</span><strong>Insertion transactionnelle</strong></div>
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
+
+        <?php if ($previewData && !empty($previewData['sample_rows'])): ?>
+            <div class="card" style="margin-top:20px;">
+                <h3>Extrait du fichier</h3>
+
+                <div class="table-responsive">
+                    <table class="modern-table">
+                        <thead>
+                            <tr>
+                                <?php foreach ($previewData['headers'] as $header): ?>
+                                    <th><?= e((string)$header) ?></th>
+                                <?php endforeach; ?>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($previewData['sample_rows'] as $row): ?>
+                                <tr>
+                                    <?php foreach ($previewData['headers'] as $header): ?>
+                                        <td><?= e((string)($row[$header] ?? '')) ?></td>
+                                    <?php endforeach; ?>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        <?php endif; ?>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
