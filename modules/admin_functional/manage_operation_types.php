@@ -18,7 +18,7 @@ if (!tableExists($pdo, 'ref_operation_types')) {
 }
 
 $pageTitle = 'Gérer les types d’opérations';
-$pageSubtitle = 'Création et pilotage des types d’opérations avec prévisualisation avant validation';
+$pageSubtitle = 'Création, pilotage et prévisualisation avec suggestion automatique de logique comptable';
 
 $successMessage = '';
 $errorMessage = '';
@@ -34,6 +34,13 @@ $formData = [
     'is_active' => 1,
 ];
 
+if (!function_exists('mot_like')) {
+    function mot_like(string $value): string
+    {
+        return '%' . $value . '%';
+    }
+}
+
 if (!function_exists('sl_manage_operation_type_value')) {
     function sl_manage_operation_type_value(array $data, string $key, mixed $default = ''): string
     {
@@ -41,22 +48,108 @@ if (!function_exists('sl_manage_operation_type_value')) {
     }
 }
 
-if (!function_exists('sl_manage_operation_type_preview')) {
-    function sl_manage_operation_type_preview(array $formData): array
+if (!function_exists('sl_cfg_rule_suggestion_from_operation_type')) {
+    function sl_cfg_rule_suggestion_from_operation_type(array $formData): array
     {
+        $code = sl_normalize_code((string)($formData['code'] ?? ''));
+        $label = trim((string)($formData['label'] ?? ''));
+        $direction = trim((string)($formData['direction'] ?? 'mixed'));
+
+        $requiresClient = true;
+        $requiresLinkedBank = false;
+        $requiresManual = false;
+        $debitMode = 'CLIENT_411';
+        $creditMode = 'SERVICE_706';
+        $labelPattern = '';
+        $explanation = 'Suggestion générique de produit/service : débit client 411 / crédit service 706.';
+
+        switch ($code) {
+            case 'VERSEMENT':
+                $requiresClient = true;
+                $requiresLinkedBank = true;
+                $requiresManual = false;
+                $debitMode = 'CLIENT_512';
+                $creditMode = 'CLIENT_411';
+                $labelPattern = '';
+                $explanation = 'Versement : entrée de fonds sur trésorerie client 512 contre compte client 411.';
+                break;
+
+            case 'REGULARISATION':
+                $requiresClient = true;
+                $requiresLinkedBank = true;
+                $requiresManual = false;
+                $debitMode = 'CLIENT_411';
+                $creditMode = 'CLIENT_512';
+                $labelPattern = '';
+                $explanation = 'Régularisation : cas variable, souvent client 411 contre trésorerie client 512.';
+                break;
+
+            case 'VIREMENT':
+                $requiresClient = false;
+                $requiresLinkedBank = true;
+                $requiresManual = false;
+                $debitMode = 'SOURCE_512';
+                $creditMode = 'TARGET_512';
+                $labelPattern = '';
+                $explanation = 'Virement : mouvement de trésorerie entre deux comptes 512.';
+                break;
+
+            case 'FRAIS_SERVICE':
+                $requiresClient = true;
+                $requiresLinkedBank = false;
+                $requiresManual = false;
+                $debitMode = 'CLIENT_411';
+                $creditMode = 'SERVICE_706';
+                $labelPattern = 'AVI / ATS';
+                $explanation = 'Frais de service : débit client 411 / crédit produit 706 avec recherche analytique par libellé.';
+                break;
+
+            case 'FRAIS_GESTION':
+                $requiresClient = true;
+                $requiresLinkedBank = false;
+                $requiresManual = false;
+                $debitMode = 'CLIENT_411';
+                $creditMode = 'SERVICE_706';
+                $labelPattern = 'GESTION';
+                $explanation = 'Frais de gestion : débit client 411 / crédit produit 706.';
+                break;
+
+            case 'COMMISSION_DE_TRANSFERT':
+                $requiresClient = true;
+                $requiresLinkedBank = false;
+                $requiresManual = false;
+                $debitMode = 'CLIENT_411';
+                $creditMode = 'SERVICE_706';
+                $labelPattern = 'TRANSFERT';
+                $explanation = 'Commission de transfert : débit client 411 / crédit produit 706.';
+                break;
+
+            case 'CA_PLACEMENT':
+                $requiresClient = true;
+                $requiresLinkedBank = false;
+                $requiresManual = false;
+                $debitMode = 'CLIENT_411';
+                $creditMode = 'SERVICE_706';
+                $labelPattern = 'CA PLACEMENT';
+                $explanation = 'CA placement : débit client 411 / crédit produit 706.';
+                break;
+        }
+
         return [
             'code' => strtoupper(trim((string)($formData['code'] ?? ''))),
-            'label' => trim((string)($formData['label'] ?? '')),
-            'direction' => trim((string)($formData['direction'] ?? 'mixed')),
+            'label' => $label,
+            'direction' => $direction,
             'is_active' => (int)($formData['is_active'] ?? 1),
+            'suggested_rule_code' => $code !== '' ? 'RULE_' . $code . '_DEFAULT' : 'RULE_DEFAULT',
+            'suggested_rule_label' => $label !== '' ? 'Règle auto - ' . $label : 'Règle auto',
+            'debit_mode' => $debitMode,
+            'credit_mode' => $creditMode,
+            'requires_client' => $requiresClient ? 1 : 0,
+            'requires_linked_bank' => $requiresLinkedBank ? 1 : 0,
+            'requires_manual_accounts' => $requiresManual ? 1 : 0,
+            'label_pattern' => $labelPattern,
+            'explanation' => $explanation,
         ];
-    }
-}
-
-if (!function_exists('mot_like')) {
-    function mot_like(string $value): string
-    {
-        return '%' . $value . '%';
     }
 }
 
@@ -93,7 +186,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Ce code existe déjà.');
         }
 
-        $previewData = sl_manage_operation_type_preview($formData);
+        $previewData = sl_cfg_rule_suggestion_from_operation_type($formData);
         $previewMode = true;
 
         if ($actionMode === 'save') {
@@ -246,18 +339,27 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </div>
 
             <div class="card">
-                <h3>Prévisualisation</h3>
+                <h3>Suggestion comptable par défaut</h3>
 
                 <?php if ($previewMode && $previewData): ?>
                     <div class="sl-data-list">
                         <div class="sl-data-list__row"><span>Code</span><strong><?= e($previewData['code']) ?></strong></div>
                         <div class="sl-data-list__row"><span>Libellé</span><strong><?= e($previewData['label']) ?></strong></div>
                         <div class="sl-data-list__row"><span>Direction</span><strong><?= e($previewData['direction']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Statut</span><strong><?= (int)$previewData['is_active'] === 1 ? 'Actif' : 'Inactif' ?></strong></div>
+                        <div class="sl-data-list__row"><span>Règle suggérée</span><strong><?= e($previewData['suggested_rule_code']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Débit</span><strong><?= e($previewData['debit_mode']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Crédit</span><strong><?= e($previewData['credit_mode']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Client requis</span><strong><?= (int)$previewData['requires_client'] === 1 ? 'Oui' : 'Non' ?></strong></div>
+                        <div class="sl-data-list__row"><span>Banque liée requise</span><strong><?= (int)$previewData['requires_linked_bank'] === 1 ? 'Oui' : 'Non' ?></strong></div>
+                        <div class="sl-data-list__row"><span>Comptes manuels</span><strong><?= (int)$previewData['requires_manual_accounts'] === 1 ? 'Oui' : 'Non' ?></strong></div>
+                        <div class="sl-data-list__row"><span>Pattern libellé</span><strong><?= e($previewData['label_pattern'] !== '' ? $previewData['label_pattern'] : '—') ?></strong></div>
+                    </div>
+                    <div class="dashboard-note" style="margin-top:14px;">
+                        <?= e($previewData['explanation']) ?>
                     </div>
                 <?php else: ?>
                     <div class="dashboard-note">
-                        Vérifie ici le type d’opération avant validation : code métier, libellé, direction comptable et statut.
+                        Prévisualise un type d’opération pour voir la suggestion automatique de logique débit / crédit.
                     </div>
                 <?php endif; ?>
             </div>

@@ -111,7 +111,7 @@ if (!function_exists('eot_fetch_treasury_accounts')) {
         return $pdo->query("
             SELECT id, account_code, account_label, is_active
             FROM treasury_accounts
-            WHERE COALESCE(is_active,1) = 1
+            WHERE COALESCE(is_active,1)=1
             ORDER BY account_code ASC
         ")->fetchAll(PDO::FETCH_ASSOC);
     }
@@ -120,11 +120,9 @@ if (!function_exists('eot_fetch_treasury_accounts')) {
 if (!function_exists('eot_service_account_display')) {
     function eot_service_account_display(array $account): string
     {
-        $parts = [];
-        $parts[] = $account['account_code'] ?? '';
-        $parts[] = $account['account_label'] ?? '';
-
+        $label = trim((string)($account['account_code'] ?? '') . ' - ' . (string)($account['account_label'] ?? ''));
         $meta = [];
+
         if (!empty($account['parent_account_code']) || !empty($account['parent_account_label'])) {
             $meta[] = 'Parent: ' . trim((string)($account['parent_account_code'] ?? '') . ' ' . (string)($account['parent_account_label'] ?? ''));
         }
@@ -138,7 +136,6 @@ if (!function_exists('eot_service_account_display')) {
             $meta[] = 'Commercial: ' . (string)$account['commercial_country_label'];
         }
 
-        $label = trim(implode(' - ', array_filter($parts)));
         if ($meta) {
             $label .= ' [' . implode(' | ', $meta) . ']';
         }
@@ -169,8 +166,8 @@ if (!function_exists('eot_find_service_account')) {
             LIMIT 1
         ");
         $stmt->execute([$serviceAccountId]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row ?: null;
     }
 }
@@ -189,9 +186,148 @@ if (!function_exists('eot_find_treasury_account')) {
             LIMIT 1
         ");
         $stmt->execute([$treasuryAccountId]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
         return $row ?: null;
+    }
+}
+
+if (!function_exists('eot_build_rule_suggestion')) {
+    function eot_build_rule_suggestion(PDO $pdo, ?string $operationTypeCode, ?string $serviceCode, ?string $commercialCountry = null, ?string $destinationCountry = null): array
+    {
+        $operationTypeCode = function_exists('sl_rules_normalize')
+            ? sl_rules_normalize($operationTypeCode)
+            : strtoupper(trim((string)$operationTypeCode));
+
+        $serviceCode = function_exists('sl_rules_normalize')
+            ? sl_rules_normalize($serviceCode)
+            : strtoupper(trim((string)$serviceCode));
+
+        $summary = function_exists('sl_get_operation_rules_summary')
+            ? sl_get_operation_rules_summary($operationTypeCode, $serviceCode, $commercialCountry, $destinationCountry)
+            : [
+                'requires_client' => 1,
+                'requires_linked_bank' => 0,
+                'requires_manual_accounts' => 0,
+                'service_account_search_text' => '',
+            ];
+
+        $ruleCode = trim($operationTypeCode . '__' . $serviceCode, '_');
+        $ruleLabel = trim('Règle ' . $operationTypeCode . ' / ' . $serviceCode, ' /');
+
+        $debitMode = '';
+        $creditMode = '';
+        $labelPattern = '';
+
+        $pair = $operationTypeCode . '::' . $serviceCode;
+
+        switch ($pair) {
+            case 'VERSEMENT::VERSEMENT':
+                $debitMode = 'CLIENT_512';
+                $creditMode = 'CLIENT_411';
+                break;
+
+            case 'VIREMENT::INTERNE':
+                $debitMode = 'SOURCE_512';
+                $creditMode = 'TARGET_512';
+                break;
+
+            case 'VIREMENT::MENSUEL':
+            case 'VIREMENT::REGULIER':
+            case 'VIREMENT::EXCEPTIONEL':
+                $debitMode = 'CLIENT_411';
+                $creditMode = 'CLIENT_512';
+                break;
+
+            case 'REGULARISATION::POSITIVE':
+                $debitMode = 'CLIENT_512';
+                $creditMode = 'CLIENT_411';
+                break;
+
+            case 'REGULARISATION::NEGATIVE':
+                $debitMode = 'CLIENT_411';
+                $creditMode = 'CLIENT_512';
+                break;
+
+            case 'FRAIS_SERVICE::AVI':
+                $debitMode = 'CLIENT_411';
+                $creditMode = 'SERVICE_706';
+                $labelPattern = 'AVI';
+                break;
+
+            case 'FRAIS_SERVICE::ATS':
+                $debitMode = 'CLIENT_411';
+                $creditMode = 'SERVICE_706';
+                $labelPattern = 'ATS';
+                break;
+
+            case 'FRAIS_GESTION::GESTION':
+                $debitMode = 'CLIENT_411';
+                $creditMode = 'SERVICE_706';
+                $labelPattern = 'GESTION';
+                break;
+
+            case 'COMMISSION_DE_TRANSFERT::COMMISSION_DE_TRANSFERT':
+                $debitMode = 'CLIENT_411';
+                $creditMode = 'SERVICE_706';
+                $labelPattern = 'TRANSFERT';
+                break;
+
+            case 'CA_PLACEMENT::CA_PLACEMENT':
+                $debitMode = 'CLIENT_411';
+                $creditMode = 'SERVICE_706';
+                $labelPattern = 'CA PLACEMENT';
+                break;
+
+            default:
+                if (!empty($summary['requires_manual_accounts'])) {
+                    $debitMode = 'MANUAL_DEBIT';
+                    $creditMode = 'MANUAL_CREDIT';
+                } else {
+                    $debitMode = 'CLIENT_411';
+                    $creditMode = 'SERVICE_706';
+                }
+                break;
+        }
+
+        return [
+            'rule_code' => $ruleCode,
+            'rule_label' => $ruleLabel,
+            'debit_mode' => $debitMode,
+            'credit_mode' => $creditMode,
+            'requires_client' => !empty($summary['requires_client']) ? 1 : 0,
+            'requires_manual_accounts' => !empty($summary['requires_manual_accounts']) ? 1 : 0,
+            'requires_linked_bank' => !empty($summary['requires_linked_bank']) ? 1 : 0,
+            'label_pattern' => $labelPattern,
+            'service_account_search_text' => (string)($summary['service_account_search_text'] ?? ''),
+        ];
+    }
+}
+
+if (!function_exists('eot_find_existing_accounting_rule')) {
+    function eot_find_existing_accounting_rule(PDO $pdo, int $operationTypeId, ?int $serviceId = null): ?array
+    {
+        if (!tableExists($pdo, 'accounting_rules') || $operationTypeId <= 0) {
+            return null;
+        }
+
+        if ($serviceId !== null && $serviceId > 0) {
+            $stmt = $pdo->prepare("
+                SELECT *
+                FROM accounting_rules
+                WHERE operation_type_id = ?
+                  AND service_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+            ");
+            $stmt->execute([$operationTypeId, $serviceId]);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($row) {
+                return $row;
+            }
+        }
+
+        return null;
     }
 }
 
@@ -250,8 +386,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Jeton CSRF invalide.');
         }
 
-        $code = strtoupper($formData['code']);
-        $label = $formData['label'];
+        $code = strtoupper(trim($formData['code']));
+        $label = trim($formData['label']);
         $direction = in_array($formData['direction'], ['credit', 'debit', 'mixed'], true) ? $formData['direction'] : 'mixed';
         $isActive = (int)$formData['is_active'];
 
@@ -286,9 +422,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             if ($isActive === 0 && (int)($found['is_active'] ?? 1) === 1) {
-                throw new RuntimeException('Impossible de rattacher un service actif à un type d’opération archivé.');
+                throw new RuntimeException('Impossible de rattacher un service actif à un type archivé.');
             }
 
+            $found['rule_suggestion'] = eot_build_rule_suggestion($pdo, $code, (string)($found['code'] ?? ''));
             $attachServicesPreview[] = $found;
         }
 
@@ -346,7 +483,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if (!empty($selected706['operation_type_label'])) {
                     $normalized706Type = strtoupper(trim((string)$selected706['operation_type_label']));
                     $normalizedType = strtoupper(trim((string)$code));
-
                     if ($normalized706Type !== $normalizedType) {
                         throw new RuntimeException('Le compte 706 sélectionné pour le service "' . $serviceCode . '" n’est pas cohérent avec le type d’opération.');
                     }
@@ -368,6 +504,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'service_account' => $selected706,
                 'treasury_account' => $selected512,
                 'is_active' => $isActive,
+                'rule_suggestion' => eot_build_rule_suggestion($pdo, $code, $serviceCode),
             ];
         }
 
@@ -426,6 +563,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $newService['treasury_account']['id'] ?? null,
                         $newService['is_active'],
                     ]);
+
+                    $newServiceId = (int)$pdo->lastInsertId();
+                    $ruleSuggestion = $newService['rule_suggestion'] ?? null;
+
+                    if (
+                        $ruleSuggestion
+                        && tableExists($pdo, 'accounting_rules')
+                        && columnExists($pdo, 'accounting_rules', 'operation_type_id')
+                        && columnExists($pdo, 'accounting_rules', 'service_id')
+                    ) {
+                        $stmtRuleCheck = $pdo->prepare("
+                            SELECT id
+                            FROM accounting_rules
+                            WHERE operation_type_id = ?
+                              AND service_id = ?
+                            LIMIT 1
+                        ");
+                        $stmtRuleCheck->execute([$id, $newServiceId]);
+                        $existingRuleId = (int)$stmtRuleCheck->fetchColumn();
+
+                        if ($existingRuleId <= 0) {
+                            $ruleColumns = [];
+                            $ruleValues = [];
+                            $ruleParams = [];
+
+                            $ruleMap = [
+                                'operation_type_id' => $id,
+                                'service_id' => $newServiceId,
+                                'rule_code' => $ruleSuggestion['rule_code'],
+                                'rule_label' => $ruleSuggestion['rule_label'],
+                                'debit_mode' => $ruleSuggestion['debit_mode'],
+                                'credit_mode' => $ruleSuggestion['credit_mode'],
+                                'requires_client' => $ruleSuggestion['requires_client'],
+                                'requires_manual_accounts' => $ruleSuggestion['requires_manual_accounts'],
+                                'is_active' => 1,
+                            ];
+
+                            if (columnExists($pdo, 'accounting_rules', 'label_pattern')) {
+                                $ruleMap['label_pattern'] = $ruleSuggestion['label_pattern'] !== '' ? $ruleSuggestion['label_pattern'] : null;
+                            }
+
+                            foreach ($ruleMap as $column => $value) {
+                                if (columnExists($pdo, 'accounting_rules', $column)) {
+                                    $ruleColumns[] = $column;
+                                    $ruleValues[] = '?';
+                                    $ruleParams[] = $value;
+                                }
+                            }
+
+                            if (columnExists($pdo, 'accounting_rules', 'created_at')) {
+                                $ruleColumns[] = 'created_at';
+                                $ruleValues[] = 'NOW()';
+                            }
+                            if (columnExists($pdo, 'accounting_rules', 'updated_at')) {
+                                $ruleColumns[] = 'updated_at';
+                                $ruleValues[] = 'NOW()';
+                            }
+
+                            if ($ruleColumns) {
+                                $stmtInsertRule = $pdo->prepare("
+                                    INSERT INTO accounting_rules (" . implode(', ', $ruleColumns) . ")
+                                    VALUES (" . implode(', ', $ruleValues) . ")
+                                ");
+                                $stmtInsertRule->execute($ruleParams);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -437,7 +641,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'admin_functional',
                     'operation_type',
                     $id,
-                    'Modification d’un type d’opération avec hiérarchie 706'
+                    'Modification d’un type d’opération avec suggestions automatiques de règles comptables'
                 );
             }
 
@@ -492,7 +696,7 @@ $linkedServices = tableExists($pdo, 'ref_services')
     : [];
 
 $pageTitle = 'Modifier un type d’opération';
-$pageSubtitle = 'Les nouveaux services liés à ce type utilisent uniquement des comptes 706 finaux mouvementables.';
+$pageSubtitle = 'Avec suggestions automatiques de règles comptables pour les services liés.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -538,8 +742,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             </select>
                         </div>
 
-                        <div style="display:flex;align-items:flex-end;">
-                            <label style="display:flex;gap:8px;align-items:center;">
+                        <div style="display:flex; align-items:flex-end;">
+                            <label style="display:flex; gap:8px; align-items:center;">
                                 <input type="checkbox" name="is_active" value="1" <?= (int)$formData['is_active'] === 1 ? 'checked' : '' ?>>
                                 Type actif
                             </label>
@@ -551,7 +755,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <select name="attach_service_ids[]" multiple size="8">
                             <?php foreach ($allServices as $service): ?>
                                 <option value="<?= (int)$service['id'] ?>" <?= in_array((int)$service['id'], $formData['attach_service_ids'], true) ? 'selected' : '' ?>>
-                                    <?= e(($service['code'] ?? '') . ' - ' . ($service['label'] ?? '')) ?><?= (int)($service['is_active'] ?? 1) !== 1 ? ' [archivé]' : '' ?>
+                                    <?= e((string)($service['code'] ?? '') . ' - ' . (string)($service['label'] ?? '')) ?><?= (int)($service['is_active'] ?? 1) !== 1 ? ' [archivé]' : '' ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -572,12 +776,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <tbody>
                                 <?php for ($i = 0; $i < 3; $i++): ?>
                                     <tr>
-                                        <td>
-                                            <input type="text" name="new_service_code[]" value="<?= e((string)($formData['new_service_code'][$i] ?? '')) ?>">
-                                        </td>
-                                        <td>
-                                            <input type="text" name="new_service_label[]" value="<?= e((string)($formData['new_service_label'][$i] ?? '')) ?>">
-                                        </td>
+                                        <td><input type="text" name="new_service_code[]" value="<?= e((string)($formData['new_service_code'][$i] ?? '')) ?>"></td>
+                                        <td><input type="text" name="new_service_label[]" value="<?= e((string)($formData['new_service_label'][$i] ?? '')) ?>"></td>
                                         <td>
                                             <select name="new_service_account_id[]">
                                                 <option value="">Aucun</option>
@@ -593,7 +793,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                                 <option value="">Aucun</option>
                                                 <?php foreach ($treasuryAccounts as $account): ?>
                                                     <option value="<?= (int)$account['id'] ?>" <?= (string)($formData['new_treasury_account_id'][$i] ?? '') === (string)$account['id'] ? 'selected' : '' ?>>
-                                                        <?= e(($account['account_code'] ?? '') . ' - ' . ($account['account_label'] ?? '')) ?>
+                                                        <?= e((string)($account['account_code'] ?? '') . ' - ' . (string)($account['account_label'] ?? '')) ?>
                                                     </option>
                                                 <?php endforeach; ?>
                                             </select>
@@ -613,13 +813,13 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </div>
 
             <div class="table-card">
-                <h3 class="section-title"><?= $previewMode ? 'Prévisualisation avant validation' : 'Services déjà liés' ?></h3>
+                <h3 class="section-title"><?= $previewMode ? 'Prévisualisation + suggestions comptables' : 'Services déjà liés' ?></h3>
 
                 <?php if ($previewMode): ?>
                     <div class="sl-data-list" style="margin-bottom:16px;">
-                        <div class="sl-data-list__row"><span>Code</span><strong><?= e($previewData['code'] ?? '') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Libellé</span><strong><?= e($previewData['label'] ?? '') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Direction</span><strong><?= e($previewData['direction'] ?? '') ?></strong></div>
+                        <div class="sl-data-list__row"><span>Code</span><strong><?= e((string)($previewData['code'] ?? '')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Libellé</span><strong><?= e((string)($previewData['label'] ?? '')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Direction</span><strong><?= e((string)($previewData['direction'] ?? '')) ?></strong></div>
                         <div class="sl-data-list__row"><span>Statut</span><strong><?= ((int)($previewData['is_active'] ?? 0) === 1) ? 'Actif' : 'Archivé' ?></strong></div>
                     </div>
 
@@ -629,16 +829,24 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <tr>
                                 <th>Code</th>
                                 <th>Libellé</th>
-                                <th>État</th>
+                                <th>Suggestion règle</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (!empty($previewData['attach_services'])): ?>
                                 <?php foreach ($previewData['attach_services'] as $service): ?>
+                                    <?php $sg = $service['rule_suggestion'] ?? []; ?>
                                     <tr>
-                                        <td><?= e($service['code'] ?? '') ?></td>
-                                        <td><?= e($service['label'] ?? '') ?></td>
-                                        <td><?= ((int)($service['is_active'] ?? 1) === 1) ? 'Actif' : 'Archivé' ?></td>
+                                        <td><?= e((string)($service['code'] ?? '')) ?></td>
+                                        <td><?= e((string)($service['label'] ?? '')) ?></td>
+                                        <td>
+                                            <?= e((string)($sg['debit_mode'] ?? '')) ?>
+                                            →
+                                            <?= e((string)($sg['credit_mode'] ?? '')) ?>
+                                            <?php if (!empty($sg['label_pattern'])): ?>
+                                                <br><span class="muted">Pattern: <?= e((string)$sg['label_pattern']) ?></span>
+                                            <?php endif; ?>
+                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
@@ -655,20 +863,38 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <th>Libellé</th>
                                 <th>706</th>
                                 <th>512</th>
+                                <th>Suggestion règle</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php if (!empty($previewData['new_services'])): ?>
                                 <?php foreach ($previewData['new_services'] as $service): ?>
+                                    <?php $sg = $service['rule_suggestion'] ?? []; ?>
                                     <tr>
-                                        <td><?= e($service['code'] ?? '') ?></td>
-                                        <td><?= e($service['label'] ?? '') ?></td>
+                                        <td><?= e((string)($service['code'] ?? '')) ?></td>
+                                        <td><?= e((string)($service['label'] ?? '')) ?></td>
                                         <td><?= e($service['service_account'] ? eot_service_account_display($service['service_account']) : 'Aucun') ?></td>
-                                        <td><?= e(trim((string)(($service['treasury_account']['account_code'] ?? '') . ' - ' . ($service['treasury_account']['account_label'] ?? ''))) ?: 'Aucun') ?></td>
+                                        <td>
+                                            <?php
+                                            $treasuryText = 'Aucun';
+                                            if (!empty($service['treasury_account'])) {
+                                                $treasuryText = trim((string)($service['treasury_account']['account_code'] ?? '') . ' - ' . (string)($service['treasury_account']['account_label'] ?? ''));
+                                            }
+                                            ?>
+                                            <?= e($treasuryText) ?>
+                                        </td>
+                                        <td>
+                                            <?= e((string)($sg['debit_mode'] ?? '')) ?>
+                                            →
+                                            <?= e((string)($sg['credit_mode'] ?? '')) ?>
+                                            <?php if (!empty($sg['label_pattern'])): ?>
+                                                <br><span class="muted">Pattern: <?= e((string)$sg['label_pattern']) ?></span>
+                                            <?php endif; ?>
+                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr><td colspan="4">Aucun nouveau service à créer.</td></tr>
+                                <tr><td colspan="5">Aucun nouveau service à créer.</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
@@ -686,8 +912,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <tbody>
                             <?php foreach ($linkedServices as $service): ?>
                                 <tr>
-                                    <td><?= e($service['code'] ?? '') ?></td>
-                                    <td><?= e($service['label'] ?? '') ?></td>
+                                    <td><?= e((string)($service['code'] ?? '')) ?></td>
+                                    <td><?= e((string)($service['label'] ?? '')) ?></td>
                                     <td><?= e(trim((string)($service['service_account_code'] ?? '') . ' - ' . (string)($service['service_account_label'] ?? ''))) ?></td>
                                     <td><?= e(trim((string)($service['treasury_account_code'] ?? '') . ' - ' . (string)($service['treasury_account_label'] ?? ''))) ?></td>
                                     <td><?= ((int)($service['is_active'] ?? 1) === 1) ? 'Actif' : 'Archivé' ?></td>
