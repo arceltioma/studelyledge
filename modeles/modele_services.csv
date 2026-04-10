@@ -1,5 +1,0 @@
-code;label;operation_type_code;service_account_code;treasury_account_code
-SRV_DOSSIER;Frais de dossier;FRAIS_SERVICE;706100;512001
-SRV_VISA;Frais visa;FRAIS_SERVICE;706200;512001
-SRV_ACOMP;Acompte traitement;CREDIT_CLIENT;706300;512002
-SRV_REGUL;Régularisation service;REGULARISATION;706400;512003

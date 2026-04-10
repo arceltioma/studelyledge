@@ -1,5 +1,4 @@
-account_code;account_label;bank_name;subsidiary_name;zone_code;country_label;country_type;payment_place;currency_code
-512001;BNP France Principal;BNP Paribas;Studely France;EU-OUEST;France;Filiale;Paris;EUR
-512002;SG France Secondaire;Société Générale;Studely France;EU-OUEST;France;Filiale;Lyon;EUR
-512003;RBC Canada;RBC;Studely Canada;NA-EST;Canada;Filiale;Montréal;CAD
-512004;Ecobank Sénégal;Ecobank;Studely Sénégal;AF-OUEST;Sénégal;Partenaire;Dakar;XOF
+account_code;account_label;bank_name;country_label;currency_code;opening_balance;current_balance;is_postable;is_active
+512FR001;Banque France EUR;BNP Paribas;France;EUR;10000;10000;1;1
+512BE001;Banque Belgique EUR;KBC;Belgique;EUR;5000;5000;1;1
+512CM001;Banque Cameroun XAF;SG Cameroun;Cameroun;XAF;2500000;2500000;1;1

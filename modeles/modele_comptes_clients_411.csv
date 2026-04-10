@@ -1,0 +1,3 @@
+client_code;account_code;account_label;currency_code;opening_balance;current_balance;is_active
+411000001;411000001;Compte client Jean Dupont;EUR;0;0;1
+411000002;411000002;Compte client Amina Diallo;EUR;0;0;1

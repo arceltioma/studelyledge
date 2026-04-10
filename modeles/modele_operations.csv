@@ -1,0 +1,4 @@
+operation_date;amount;currency_code;client_code;operation_type;service;reference;label;notes;source_account_code;destination_account_code;linked_bank_account_id
+2026-04-01;1500.00;EUR;411000001;VERSEMENT;VERSEMENT;REF-001;Versement initial;Import test;512FR001;411000001;1
+2026-04-02;120.00;EUR;411000001;FRAIS_SERVICE;AVI;REF-002;Frais AVI;Import test;;;1
+2026-04-03;75.00;EUR;411000002;FRAIS_GESTION;GESTION;REF-003;Frais de gestion;Import test;;;2

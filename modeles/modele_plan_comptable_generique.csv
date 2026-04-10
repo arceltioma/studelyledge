@@ -1,0 +1,4 @@
+account_code;account_label;parent_account_code;account_class;account_type;currency_code;is_postable;is_active
+411000001;Compte client Jean Dupont;411;4;client;EUR;1;1
+512FR001;Banque France EUR;512;5;treasury;EUR;1;1
+706100001;Frais de service AVI France Cameroun;706;7;service;EUR;1;1

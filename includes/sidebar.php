@@ -4,30 +4,30 @@ require_once __DIR__ . '/admin_functions.php';
 
 $currentUri = $_SERVER['REQUEST_URI'] ?? '';
 
-if (!function_exists('sidebarActive')) {
-    function sidebarActive(string $needle, string $currentUri): string
+if (!function_exists('sidebarNeedleMatch')) {
+    function sidebarNeedleMatch(array $needles, string $currentUri): bool
     {
-        return str_contains($currentUri, $needle) ? 'active' : '';
+        foreach ($needles as $needle) {
+            if ($needle !== '' && str_contains($currentUri, $needle)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
 
-if (!function_exists('sidebarActiveMulti')) {
-    function sidebarActiveMulti(array $needles, string $currentUri): string
+if (!function_exists('sidebarActive')) {
+    function sidebarActive(array $needles, string $currentUri): string
     {
-        foreach ($needles as $needle) {
-            if (str_contains($currentUri, $needle)) {
-                return 'active';
-            }
-        }
-        return '';
+        return sidebarNeedleMatch($needles, $currentUri) ? 'active' : '';
     }
 }
 
 if (!function_exists('sidebarGroupOpen')) {
-    function sidebarGroupOpen(array $needles, string $currentUri): bool
+    function sidebarGroupOpen(array $items, string $currentUri): bool
     {
-        foreach ($needles as $needle) {
-            if (str_contains($currentUri, $needle)) {
+        foreach ($items as $item) {
+            if (!empty($item['patterns']) && sidebarNeedleMatch((array)$item['patterns'], $currentUri)) {
                 return true;
             }
         }
@@ -37,45 +37,297 @@ if (!function_exists('sidebarGroupOpen')) {
 
 $canUseAccessMap = isset($pdo) && $pdo instanceof PDO && function_exists('studelyCanAccess');
 
-$can = function (string $accessKey) use ($canUseAccessMap, $pdo): bool {
+$can = function (?string $accessKey) use ($canUseAccessMap, $pdo): bool {
+    if ($accessKey === null || $accessKey === '') {
+        return true;
+    }
     if (!$canUseAccessMap) {
         return true;
     }
     return studelyCanAccess($pdo, $accessKey);
 };
 
-$groupMainOpen = sidebarGroupOpen([
-    '/modules/dashboard/',
-    '/modules/clients/',
-    '/modules/operations/',
-    '/modules/treasury/',
-    '/modules/service_accounts/',
-    '/modules/analytics/'
-], $currentUri);
+$groups = [
+    [
+        'title' => 'Navigation principale',
+        'items' => [
+            [
+                'label' => 'Dashboard',
+                'icon' => '📊',
+                'href' => APP_URL . 'modules/dashboard/dashboard.php',
+                'patterns' => ['/modules/dashboard/dashboard.php'],
+                'access' => 'dashboard_view_page',
+            ],
+            [
+                'label' => 'Clients',
+                'icon' => '👤',
+                'href' => APP_URL . 'modules/clients/clients_list.php',
+                'patterns' => ['/modules/clients/clients_list.php', '/modules/clients/client_view.php', '/modules/clients/client_create.php', '/modules/clients/client_edit.php'],
+                'access' => 'clients_view_page',
+            ],
+            [
+                'label' => 'Opérations',
+                'icon' => '💰',
+                'href' => APP_URL . 'modules/operations/operations_list.php',
+                'patterns' => ['/modules/operations/'],
+                'access' => 'operations_view_page',
+            ],
+            [
+                'label' => 'Comptes Clients (411)',
+                'icon' => '🏦',
+                'href' => APP_URL . 'modules/clients/client_accounts.php',
+                'patterns' => ['/modules/clients/client_accounts.php'],
+                'access' => 'clients_view_page',
+            ],
+            [
+                'label' => 'Comptes internes (512)',
+                'icon' => '🏛️',
+                'href' => APP_URL . 'modules/treasury/index.php',
+                'patterns' => ['/modules/treasury/'],
+                'access' => 'treasury_view_page',
+            ],
+            [
+                'label' => 'Comptes de service (706)',
+                'icon' => '📘',
+                'href' => APP_URL . 'modules/service_accounts/index.php',
+                'patterns' => ['/modules/service_accounts/'],
+                'access' => 'service_accounts_manage_page',
+            ],
+            [
+                'label' => 'Analytics',
+                'icon' => '📈',
+                'href' => APP_URL . 'modules/analytics/revenue_analysis.php',
+                'patterns' => ['/modules/analytics/'],
+                'access' => 'analytics_view_page',
+            ],
+        ],
+    ],
+    [
+        'title' => 'Imports',
+        'items' => [
+            [
+                'label' => 'Hub Import',
+                'icon' => '📦',
+                'href' => APP_URL . 'modules/imports/index.php',
+                'patterns' => ['/modules/imports/index.php'],
+                'access' => 'imports_upload_page',
+            ],
+            [
+                'label' => 'Import Opérations',
+                'icon' => '📥',
+                'href' => APP_URL . 'modules/imports/import_preview.php',
+                'patterns' => ['/modules/imports/import_preview.php', '/modules/imports/import_upload.php', '/modules/imports/import_mapping.php', '/modules/imports/import_validate.php'],
+                'access' => 'imports_preview_page',
+            ],
+            [
+                'label' => 'Journal imports',
+                'icon' => '🧾',
+                'href' => APP_URL . 'modules/imports/import_journal.php',
+                'patterns' => ['/modules/imports/import_journal.php'],
+                'access' => 'imports_journal_page',
+            ],
+            [
+                'label' => 'Import clients CSV',
+                'icon' => '🧍',
+                'href' => APP_URL . 'modules/clients/import_clients_csv.php',
+                'patterns' => ['/modules/clients/import_clients_csv.php'],
+                'access' => 'clients_create_page',
+            ],
+            [
+                'label' => 'Import comptes internes CSV',
+                'icon' => '🏦',
+                'href' => APP_URL . 'modules/treasury/import_treasury_csv.php',
+                'patterns' => ['/modules/treasury/import_treasury_csv.php'],
+                'access' => 'treasury_import_page',
+            ],
+            [
+                'label' => 'Import comptes de service CSV',
+                'icon' => '📘',
+                'href' => APP_URL . 'modules/service_accounts/import_service_accounts_csv.php',
+                'patterns' => ['/modules/service_accounts/import_service_accounts_csv.php'],
+                'access' => 'service_accounts_import_page',
+            ],
+        ],
+    ],
+    [
+        'title' => 'Exports',
+        'items' => [
+            [
+                'label' => 'Hub Export',
+                'icon' => '📤',
+                'href' => APP_URL . 'modules/statements/index.php',
+                'patterns' => ['/modules/statements/index.php'],
+                'access' => 'statements_view_page',
+            ],
+            [
+                'label' => 'Relevés de comptes',
+                'icon' => '📄',
+                'href' => APP_URL . 'modules/statements/account_statements.php',
+                'patterns' => ['/modules/statements/account_statements.php'],
+                'access' => 'statements_view_page',
+            ],
+            [
+                'label' => 'Fiches clients',
+                'icon' => '🗂️',
+                'href' => APP_URL . 'modules/statements/client_profiles.php',
+                'patterns' => ['/modules/statements/client_profiles.php'],
+                'access' => 'statements_view_page',
+            ],
+        ],
+    ],
+    [
+        'title' => 'Support',
+        'items' => [
+            [
+                'label' => 'Demandes support',
+                'icon' => '🆘',
+                'href' => APP_URL . 'modules/support/support_requests.php',
+                'patterns' => ['/modules/support/support_requests.php'],
+                'access' => 'support_view_page',
+            ],
+            [
+                'label' => 'Poser une question',
+                'icon' => '❓',
+                'href' => APP_URL . 'modules/support/ask_question.php',
+                'patterns' => ['/modules/support/ask_question.php'],
+                'access' => 'support_view_page',
+            ],
+            [
+                'label' => 'Signaler un bug',
+                'icon' => '🐞',
+                'href' => APP_URL . 'modules/support/report_bug.php',
+                'patterns' => ['/modules/support/report_bug.php'],
+                'access' => 'support_view_page',
+            ],
+            [
+                'label' => 'Demander un accès',
+                'icon' => '🔐',
+                'href' => APP_URL . 'modules/support/request_access.php',
+                'patterns' => ['/modules/support/request_access.php'],
+                'access' => 'support_view_page',
+            ],
+        ],
+    ],
+    [
+        'title' => 'Administration fonctionnelle',
+        'items' => [
+            [
+                'label' => 'Dashboard Admin Fonctionnelle',
+                'icon' => '⚙️',
+                'href' => APP_URL . 'modules/admin_functional/dashboard.php',
+                'patterns' => ['/modules/admin_functional/dashboard.php'],
+                'access' => 'admin_functional_page',
+            ],
+            [
+                'label' => 'Services',
+                'icon' => '🧩',
+                'href' => APP_URL . 'modules/admin_functional/manage_services.php',
+                'patterns' => ['/modules/admin_functional/manage_services.php', '/modules/admin_functional/edit_service.php'],
+                'access' => 'services_manage_page',
+            ],
+            [
+                'label' => 'Types d’opérations',
+                'icon' => '🧠',
+                'href' => APP_URL . 'modules/admin_functional/manage_operation_types.php',
+                'patterns' => ['/modules/admin_functional/manage_operation_types.php', '/modules/admin_functional/edit_operation_type.php'],
+                'access' => 'operation_types_manage_page',
+            ],
+            [
+                'label' => 'Règles comptables',
+                'icon' => '🧾',
+                'href' => APP_URL . 'modules/admin_functional/manage_accounting_rules.php',
+                'patterns' => [
+                    '/modules/admin_functional/manage_accounting_rules.php',
+                    '/modules/admin_functional/accounting_rule_create.php',
+                    '/modules/admin_functional/accounting_rule_edit.php'
+                ],
+                'access' => 'admin_functional_page',
+            ],
+            [
+                'label' => 'Comptes',
+                'icon' => '📚',
+                'href' => APP_URL . 'modules/admin_functional/manage_accounts.php',
+                'patterns' => ['/modules/admin_functional/manage_accounts.php'],
+                'access' => 'admin_functional_page',
+            ],
+        ],
+    ],
+    [
+        'title' => 'Administration technique',
+        'items' => [
+            [
+                'label' => 'Dashboard Admin Technique',
+                'icon' => '🛠️',
+                'href' => APP_URL . 'modules/admin/dashboard_admin.php',
+                'patterns' => ['/modules/admin/dashboard_admin.php'],
+                'access' => 'admin_dashboard_page',
+            ],
+            [
+                'label' => 'Audit & Traçabilité',
+                'icon' => '🧭',
+                'href' => APP_URL . 'modules/admin/audit_logs.php',
+                'patterns' => ['/modules/admin/audit_logs.php'],
+                'access' => 'admin_dashboard_page',
+            ],
+            [
+                'label' => 'Audit des logs',
+                'icon' => '📜',
+                'href' => APP_URL . 'modules/admin/user_logs.php',
+                'patterns' => ['/modules/admin/user_logs.php'],
+                'access' => 'user_logs_view_page',
+            ],
+            [
+                'label' => 'Rôles',
+                'icon' => '🔐',
+                'href' => APP_URL . 'modules/admin/roles.php',
+                'patterns' => ['/modules/admin/roles.php'],
+                'access' => 'roles_manage_page',
+            ],
+            [
+                'label' => 'Utilisateurs',
+                'icon' => '👥',
+                'href' => APP_URL . 'modules/admin/users.php',
+                'patterns' => ['/modules/admin/users.php', '/modules/admin/user_create.php', '/modules/admin/user_edit.php'],
+                'access' => 'users_manage_page',
+            ],
+            [
+                'label' => 'Matrice d’accès',
+                'icon' => '🧮',
+                'href' => APP_URL . 'modules/admin/access_matrix.php',
+                'patterns' => ['/modules/admin/access_matrix.php'],
+                'access' => 'permissions_manage_page',
+            ],
+            [
+                'label' => 'Centre d’intelligence',
+                'icon' => '🧠',
+                'href' => APP_URL . 'modules/admin/intelligence_center.php',
+                'patterns' => ['/modules/admin/intelligence_center.php'],
+                'access' => 'admin_dashboard_page',
+            ],
+            [
+                'label' => 'Paramètres',
+                'icon' => '⚙️',
+                'href' => APP_URL . 'modules/admin/settings.php',
+                'patterns' => ['/modules/admin/settings.php'],
+                'access' => 'settings_manage_page',
+            ],
+        ],
+    ],
+];
 
-$groupImportsOpen = sidebarGroupOpen([
-    '/modules/imports/',
-    '/modules/clients/import_clients_csv.php',
-    '/modules/treasury/import_treasury_csv.php',
-    '/modules/service_accounts/import_service_accounts_csv.php'
-], $currentUri);
-
-$groupExportsOpen = sidebarGroupOpen([
-    '/modules/statements/'
-], $currentUri);
-
-$groupSupportOpen = sidebarGroupOpen([
-    '/modules/support/'
-], $currentUri);
-
-$groupAdminFunctionalOpen = sidebarGroupOpen([
-    '/modules/admin_functional/'
-], $currentUri);
-
-$groupAdminTechnicalOpen = sidebarGroupOpen([
-    '/modules/admin/',
-    '/modules/admin/audit_logs.php'
-], $currentUri);
+$visibleGroups = [];
+foreach ($groups as $group) {
+    $visibleItems = [];
+    foreach ($group['items'] as $item) {
+        if ($can($item['access'] ?? null)) {
+            $visibleItems[] = $item;
+        }
+    }
+    if ($visibleItems) {
+        $group['items'] = $visibleItems;
+        $visibleGroups[] = $group;
+    }
+}
 ?>
 
 <aside class="sidebar studely-sidebar">
@@ -97,212 +349,22 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
         </div>
 
         <nav class="sidebar-nav">
-
-            <details class="sidebar-group" <?= $groupMainOpen ? 'open' : '' ?>>
-                <summary>Navigation principale</summary>
-                <div class="sidebar-group-links">
-                    <?php if ($can('dashboard_view_page')): ?>
-                        <a class="sidebar-link <?= sidebarActive('/modules/dashboard/dashboard.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/dashboard/dashboard.php">
-                            <span>📊</span><span>Dashboard</span>
-                        </a>
-                    <?php endif; ?>
-
-                    <?php if ($can('clients_view_page')): ?>
-                        <a class="sidebar-link <?= sidebarActive('/modules/clients/clients_list.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/clients/clients_list.php">
-                            <span>👤</span><span>Clients</span>
-                        </a>
-                    <?php endif; ?>
-
-                    <?php if ($can('operations_view_page')): ?>
-                        <a class="sidebar-link <?= sidebarActive('/modules/operations/', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/operations/operations_list.php">
-                            <span>💰</span><span>Opérations</span>
-                        </a>
-                    <?php endif; ?>
-
-                    <?php if ($can('clients_view_page')): ?>
-                        <a class="sidebar-link <?= sidebarActive('/modules/clients/client_accounts.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/clients/client_accounts.php">
-                            <span>🏦</span><span>Comptes Clients (411)</span>
-                        </a>
-                    <?php endif; ?>
-
-                    <?php if ($can('treasury_view_page')): ?>
-                        <a class="sidebar-link <?= sidebarActive('/modules/treasury/', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/treasury/index.php">
-                            <span>🏦</span><span>Comptes internes (512)</span>
-                        </a>
-                    <?php endif; ?>
-
-                    <?php if ($can('service_accounts_manage_page')): ?>
-                        <a class="sidebar-link <?= sidebarActive('/modules/service_accounts/', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/service_accounts/index.php">
-                            <span>📘</span><span>Comptes de service (706)</span>
-                        </a>
-                    <?php endif; ?>
-
-                    <?php if ($can('analytics_view_page')): ?>
-                        <a class="sidebar-link <?= sidebarActive('/modules/analytics/', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/analytics/revenue_analysis.php">
-                            <span>📈</span><span>Analytics</span>
-                        </a>
-                    <?php endif; ?>
-                </div>
-            </details>
-
-            <?php if ($can('imports_upload_page') || $can('imports_preview_page') || $can('imports_journal_page')): ?>
-                <details class="sidebar-group" <?= $groupImportsOpen ? 'open' : '' ?>>
-                    <summary>Imports</summary>
+            <?php foreach ($visibleGroups as $group): ?>
+                <details class="sidebar-group" <?= sidebarGroupOpen($group['items'], $currentUri) ? 'open' : '' ?>>
+                    <summary><?= e($group['title']) ?></summary>
                     <div class="sidebar-group-links">
-                        <a class="sidebar-link <?= sidebarActive('/modules/imports/index.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/imports/index.php">
-                            <span>📦</span><span>Hub Import</span>
-                        </a>
-
-                        <?php if ($can('imports_preview_page')): ?>
-                            <a class="sidebar-link <?= sidebarActiveMulti(['/modules/imports/import_preview.php', '/modules/imports/import_upload.php', '/modules/imports/import_mapping.php'], $currentUri) ?>" href="<?= e(APP_URL) ?>modules/imports/import_preview.php">
-                                <span>📥</span><span>Import Opérations</span>
+                        <?php foreach ($group['items'] as $item): ?>
+                            <a
+                                class="sidebar-link <?= sidebarActive((array)$item['patterns'], $currentUri) ?>"
+                                href="<?= e($item['href']) ?>"
+                            >
+                                <span><?= e($item['icon']) ?></span>
+                                <span><?= e($item['label']) ?></span>
                             </a>
-                        <?php endif; ?>
-
-                        <?php if ($can('imports_journal_page')): ?>
-                            <a class="sidebar-link <?= sidebarActive('/modules/imports/import_journal.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/imports/import_journal.php">
-                                <span>🧾</span><span>Journal imports</span>
-                            </a>
-                        <?php endif; ?>
-
-                        <?php if ($can('clients_create_page')): ?>
-                            <a class="sidebar-link <?= sidebarActive('/modules/clients/import_clients_csv.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/clients/import_clients_csv.php">
-                                <span>🧍</span><span>Import clients CSV</span>
-                            </a>
-                        <?php endif; ?>
-
-                        <?php if ($can('treasury_import_page')): ?>
-                            <a class="sidebar-link <?= sidebarActive('/modules/treasury/import_treasury_csv.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/treasury/import_treasury_csv.php">
-                                <span>🏛️</span><span>Import comptes internes CSV</span>
-                            </a>
-                        <?php endif; ?>
-
-                        <?php if ($can('service_accounts_import_page')): ?>
-                            <a class="sidebar-link <?= sidebarActive('/modules/service_accounts/import_service_accounts_csv.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/service_accounts/import_service_accounts_csv.php">
-                                <span>📘</span><span>Import comptes de service CSV</span>
-                            </a>
-                        <?php endif; ?>
+                        <?php endforeach; ?>
                     </div>
                 </details>
-            <?php endif; ?>
-
-            <?php if ($can('statements_view_page')): ?>
-                <details class="sidebar-group" <?= $groupExportsOpen ? 'open' : '' ?>>
-                    <summary>Exports</summary>
-                    <div class="sidebar-group-links">
-                        <a class="sidebar-link <?= sidebarActive('/modules/statements/index.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/statements/index.php">
-                            <span>📤</span><span>Hub Export</span>
-                        </a>
-
-                        <a class="sidebar-link <?= sidebarActive('/modules/statements/account_statements.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/statements/account_statements.php">
-                            <span>📄</span><span>Relevés de comptes</span>
-                        </a>
-
-                        <a class="sidebar-link <?= sidebarActive('/modules/statements/client_profiles.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/statements/client_profiles.php">
-                            <span>🗂️</span><span>Fiches clients</span>
-                        </a>
-                    </div>
-                </details>
-            <?php endif; ?>
-
-            <?php if ($can('support_view_page')): ?>
-                <details class="sidebar-group" <?= $groupSupportOpen ? 'open' : '' ?>>
-                    <summary>Support</summary>
-                    <div class="sidebar-group-links">
-                        <a class="sidebar-link <?= sidebarActive('/modules/support/support_requests.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/support/support_requests.php">
-                            <span>🆘</span><span>Demandes support</span>
-                        </a>
-
-                        <a class="sidebar-link <?= sidebarActive('/modules/support/ask_question.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/support/ask_question.php">
-                            <span>❓</span><span>Poser une question</span>
-                        </a>
-
-                        <a class="sidebar-link <?= sidebarActive('/modules/support/report_bug.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/support/report_bug.php">
-                            <span>🐞</span><span>Signaler un bug</span>
-                        </a>
-
-                        <a class="sidebar-link <?= sidebarActive('/modules/support/request_access.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/support/request_access.php">
-                            <span>🔐</span><span>Demander un accès</span>
-                        </a>
-                    </div>
-                </details>
-            <?php endif; ?>
-
-            <?php if ($can('admin_functional_page') || $can('services_manage_page') || $can('operation_types_manage_page')): ?>
-                <details class="sidebar-group" <?= $groupAdminFunctionalOpen ? 'open' : '' ?>>
-                    <summary>Administration fonctionnelle</summary>
-                    <div class="sidebar-group-links">
-                        <a class="sidebar-link <?= sidebarActive('/modules/admin_functional/dashboard.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin_functional/dashboard.php">
-                            <span>⚙️</span><span>Dashboard Admin Fonctionnelle</span>
-                        </a>
-
-                        <?php if ($can('services_manage_page')): ?>
-                            <a class="sidebar-link <?= sidebarActive('/modules/admin_functional/manage_services.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin_functional/manage_services.php">
-                                <span>🧩</span><span>Services</span>
-                            </a>
-                        <?php endif; ?>
-
-                        <?php if ($can('operation_types_manage_page')): ?>
-                            <a class="sidebar-link <?= sidebarActive('/modules/admin_functional/manage_operation_types.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin_functional/manage_operation_types.php">
-                                <span>🧠</span><span>Types d’opérations</span>
-                            </a>
-                        <?php endif; ?>
-
-                        <a class="sidebar-link <?= sidebarActive('/modules/admin_functional/manage_accounts.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin_functional/manage_accounts.php">
-                            <span>📚</span><span>Comptes</span>
-                        </a>
-                    </div>
-                </details>
-            <?php endif; ?>
-
-            <?php if ($can('admin_dashboard_page') || $can('users_manage_page') || $can('settings_manage_page')): ?>
-                <details class="sidebar-group" <?= $groupAdminTechnicalOpen ? 'open' : '' ?>>
-                    <summary>Administration technique</summary>
-                    <div class="sidebar-group-links">
-                        <a class="sidebar-link <?= sidebarActive('/modules/admin/dashboard_admin.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/dashboard_admin.php">
-                            <span>🛠️</span><span>Dashboard Admin Technique</span>
-                        </a>
-
-                        <a class="sidebar-link <?= sidebarActive('/modules/admin/audit_logs.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/audit_logs.php">
-                            <span>🧭</span><span>Audit &amp; Traçabilité</span>
-                        </a>
-
-                        <?php if ($can('user_logs_view_page')): ?>
-                            <a class="sidebar-link <?= sidebarActive('/modules/admin/user_logs.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/user_logs.php">
-                                <span>📜</span><span>Audit des logs</span>
-                            </a>
-                        <?php endif; ?>
-
-                        <?php if ($can('roles_manage_page')): ?>
-                            <a class="sidebar-link <?= sidebarActive('/modules/admin/roles.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/roles.php">
-                                <span>🔐</span><span>Rôles</span>
-                            </a>
-                        <?php endif; ?>
-
-                        <?php if ($can('users_manage_page')): ?>
-                            <a class="sidebar-link <?= sidebarActive('/modules/admin/users.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/users.php">
-                                <span>👥</span><span>Utilisateurs</span>
-                            </a>
-                        <?php endif; ?>
-
-                        <?php if ($can('permissions_manage_page')): ?>
-                            <a class="sidebar-link <?= sidebarActive('/modules/admin/access_matrix.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/access_matrix.php">
-                                <span>🧮</span><span>Matrice d’accès</span>
-                            </a>
-                        <?php endif; ?>
-
-                        <a class="sidebar-link <?= sidebarActive('/modules/admin/intelligence_center.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/intelligence_center.php">
-                            <span>🧠</span><span>Centre d’intelligence</span>
-                        </a>
-
-                        <?php if ($can('settings_manage_page')): ?>
-                            <a class="sidebar-link <?= sidebarActive('/modules/admin/settings.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin/settings.php">
-                                <span>⚙️</span><span>Paramètres</span>
-                            </a>
-                        <?php endif; ?>
-                    </div>
-                </details>
-            <?php endif; ?>
+            <?php endforeach; ?>
         </nav>
 
         <div class="sidebar-bottom">

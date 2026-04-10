@@ -1,0 +1,4 @@
+account_code;account_label;operation_type_label;commercial_country_label;destination_country_label;currency_code;current_balance;is_postable;is_active
+706100001;FRAIS DE SERVICE AVI FRANCE CAMEROUN;FRAIS_SERVICE;Cameroun;France;EUR;0;1;1
+706100002;FRAIS DE SERVICE ATS SENEGAL;FRAIS_SERVICE;Sénégal;;EUR;0;1;1
+706200001;FRAIS DE GESTION FRANCE;FRAIS_GESTION;France;;EUR;0;1;1
