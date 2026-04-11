@@ -12,226 +12,186 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'clients_view');
 }
 
-if (!tableExists($pdo, 'clients')) {
-    exit('Table clients introuvable.');
-}
+$pageTitle = 'Comptes clients (411)';
+$pageSubtitle = 'Historique, soldes, filtres période et accès rapides aux exports clients.';
 
-if (!function_exists('sca_find_client')) {
-    function sca_find_client(PDO $pdo, int $clientId): ?array
+if (!function_exists('ca_money')) {
+    function ca_money(float $value): string
     {
-        $sql = "
-            SELECT
-                c.*,
-                ba.id AS bank_account_id,
-                ba.account_name,
-                ba.account_number,
-                ba.initial_balance,
-                ba.balance
-            FROM clients c
-            LEFT JOIN client_bank_accounts cba ON cba.client_id = c.id
-            LEFT JOIN bank_accounts ba ON ba.id = cba.bank_account_id
-            WHERE c.id = ?
-            LIMIT 1
-        ";
-
-        $stmt = $pdo->prepare($sql);
-        $stmt->execute([$clientId]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-
-        return $row ?: null;
+        return number_format($value, 2, ',', ' ');
     }
 }
 
-if (!function_exists('sca_fetch_client_options')) {
-    function sca_fetch_client_options(PDO $pdo): array
+if (!function_exists('ca_like')) {
+    function ca_like(string $value): string
     {
-        $sql = "
-            SELECT
-                c.id,
-                c.client_code,
-                c.full_name,
-                c.generated_client_account,
-                c.client_status,
-                c.is_active
-            FROM clients c
-            ORDER BY c.full_name ASC, c.client_code ASC
-        ";
-
-        return $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC);
+        return '%' . trim($value) . '%';
     }
 }
 
-if (!function_exists('sca_fetch_operation_types')) {
-    function sca_fetch_operation_types(PDO $pdo): array
+if (!function_exists('ca_valid_date')) {
+    function ca_valid_date(string $value): bool
     {
-        if (!tableExists($pdo, 'operations')) {
-            return [];
-        }
-
-        $stmt = $pdo->query("
-            SELECT DISTINCT operation_type_code
-            FROM operations
-            WHERE operation_type_code IS NOT NULL
-              AND operation_type_code <> ''
-            ORDER BY operation_type_code ASC
-        ");
-
-        return $stmt->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        return (bool)preg_match('/^\d{4}-\d{2}-\d{2}$/', $value);
     }
 }
 
-if (!function_exists('sca_operation_direction_badge')) {
-    function sca_operation_direction_badge(array $operation, string $clientAccountCode): array
-    {
-        $debit = trim((string)($operation['debit_account_code'] ?? ''));
-        $credit = trim((string)($operation['credit_account_code'] ?? ''));
-        $clientCode = trim($clientAccountCode);
+$filterSearch = trim((string)($_GET['filter_search'] ?? ''));
+$filterCountry = trim((string)($_GET['filter_country'] ?? ''));
+$filterClientType = trim((string)($_GET['filter_client_type'] ?? ''));
+$from = trim((string)($_GET['from'] ?? date('Y-m-01')));
+$to = trim((string)($_GET['to'] ?? date('Y-m-t')));
 
-        if ($clientCode !== '') {
-            if ($credit === $clientCode) {
-                return ['label' => 'Crédit', 'class' => 'success'];
-            }
-            if ($debit === $clientCode) {
-                return ['label' => 'Débit', 'class' => 'danger'];
-            }
-        }
-
-        return ['label' => 'Mixte', 'class' => 'secondary'];
-    }
+if (!ca_valid_date($from)) {
+    $from = date('Y-m-01');
+}
+if (!ca_valid_date($to)) {
+    $to = date('Y-m-t');
+}
+if ($from > $to) {
+    [$from, $to] = [$to, $from];
 }
 
-if (!function_exists('sca_build_operation_link')) {
-    function sca_build_operation_link(array $operation): string
-    {
-        $operationId = (int)($operation['id'] ?? 0);
-        if ($operationId <= 0) {
-            return '#';
-        }
+$sql = "
+    SELECT
+        c.id AS client_id,
+        c.client_code,
+        c.full_name,
+        c.country_commercial,
+        c.client_type,
+        c.generated_client_account,
+        c.currency,
+        c.is_active,
+        ba.id AS bank_account_id,
+        ba.account_name,
+        ba.account_number,
+        ba.initial_balance,
+        ba.balance
+    FROM clients c
+    LEFT JOIN bank_accounts ba ON ba.account_number = c.generated_client_account
+    WHERE COALESCE(c.is_active,1)=1
+";
+$params = [];
 
-        $directPath = __DIR__ . '/../operations/view.php';
-        if (is_file($directPath)) {
-            return APP_URL . 'modules/operations/view.php?id=' . $operationId;
-        }
-
-        return APP_URL . 'modules/operations/operations_list.php';
-    }
-}
-
-$clientOptions = sca_fetch_client_options($pdo);
-$operationTypeOptions = sca_fetch_operation_types($pdo);
-
-$selectedClientId = (int)($_GET['client_id'] ?? 0);
-if ($selectedClientId <= 0 && !empty($clientOptions)) {
-    $selectedClientId = (int)$clientOptions[0]['id'];
-}
-
-$filterDateFrom = trim((string)($_GET['date_from'] ?? ''));
-$filterDateTo = trim((string)($_GET['date_to'] ?? ''));
-$filterType = trim((string)($_GET['operation_type_code'] ?? ''));
-$filterDirection = trim((string)($_GET['direction'] ?? ''));
-
-$allowedDirections = ['', 'credit', 'debit', 'mixed'];
-if (!in_array($filterDirection, $allowedDirections, true)) {
-    $filterDirection = '';
-}
-
-$client = $selectedClientId > 0 ? sca_find_client($pdo, $selectedClientId) : null;
-$operations = [];
-$totalOperations = 0;
-$totalAmount = 0.0;
-$totalCredits = 0.0;
-$totalDebits = 0.0;
-
-if ($client && tableExists($pdo, 'operations')) {
-    $sql = "
-        SELECT
-            o.*,
-            rs.label AS service_label,
-            rot.label AS operation_type_label
-        FROM operations o
-        LEFT JOIN ref_services rs ON rs.id = o.service_id
-        LEFT JOIN ref_operation_types rot ON rot.id = o.operation_type_id
-        WHERE o.client_id = ?
+if ($filterSearch !== '') {
+    $sql .= "
+        AND (
+            c.client_code LIKE ?
+            OR c.full_name LIKE ?
+            OR COALESCE(c.email,'') LIKE ?
+            OR COALESCE(c.phone,'') LIKE ?
+            OR COALESCE(c.generated_client_account,'') LIKE ?
+        )
     ";
+    $params[] = ca_like($filterSearch);
+    $params[] = ca_like($filterSearch);
+    $params[] = ca_like($filterSearch);
+    $params[] = ca_like($filterSearch);
+    $params[] = ca_like($filterSearch);
+}
 
-    $params = [(int)$client['id']];
+if ($filterCountry !== '') {
+    $sql .= " AND COALESCE(c.country_commercial,'') = ? ";
+    $params[] = $filterCountry;
+}
 
-    if ($filterDateFrom !== '') {
-        $sql .= " AND o.operation_date >= ? ";
-        $params[] = $filterDateFrom;
-    }
+if ($filterClientType !== '') {
+    $sql .= " AND COALESCE(c.client_type,'') = ? ";
+    $params[] = $filterClientType;
+}
 
-    if ($filterDateTo !== '') {
-        $sql .= " AND o.operation_date <= ? ";
-        $params[] = $filterDateTo;
-    }
+$sql .= " ORDER BY c.client_code ASC ";
 
-    if ($filterType !== '') {
-        $sql .= " AND o.operation_type_code = ? ";
-        $params[] = $filterType;
-    }
+$stmt = $pdo->prepare($sql);
+$stmt->execute($params);
+$rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    $clientAccountCode = (string)($client['generated_client_account'] ?? '');
+$countryOptions = tableExists($pdo, 'clients')
+    ? $pdo->query("
+        SELECT DISTINCT country_commercial
+        FROM clients
+        WHERE COALESCE(is_active,1)=1
+          AND COALESCE(country_commercial,'') <> ''
+        ORDER BY country_commercial ASC
+    ")->fetchAll(PDO::FETCH_COLUMN)
+    : [];
 
-    if ($filterDirection === 'credit') {
-        $sql .= " AND o.credit_account_code = ? ";
-        $params[] = $clientAccountCode;
-    } elseif ($filterDirection === 'debit') {
-        $sql .= " AND o.debit_account_code = ? ";
-        $params[] = $clientAccountCode;
-    } elseif ($filterDirection === 'mixed') {
-        $sql .= " AND (
-            (o.debit_account_code IS NULL OR o.debit_account_code <> ?)
-            AND
-            (o.credit_account_code IS NULL OR o.credit_account_code <> ?)
-        ) ";
-        $params[] = $clientAccountCode;
-        $params[] = $clientAccountCode;
-    }
+$clientTypeOptions = tableExists($pdo, 'clients')
+    ? $pdo->query("
+        SELECT DISTINCT client_type
+        FROM clients
+        WHERE COALESCE(is_active,1)=1
+          AND COALESCE(client_type,'') <> ''
+        ORDER BY client_type ASC
+    ")->fetchAll(PDO::FETCH_COLUMN)
+    : [];
 
-    $sql .= " ORDER BY o.operation_date DESC, o.id DESC ";
+$movementMap = [];
+if (tableExists($pdo, 'operations')) {
+    $stmtMovements = $pdo->prepare("
+        SELECT
+            account_code,
+            SUM(total_credit) AS total_credit,
+            SUM(total_debit) AS total_debit
+        FROM (
+            SELECT
+                credit_account_code AS account_code,
+                SUM(amount) AS total_credit,
+                0 AS total_debit
+            FROM operations
+            WHERE operation_date BETWEEN ? AND ?
+              AND COALESCE(credit_account_code, '') LIKE '411%'
+            GROUP BY credit_account_code
 
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute($params);
-    $operations = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            UNION ALL
 
-    $totalOperations = count($operations);
+            SELECT
+                debit_account_code AS account_code,
+                0 AS total_credit,
+                SUM(amount) AS total_debit
+            FROM operations
+            WHERE operation_date BETWEEN ? AND ?
+              AND COALESCE(debit_account_code, '') LIKE '411%'
+            GROUP BY debit_account_code
+        ) t
+        GROUP BY account_code
+    ");
+    $stmtMovements->execute([$from, $to, $from, $to]);
 
-    foreach ($operations as $operation) {
-        $amount = (float)($operation['amount'] ?? 0);
-        $totalAmount += $amount;
+    foreach ($stmtMovements->fetchAll(PDO::FETCH_ASSOC) as $movement) {
+        $code = (string)($movement['account_code'] ?? '');
+        $credit = (float)($movement['total_credit'] ?? 0);
+        $debit = (float)($movement['total_debit'] ?? 0);
 
-        $directionInfo = sca_operation_direction_badge($operation, $clientAccountCode);
-        if ($directionInfo['label'] === 'Crédit') {
-            $totalCredits += $amount;
-        } elseif ($directionInfo['label'] === 'Débit') {
-            $totalDebits += $amount;
-        }
+        $movementMap[$code] = [
+            'credit' => $credit,
+            'debit' => $debit,
+            'net' => $credit - $debit,
+        ];
     }
 }
 
-$statementPreviewUrl = '#';
-$profilePreviewUrl = '#';
+$summary = [
+    'count' => 0,
+    'initial_balance' => 0.0,
+    'current_balance' => 0.0,
+    'period_credit' => 0.0,
+    'period_debit' => 0.0,
+    'period_net' => 0.0,
+];
 
-if ($client) {
-    $queryBase = [
-        'prefill_client_id' => (int)$client['id'],
-        'source_client_accounts' => 1,
-    ];
+foreach ($rows as $row) {
+    $code = (string)($row['generated_client_account'] ?? '');
+    $mv = $movementMap[$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
 
-    if ($filterDateFrom !== '') {
-        $queryBase['date_from'] = $filterDateFrom;
-    }
-    if ($filterDateTo !== '') {
-        $queryBase['date_to'] = $filterDateTo;
-    }
-
-    $statementPreviewUrl = APP_URL . 'modules/statements/account_statements.php?' . http_build_query($queryBase);
-    $profilePreviewUrl = APP_URL . 'modules/statements/client_profiles.php?' . http_build_query($queryBase);
+    $summary['count']++;
+    $summary['initial_balance'] += (float)($row['initial_balance'] ?? 0);
+    $summary['current_balance'] += (float)($row['balance'] ?? 0);
+    $summary['period_credit'] += (float)$mv['credit'];
+    $summary['period_debit'] += (float)$mv['debit'];
+    $summary['period_net'] += (float)$mv['net'];
 }
 
-$pageTitle = 'Comptes clients 411';
-$pageSubtitle = 'Historique des opérations par compte client avec filtres et exports.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -241,162 +201,149 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <div class="dashboard-grid-2">
+        <div class="dashboard-grid-2" style="margin-bottom:20px;">
             <div class="card">
-                <h3>Compte client</h3>
+                <h3 class="section-title">Filtres</h3>
 
-                <form method="GET" class="form-card" style="padding:14px; margin-bottom:16px;">
+                <form method="GET">
                     <div class="dashboard-grid-2">
-                        <div style="grid-column:1 / -1;">
-                            <label>Client / compte 411</label>
-                            <select name="client_id" required>
-                                <?php foreach ($clientOptions as $item): ?>
-                                    <option value="<?= (int)$item['id'] ?>" <?= $selectedClientId === (int)$item['id'] ? 'selected' : '' ?>>
-                                        <?= e(trim(($item['client_code'] ?? '') . ' - ' . ($item['full_name'] ?? '') . ' - ' . ($item['generated_client_account'] ?? ''), ' -')) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
+                        <div>
+                            <label>Recherche</label>
+                            <input
+                                type="text"
+                                name="filter_search"
+                                value="<?= e($filterSearch) ?>"
+                                placeholder="Code client, nom, email, téléphone, compte 411..."
+                            >
                         </div>
 
                         <div>
-                            <label>Date début</label>
-                            <input type="date" name="date_from" value="<?= e($filterDateFrom) ?>">
-                        </div>
-
-                        <div>
-                            <label>Date fin</label>
-                            <input type="date" name="date_to" value="<?= e($filterDateTo) ?>">
-                        </div>
-
-                        <div>
-                            <label>Type d’opération</label>
-                            <select name="operation_type_code">
+                            <label>Pays commercial</label>
+                            <select name="filter_country">
                                 <option value="">Tous</option>
-                                <?php foreach ($operationTypeOptions as $typeCode): ?>
-                                    <option value="<?= e((string)$typeCode) ?>" <?= $filterType === (string)$typeCode ? 'selected' : '' ?>>
-                                        <?= e((string)$typeCode) ?>
+                                <?php foreach ($countryOptions as $country): ?>
+                                    <option value="<?= e((string)$country) ?>" <?= $filterCountry === (string)$country ? 'selected' : '' ?>>
+                                        <?= e((string)$country) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
 
                         <div>
-                            <label>Sens</label>
-                            <select name="direction">
-                                <option value="" <?= $filterDirection === '' ? 'selected' : '' ?>>Tous</option>
-                                <option value="credit" <?= $filterDirection === 'credit' ? 'selected' : '' ?>>Crédit</option>
-                                <option value="debit" <?= $filterDirection === 'debit' ? 'selected' : '' ?>>Débit</option>
-                                <option value="mixed" <?= $filterDirection === 'mixed' ? 'selected' : '' ?>>Mixte</option>
+                            <label>Type client</label>
+                            <select name="filter_client_type">
+                                <option value="">Tous</option>
+                                <?php foreach ($clientTypeOptions as $clientType): ?>
+                                    <option value="<?= e((string)$clientType) ?>" <?= $filterClientType === (string)$clientType ? 'selected' : '' ?>>
+                                        <?= e((string)$clientType) ?>
+                                    </option>
+                                <?php endforeach; ?>
                             </select>
                         </div>
-                    </div>
 
-                    <div class="btn-group" style="margin-top:16px;">
-                        <button type="submit" class="btn btn-secondary">Filtrer</button>
-                        <a href="<?= e(APP_URL) ?>modules/clients/client_accounts.php<?= $selectedClientId > 0 ? '?client_id=' . (int)$selectedClientId : '' ?>" class="btn btn-outline">Réinitialiser</a>
-                    </div>
-                </form>
+                        <div>
+                            <label>Du</label>
+                            <input type="date" name="from" value="<?= e($from) ?>">
+                        </div>
 
-                <?php if ($client): ?>
-                    <div class="sl-data-list">
-                        <div class="sl-data-list__row">
-                            <span>Client</span>
-                            <strong><?= e((string)($client['full_name'] ?? '')) ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Code client</span>
-                            <strong><?= e((string)($client['client_code'] ?? '')) ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Compte 411</span>
-                            <strong><?= e((string)($client['generated_client_account'] ?? '')) ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Compte bancaire lié</span>
-                            <strong><?= e(trim(((string)($client['account_number'] ?? '')) . ' - ' . ((string)($client['account_name'] ?? '')), ' -')) ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Solde initial</span>
-                            <strong><?= e(number_format((float)($client['initial_balance'] ?? 0), 2, ',', ' ')) ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Solde courant</span>
-                            <strong><?= e(number_format((float)($client['balance'] ?? 0), 2, ',', ' ')) ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Nb opérations</span>
-                            <strong><?= (int)$totalOperations ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Total période</span>
-                            <strong><?= e(number_format($totalAmount, 2, ',', ' ')) ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Total crédits</span>
-                            <strong><?= e(number_format($totalCredits, 2, ',', ' ')) ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Total débits</span>
-                            <strong><?= e(number_format($totalDebits, 2, ',', ' ')) ?></strong>
+                        <div>
+                            <label>Au</label>
+                            <input type="date" name="to" value="<?= e($to) ?>">
                         </div>
                     </div>
 
                     <div class="btn-group" style="margin-top:20px;">
-                        <a class="btn btn-secondary" href="<?= e(APP_URL) ?>modules/clients/client_view.php?id=<?= (int)$client['id'] ?>">Voir le client</a>
-                        <a class="btn btn-outline" href="<?= e($statementPreviewUrl) ?>">Exporter le relevé</a>
-                        <a class="btn btn-outline" href="<?= e($profilePreviewUrl) ?>">Exporter la fiche client</a>
+                        <button type="submit" class="btn btn-secondary">Filtrer</button>
+                        <a href="<?= e(APP_URL) ?>modules/clients/client_accounts.php" class="btn btn-outline">Réinitialiser</a>
                     </div>
-                <?php else: ?>
-                    <p class="muted">Aucun client sélectionné.</p>
-                <?php endif; ?>
+                </form>
             </div>
 
             <div class="card">
-                <h3>Historique des opérations</h3>
+                <h3 class="section-title">Synthèse</h3>
 
-                <?php if ($operations): ?>
-                    <div class="table-responsive">
-                        <table class="modern-table">
-                            <thead>
-                                <tr>
-                                    <th>Date</th>
-                                    <th>Type</th>
-                                    <th>Service</th>
-                                    <th>Libellé</th>
-                                    <th>Sens</th>
-                                    <th>Montant</th>
-                                    <th>Référence</th>
-                                    <th>Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <?php foreach ($operations as $operation): ?>
-                                    <?php $directionInfo = sca_operation_direction_badge($operation, (string)($client['generated_client_account'] ?? '')); ?>
-                                    <tr>
-                                        <td><?= e((string)($operation['operation_date'] ?? '')) ?></td>
-                                        <td><?= e((string)($operation['operation_type_code'] ?? '')) ?></td>
-                                        <td><?= e((string)($operation['service_label'] ?? '—')) ?></td>
-                                        <td><?= e((string)($operation['label'] ?? '')) ?></td>
-                                        <td>
-                                            <span class="badge badge-<?= e($directionInfo['class']) ?>">
-                                                <?= e($directionInfo['label']) ?>
-                                            </span>
-                                        </td>
-                                        <td><?= e(number_format((float)($operation['amount'] ?? 0), 2, ',', ' ')) ?></td>
-                                        <td><?= e((string)($operation['reference'] ?? '—')) ?></td>
-                                        <td>
-                                            <div class="btn-group">
-                                                <a class="btn btn-outline" href="<?= e(sca_build_operation_link($operation)) ?>">Voir</a>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                <?php endforeach; ?>
-                            </tbody>
-                        </table>
-                    </div>
-                <?php else: ?>
-                    <p class="muted">Aucune opération trouvée pour ce compte client avec les filtres sélectionnés.</p>
-                <?php endif; ?>
+                <div class="sl-data-list">
+                    <div class="sl-data-list__row"><span>Comptes affichés</span><strong><?= (int)$summary['count'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Solde initial cumulé</span><strong><?= ca_money((float)$summary['initial_balance']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Solde courant cumulé</span><strong><?= ca_money((float)$summary['current_balance']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Crédit période</span><strong><?= ca_money((float)$summary['period_credit']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Débit période</span><strong><?= ca_money((float)$summary['period_debit']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Net période</span><strong><?= ca_money((float)$summary['period_net']) ?></strong></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="page-title page-title-inline">
+                <div>
+                    <h3 class="section-title">Liste des comptes clients 411</h3>
+                    <p class="muted">Mouvements recalculés sur la période sélectionnée.</p>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table class="modern-table">
+                    <thead>
+                        <tr>
+                            <th>Code client</th>
+                            <th>Nom</th>
+                            <th>Compte 411</th>
+                            <th>Pays</th>
+                            <th>Type</th>
+                            <th>Devise</th>
+                            <th>Solde initial</th>
+                            <th>Solde courant</th>
+                            <th>Crédit période</th>
+                            <th>Débit période</th>
+                            <th>Net période</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($rows as $row): ?>
+                            <?php
+                            $code411 = (string)($row['generated_client_account'] ?? '');
+                            $mv = $movementMap[$code411] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
+
+                            $statementUrl = APP_URL . 'modules/statements/account_statements.php'
+                                . '?prefill_client_id=' . (int)$row['client_id']
+                                . '&prefill_date_from=' . urlencode($from)
+                                . '&prefill_date_to=' . urlencode($to);
+
+                            $profileUrl = APP_URL . 'modules/statements/client_profiles.php'
+                                . '?prefill_client_id=' . (int)$row['client_id'];
+
+                            $clientViewUrl = APP_URL . 'modules/clients/client_view.php?id=' . (int)$row['client_id'];
+                            ?>
+                            <tr>
+                                <td><?= e((string)($row['client_code'] ?? '')) ?></td>
+                                <td><?= e((string)($row['full_name'] ?? '')) ?></td>
+                                <td><?= e($code411) ?></td>
+                                <td><?= e((string)($row['country_commercial'] ?? '—')) ?></td>
+                                <td><?= e((string)($row['client_type'] ?? '—')) ?></td>
+                                <td><?= e((string)($row['currency'] ?? '—')) ?></td>
+                                <td><?= ca_money((float)($row['initial_balance'] ?? 0)) ?></td>
+                                <td><?= ca_money((float)($row['balance'] ?? 0)) ?></td>
+                                <td><?= ca_money((float)$mv['credit']) ?></td>
+                                <td><?= ca_money((float)$mv['debit']) ?></td>
+                                <td><?= ca_money((float)$mv['net']) ?></td>
+                                <td>
+                                    <div class="btn-group" style="flex-wrap:wrap;">
+                                        <a href="<?= e($statementUrl) ?>" class="btn btn-secondary">Exporter le relevé</a>
+                                        <a href="<?= e($profileUrl) ?>" class="btn btn-outline">Exporter la fiche client</a>
+                                        <a href="<?= e($clientViewUrl) ?>" class="btn btn-success">Voir le client</a>
+                                    </div>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+
+                        <?php if (!$rows): ?>
+                            <tr>
+                                <td colspan="12">Aucun compte client trouvé.</td>
+                            </tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
             </div>
         </div>
 

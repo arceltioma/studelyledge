@@ -3039,3 +3039,279 @@ if (!function_exists('slRenderPreviewCard')) {
         return (string)ob_get_clean();
     }
 }
+
+if (!function_exists('sl_get_monthly_treasury_options')) {
+    function sl_get_monthly_treasury_options(PDO $pdo): array
+    {
+        if (!tableExists($pdo, 'treasury_accounts')) {
+            return [];
+        }
+
+        $sql = "
+            SELECT id, account_code, account_label, currency_code, country_label
+            FROM treasury_accounts
+            WHERE COALESCE(is_active,1) = 1
+            ORDER BY account_code ASC
+        ";
+
+        return $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+
+if (!function_exists('sl_get_client_monthly_config')) {
+    function sl_get_client_monthly_config(PDO $pdo, int $clientId): ?array
+    {
+        if ($clientId <= 0 || !tableExists($pdo, 'clients')) {
+            return null;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT
+                c.id,
+                c.client_code,
+                c.full_name,
+                c.generated_client_account,
+                c.monthly_amount,
+                c.monthly_treasury_account_id,
+                c.monthly_day,
+                c.monthly_enabled,
+                c.monthly_last_generated_at,
+                ta.account_code AS monthly_treasury_account_code,
+                ta.account_label AS monthly_treasury_account_label
+            FROM clients c
+            LEFT JOIN treasury_accounts ta ON ta.id = c.monthly_treasury_account_id
+            WHERE c.id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$clientId]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
+    }
+}
+
+if (!function_exists('sl_client_has_monthly_due_for_date')) {
+    function sl_client_has_monthly_due_for_date(array $clientRow, string $runDate): bool
+    {
+        $runDateObj = DateTime::createFromFormat('Y-m-d', $runDate);
+        if (!$runDateObj) {
+            return false;
+        }
+
+        $enabled = (int)($clientRow['monthly_enabled'] ?? 0) === 1;
+        $amount = (float)($clientRow['monthly_amount'] ?? 0);
+        $day = (int)($clientRow['monthly_day'] ?? 26);
+        $target512 = (int)($clientRow['monthly_treasury_account_id'] ?? 0);
+
+        if (!$enabled || $amount <= 0 || $target512 <= 0) {
+            return false;
+        }
+
+        $expectedDay = max(1, min(28, $day));
+        if ((int)$runDateObj->format('d') !== $expectedDay) {
+            return false;
+        }
+
+        $lastGeneratedAt = trim((string)($clientRow['monthly_last_generated_at'] ?? ''));
+        if ($lastGeneratedAt !== '') {
+            $lastTs = strtotime($lastGeneratedAt);
+            if ($lastTs !== false) {
+                $lastYearMonth = date('Y-m', $lastTs);
+                $runYearMonth = $runDateObj->format('Y-m');
+                if ($lastYearMonth === $runYearMonth) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+}
+
+if (!function_exists('sl_monthly_operation_reference')) {
+    function sl_monthly_operation_reference(array $clientRow, string $runDate): string
+    {
+        $clientCode = trim((string)($clientRow['client_code'] ?? 'CLIENT'));
+        return 'MENS-' . strtoupper($clientCode) . '-' . date('Ym', strtotime($runDate));
+    }
+}
+
+if (!function_exists('sl_create_monthly_client_operation')) {
+    function sl_create_monthly_client_operation(PDO $pdo, array $clientRow, string $runDate, ?int $userId = null): int
+    {
+        if (!tableExists($pdo, 'operations')) {
+            throw new RuntimeException('Table operations introuvable.');
+        }
+
+        $clientId = (int)($clientRow['id'] ?? 0);
+        $amount = (float)($clientRow['monthly_amount'] ?? 0);
+        $targetTreasuryId = (int)($clientRow['monthly_treasury_account_id'] ?? 0);
+        $clientAccountCode = trim((string)($clientRow['generated_client_account'] ?? ''));
+
+        if ($clientId <= 0 || $amount <= 0 || $targetTreasuryId <= 0 || $clientAccountCode === '') {
+            throw new RuntimeException('Configuration mensualité client invalide.');
+        }
+
+        $targetTreasury = findTreasuryAccountById($pdo, $targetTreasuryId);
+        if (!$targetTreasury) {
+            throw new RuntimeException('Compte 512 mensualité introuvable.');
+        }
+
+        $creditCode = trim((string)($targetTreasury['account_code'] ?? ''));
+        if ($creditCode === '') {
+            throw new RuntimeException('Code du compte 512 mensualité introuvable.');
+        }
+
+        $reference = sl_monthly_operation_reference($clientRow, $runDate);
+
+        $stmtDup = $pdo->prepare("
+            SELECT id
+            FROM operations
+            WHERE client_id = ?
+              AND reference = ?
+            LIMIT 1
+        ");
+        $stmtDup->execute([$clientId, $reference]);
+
+        $existingId = (int)($stmtDup->fetchColumn() ?: 0);
+        if ($existingId > 0) {
+            return $existingId;
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'client_id' => $clientId,
+            'service_id' => null,
+            'operation_type_id' => null,
+            'bank_account_id' => null,
+            'linked_bank_account_id' => null,
+            'operation_date' => $runDate,
+            'operation_type_code' => 'MENSUALITE_CLIENT',
+            'operation_kind' => 'auto_monthly',
+            'label' => 'Mensualité client - ' . ($clientRow['full_name'] ?? $clientRow['client_code'] ?? 'Client'),
+            'amount' => $amount,
+            'currency_code' => $clientRow['currency'] ?? null,
+            'reference' => $reference,
+            'source_type' => 'system_monthly',
+            'debit_account_code' => $clientAccountCode,
+            'credit_account_code' => $creditCode,
+            'service_account_code' => null,
+            'operation_hash' => hash('sha256', implode('|', [
+                $clientId,
+                $runDate,
+                $amount,
+                $clientAccountCode,
+                $creditCode,
+                $reference
+            ])),
+            'is_manual_accounting' => 0,
+            'notes' => 'Mensualité automatique générée par le système',
+            'created_by' => $userId,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'operations', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'operations', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (columnExists($pdo, 'operations', 'updated_at')) {
+            $columns[] = 'updated_at';
+            $values[] = 'NOW()';
+        }
+
+        $stmtInsert = $pdo->prepare("
+            INSERT INTO operations (" . implode(', ', $columns) . ")
+            VALUES (" . implode(', ', $values) . ")
+        ");
+        $stmtInsert->execute($params);
+
+        $operationId = (int)$pdo->lastInsertId();
+
+        if (function_exists('recomputeAllBalances')) {
+            recomputeAllBalances($pdo);
+        }
+
+        $stmtUpdateClient = $pdo->prepare("
+            UPDATE clients
+            SET monthly_last_generated_at = NOW()
+            WHERE id = ?
+        ");
+        $stmtUpdateClient->execute([$clientId]);
+
+        if (function_exists('logUserAction') && $userId !== null && $userId > 0) {
+            logUserAction(
+                $pdo,
+                $userId,
+                'create_monthly_operation',
+                'operations',
+                'operation',
+                $operationId,
+                'Génération automatique mensualité client ' . ($clientRow['client_code'] ?? '')
+            );
+        }
+
+        return $operationId;
+    }
+}
+
+if (!function_exists('sl_run_monthly_client_operations')) {
+    function sl_run_monthly_client_operations(PDO $pdo, string $runDate, ?int $userId = null): array
+    {
+        if (!tableExists($pdo, 'clients')) {
+            throw new RuntimeException('Table clients introuvable.');
+        }
+
+        $stmt = $pdo->query("
+            SELECT
+                c.*,
+                ta.account_code AS monthly_treasury_account_code,
+                ta.account_label AS monthly_treasury_account_label
+            FROM clients c
+            LEFT JOIN treasury_accounts ta ON ta.id = c.monthly_treasury_account_id
+            WHERE COALESCE(c.is_active,1) = 1
+              AND COALESCE(c.monthly_enabled,0) = 1
+        ");
+        $clients = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $report = [
+            'run_date' => $runDate,
+            'processed' => 0,
+            'created' => 0,
+            'skipped' => 0,
+            'errors' => [],
+        ];
+
+        foreach ($clients as $clientRow) {
+            $report['processed']++;
+
+            try {
+                if (!sl_client_has_monthly_due_for_date($clientRow, $runDate)) {
+                    $report['skipped']++;
+                    continue;
+                }
+
+                sl_create_monthly_client_operation($pdo, $clientRow, $runDate, $userId);
+                $report['created']++;
+            } catch (Throwable $e) {
+                $report['errors'][] = [
+                    'client_id' => (int)($clientRow['id'] ?? 0),
+                    'client_code' => (string)($clientRow['client_code'] ?? ''),
+                    'message' => $e->getMessage(),
+                ];
+            }
+        }
+
+        return $report;
+    }
+}

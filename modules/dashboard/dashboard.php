@@ -66,6 +66,33 @@ function dashboard_fetch_one(PDO $pdo, string $sql, array $params = []): array
     return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
 }
 
+function dashboard_attention_link(string $key): string
+{
+    return match ($key) {
+        'missing_706' => APP_URL . 'modules/admin_functional/manage_services.php',
+        'missing_512' => APP_URL . 'modules/treasury/index.php',
+        'missing_client' => APP_URL . 'modules/clients/clients_list.php',
+        'same_account' => APP_URL . 'modules/operations/operations_list.php',
+        'manual_ops' => APP_URL . 'modules/admin_functional/manage_accounting_rules.php',
+        'missing_service' => APP_URL . 'modules/admin_functional/manage_services.php',
+        'missing_type' => APP_URL . 'modules/admin_functional/manage_operation_types.php',
+        'negative_or_zero' => APP_URL . 'modules/operations/operations_list.php',
+        default => APP_URL . 'modules/dashboard/dashboard.php',
+    };
+}
+
+function dashboard_card_link(string $url, string $label, string $value, string $meta, string $class = ''): string
+{
+    ob_start(); ?>
+    <a class="sl-card sl-kpi-card <?= e($class) ?>" href="<?= e($url) ?>" style="text-decoration:none;">
+        <div class="sl-kpi-card__label"><?= e($label) ?></div>
+        <div class="sl-kpi-card__value"><?= $value ?></div>
+        <div class="sl-kpi-card__meta"><strong><?= e($meta) ?></strong></div>
+    </a>
+    <?php
+    return (string)ob_get_clean();
+}
+
 $hasOperations = dashboard_table_exists($pdo, 'operations');
 $hasClients = dashboard_table_exists($pdo, 'clients');
 $hasTreasury = dashboard_table_exists($pdo, 'treasury_accounts');
@@ -150,6 +177,48 @@ if ($hasTreasury) {
         FROM treasury_accounts
         WHERE COALESCE(is_active,1)=1
     ");
+}
+
+/* Engagements clients */
+$engagementSummary = [
+    'positive_balances' => 0.0,
+    'dormant_accounts' => 0,
+    'clients_france' => 0,
+    'clients_allemagne' => 0,
+    'clients_belgique' => 0,
+];
+
+if ($hasClients) {
+    $clientBalanceColumn = dashboard_column_exists($pdo, 'clients', 'balance')
+        ? 'COALESCE(balance,0)'
+        : (dashboard_column_exists($pdo, 'clients', 'current_balance') ? 'COALESCE(current_balance,0)' : '0');
+
+    $engagementSummary = dashboard_fetch_one($pdo, "
+        SELECT
+            COALESCE(SUM(CASE WHEN {$clientBalanceColumn} > 0 THEN {$clientBalanceColumn} ELSE 0 END),0) AS positive_balances,
+            COALESCE(SUM(CASE WHEN {$clientBalanceColumn} <= 0 AND COALESCE(is_active,1)=1 THEN 1 ELSE 0 END),0) AS dormant_accounts,
+            COALESCE(SUM(CASE WHEN COALESCE(country_destination,'') = 'France' AND {$clientBalanceColumn} > 0 THEN 1 ELSE 0 END),0) AS clients_france,
+            COALESCE(SUM(CASE WHEN COALESCE(country_destination,'') = 'Allemagne' AND {$clientBalanceColumn} > 0 THEN 1 ELSE 0 END),0) AS clients_allemagne,
+            COALESCE(SUM(CASE WHEN COALESCE(country_destination,'') = 'Belgique' AND {$clientBalanceColumn} > 0 THEN 1 ELSE 0 END),0) AS clients_belgique
+        FROM clients
+        WHERE COALESCE(is_active,1)=1
+    ");
+}
+
+/* Projection virements 3 prochains mois */
+$futureTransfers = [];
+if ($hasClients) {
+    $clientBalanceColumn = dashboard_column_exists($pdo, 'clients', 'balance')
+        ? 'COALESCE(balance,0)'
+        : (dashboard_column_exists($pdo, 'clients', 'current_balance') ? 'COALESCE(current_balance,0)' : '0');
+
+    for ($i = 0; $i < 3; $i++) {
+        $monthLabel = date('Y-m', strtotime("+{$i} month"));
+        $futureTransfers[] = [
+            'month_label' => $monthLabel,
+            'estimated_amount' => (float)($engagementSummary['positive_balances'] ?? 0),
+        ];
+    }
 }
 
 $byType = [];
@@ -384,8 +453,10 @@ foreach ([
 ] as $key => $label) {
     if (($audit[$key] ?? 0) > 0) {
         $detailedAnomalies[] = [
+            'key' => $key,
             'label' => $label,
             'total' => (int)$audit[$key],
+            'link' => dashboard_attention_link($key),
         ];
     }
 }
@@ -430,6 +501,9 @@ $chartTypeAmounts = array_map(static fn($r) => (float)$r['total_amount'], $byTyp
 
 $chartServiceLabels = array_map(static fn($r) => $r['label'], $byService);
 $chartServiceAmounts = array_map(static fn($r) => (float)$r['total_amount'], $byService);
+
+$futureTransferLabels = array_map(static fn($r) => $r['month_label'], $futureTransfers);
+$futureTransferAmounts = array_map(static fn($r) => (float)$r['estimated_amount'], $futureTransfers);
 
 /* LOT 2 - intelligence système non destructive */
 $intelligence = [
@@ -527,6 +601,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
+
         <section class="sl-card sl-stable-block sl-filter-card" style="margin-bottom:20px;">
             <form method="GET" class="sl-grid sl-grid-5" novalidate>
                 <div>
@@ -582,61 +657,20 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </form>
         </section>
 
-       <section class="sl-grid sl-grid-4 sl-stable-block">
-    <div class="sl-card sl-kpi-card sl-kpi-card--green">
-        <div class="sl-kpi-card__top">
-            <div class="sl-kpi-card__icon">📘</div>
-            <span class="sl-kpi-card__tag">Activité</span>
-        </div>
-        <div class="sl-kpi-card__label">Opérations</div>
-        <div class="sl-kpi-card__value"><?= (int)($summary['total_operations'] ?? 0) ?></div>
-        <div class="sl-kpi-card__meta">
-            <span>Volume sur la période</span>
-            <strong><?= e($from) ?> → <?= e($to) ?></strong>
-        </div>
-    </div>
+        <section class="sl-grid sl-grid-4 sl-stable-block">
+            <?= dashboard_card_link(APP_URL . 'modules/operations/operations_list.php', 'Opérations', (string)(int)($summary['total_operations'] ?? 0), $from . ' → ' . $to, 'sl-kpi-card--green') ?>
+            <?= dashboard_card_link(APP_URL . 'modules/operations/operations_list.php', 'Montant total', e(dashboard_money((float)($summary['total_amount'] ?? 0))), 'Toutes opérations', 'sl-kpi-card--blue') ?>
+            <?= dashboard_card_link(APP_URL . 'modules/service_accounts/index.php', 'CA 706', e(dashboard_money((float)($summary['total_revenue_706'] ?? 0))), 'Produits comptabilisés', 'sl-kpi-card--emerald') ?>
+            <?= dashboard_card_link(APP_URL . 'modules/treasury/index.php', 'Solde 512', e(dashboard_money((float)($treasurySummary['current_balance'] ?? 0))), ((int)($treasurySummary['accounts_count'] ?? 0)) . ' compte(s)', 'sl-kpi-card--violet') ?>
+        </section>
 
-    <div class="sl-card sl-kpi-card sl-kpi-card--blue">
-        <div class="sl-kpi-card__top">
-            <div class="sl-kpi-card__icon">💰</div>
-            <span class="sl-kpi-card__tag">Flux</span>
-        </div>
-        <div class="sl-kpi-card__label">Montant total</div>
-        <div class="sl-kpi-card__value"><?= e(dashboard_money((float)($summary['total_amount'] ?? 0))) ?></div>
-        <div class="sl-kpi-card__meta">
-            <span>Toutes opérations</span>
-            <strong><?= (int)($summary['total_operations'] ?? 0) ?> ligne(s)</strong>
-        </div>
-    </div>
+        <section class="sl-grid sl-grid-4 sl-stable-block" style="margin-top:20px;">
+            <?= dashboard_card_link(APP_URL . 'modules/clients/client_accounts.php', 'Engagements clients', e(dashboard_money((float)($engagementSummary['positive_balances'] ?? 0))), 'Solde total > 0', 'sl-kpi-card--emerald') ?>
+            <?= dashboard_card_link(APP_URL . 'modules/clients/client_accounts.php', 'Dormants', (string)(int)($engagementSummary['dormant_accounts'] ?? 0), 'Comptes à surveiller', 'sl-kpi-card--warning') ?>
+            <?= dashboard_card_link(APP_URL . 'modules/clients/clients_list.php', 'France / Allemagne / Belgique', (string)((int)($engagementSummary['clients_france'] ?? 0) + (int)($engagementSummary['clients_allemagne'] ?? 0) + (int)($engagementSummary['clients_belgique'] ?? 0)), 'Clients avec solde > 0', 'sl-kpi-card--blue') ?>
+            <?= dashboard_card_link(APP_URL . 'modules/statements/account_statements.php', 'Virements 3 mois', e(dashboard_money((float)array_sum($futureTransferAmounts))), 'Projection cumulée', 'sl-kpi-card--violet') ?>
+        </section>
 
-    <div class="sl-card sl-kpi-card sl-kpi-card--emerald">
-        <div class="sl-kpi-card__top">
-            <div class="sl-kpi-card__icon">📈</div>
-            <span class="sl-kpi-card__tag">Produit</span>
-        </div>
-        <div class="sl-kpi-card__label">CA 706</div>
-        <div class="sl-kpi-card__value"><?= e(dashboard_money((float)($summary['total_revenue_706'] ?? 0))) ?></div>
-        <div class="sl-kpi-card__meta">
-            <span>Produits comptabilisés</span>
-            <strong>Compte 706</strong>
-        </div>
-    </div>
-
-    <div class="sl-card sl-kpi-card sl-kpi-card--violet">
-        <div class="sl-kpi-card__top">
-            <div class="sl-kpi-card__icon">🏦</div>
-            <span class="sl-kpi-card__tag">Trésorerie</span>
-        </div>
-        <div class="sl-kpi-card__label">Solde 512</div>
-        <div class="sl-kpi-card__value"><?= e(dashboard_money((float)($treasurySummary['current_balance'] ?? 0))) ?></div>
-        <div class="sl-kpi-card__meta">
-            <span>Comptes internes actifs</span>
-            <strong><?= (int)($treasurySummary['accounts_count'] ?? 0) ?></strong>
-        </div>
-    </div>
-</section>
-
-        <!-- LOT 2 : bloc intelligence système additif -->
         <section class="sl-grid sl-grid-4 sl-stable-block" style="margin-top:20px;">
             <div class="sl-card sl-kpi-card sl-kpi-card--blue">
                 <div class="sl-kpi-card__top">
@@ -733,22 +767,22 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 </div>
 
                 <div class="sl-metric-stack">
-                    <div class="sl-metric-tile">
+                    <a class="sl-metric-tile clickable" href="<?= e(dashboard_attention_link('missing_706')) ?>" style="text-decoration:none;">
                         <span class="sl-metric-tile__label">Sans 706</span>
                         <strong class="sl-metric-tile__value"><?= (int)$audit['missing_706'] ?></strong>
-                    </div>
-                    <div class="sl-metric-tile">
+                    </a>
+                    <a class="sl-metric-tile clickable" href="<?= e(dashboard_attention_link('missing_512')) ?>" style="text-decoration:none;">
                         <span class="sl-metric-tile__label">Sans 512</span>
                         <strong class="sl-metric-tile__value"><?= (int)$audit['missing_512'] ?></strong>
-                    </div>
-                    <div class="sl-metric-tile">
+                    </a>
+                    <a class="sl-metric-tile clickable" href="<?= e(dashboard_attention_link('missing_client')) ?>" style="text-decoration:none;">
                         <span class="sl-metric-tile__label">Sans client</span>
                         <strong class="sl-metric-tile__value"><?= (int)$audit['missing_client'] ?></strong>
-                    </div>
-                    <div class="sl-metric-tile">
+                    </a>
+                    <a class="sl-metric-tile clickable" href="<?= e(dashboard_attention_link('same_account')) ?>" style="text-decoration:none;">
                         <span class="sl-metric-tile__label">Débit = Crédit</span>
                         <strong class="sl-metric-tile__value"><?= (int)$audit['same_account'] ?></strong>
-                    </div>
+                    </a>
                 </div>
             </div>
 
@@ -762,22 +796,22 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 </div>
 
                 <div class="sl-metric-stack">
-                    <div class="sl-metric-tile sl-metric-tile--compact">
+                    <a class="sl-metric-tile sl-metric-tile--compact clickable" href="<?= e(dashboard_attention_link('manual_ops')) ?>" style="text-decoration:none;">
                         <span class="sl-metric-tile__label">Mode manuel</span>
                         <strong class="sl-metric-tile__value"><?= (int)$audit['manual_ops'] ?></strong>
-                    </div>
-                    <div class="sl-metric-tile sl-metric-tile--compact">
+                    </a>
+                    <a class="sl-metric-tile sl-metric-tile--compact clickable" href="<?= e(dashboard_attention_link('missing_service')) ?>" style="text-decoration:none;">
                         <span class="sl-metric-tile__label">Sans service</span>
                         <strong class="sl-metric-tile__value"><?= (int)$audit['missing_service'] ?></strong>
-                    </div>
-                    <div class="sl-metric-tile sl-metric-tile--compact">
+                    </a>
+                    <a class="sl-metric-tile sl-metric-tile--compact clickable" href="<?= e(dashboard_attention_link('missing_type')) ?>" style="text-decoration:none;">
                         <span class="sl-metric-tile__label">Sans type</span>
                         <strong class="sl-metric-tile__value"><?= (int)$audit['missing_type'] ?></strong>
-                    </div>
-                    <div class="sl-metric-tile sl-metric-tile--compact">
+                    </a>
+                    <a class="sl-metric-tile sl-metric-tile--compact clickable" href="<?= e(dashboard_attention_link('negative_or_zero')) ?>" style="text-decoration:none;">
                         <span class="sl-metric-tile__label">Montant ≤ 0</span>
                         <strong class="sl-metric-tile__value"><?= (int)$audit['negative_or_zero'] ?></strong>
-                    </div>
+                    </a>
                 </div>
             </div>
         </section>
@@ -863,10 +897,10 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <?php if ($detailedAnomalies): ?>
                     <div class="sl-anomaly-list">
                         <?php foreach ($detailedAnomalies as $item): ?>
-                            <div class="sl-anomaly-list__item">
+                            <a class="sl-anomaly-list__item" href="<?= e($item['link']) ?>" style="text-decoration:none;">
                                 <span class="sl-anomaly-list__label"><?= e($item['label']) ?></span>
                                 <strong class="sl-anomaly-list__value"><?= (int)$item['total'] ?></strong>
-                            </div>
+                            </a>
                         <?php endforeach; ?>
                     </div>
                 <?php else: ?>
@@ -920,6 +954,21 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="sl-card">
                 <div class="sl-card-head">
                     <div>
+                        <h3>Projection virements mensuels</h3>
+                        <p class="sl-card-head-subtitle">Projection sur les 3 prochains mois</p>
+                    </div>
+                    <span class="sl-pill sl-pill-soft">Projection</span>
+                </div>
+                <div class="sl-chart-box">
+                    <canvas id="futureTransferChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <section class="sl-grid sl-grid-2 sl-stable-block" style="margin-top:20px;">
+            <div class="sl-card">
+                <div class="sl-card-head">
+                    <div>
                         <h3>Répartition par pays commercial</h3>
                         <p class="sl-card-head-subtitle">Vue consolidée par zone commerciale</p>
                     </div>
@@ -950,6 +999,39 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <?php endif; ?>
                         </tbody>
                     </table>
+                </div>
+            </div>
+
+            <div class="sl-card">
+                <div class="sl-card-head">
+                    <div>
+                        <h3>Engagements par destination</h3>
+                        <p class="sl-card-head-subtitle">Clients avec solde positif</p>
+                    </div>
+                    <span class="sl-pill sl-pill-soft">Destinations</span>
+                </div>
+
+                <div class="sl-data-list">
+                    <div class="sl-data-list__row">
+                        <span>France</span>
+                        <strong><?= (int)($engagementSummary['clients_france'] ?? 0) ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Allemagne</span>
+                        <strong><?= (int)($engagementSummary['clients_allemagne'] ?? 0) ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Belgique</span>
+                        <strong><?= (int)($engagementSummary['clients_belgique'] ?? 0) ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Montant engagements</span>
+                        <strong><?= e(dashboard_money((float)($engagementSummary['positive_balances'] ?? 0))) ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Comptes dormants</span>
+                        <strong><?= (int)($engagementSummary['dormant_accounts'] ?? 0) ?></strong>
+                    </div>
                 </div>
             </div>
         </section>
@@ -1024,6 +1106,26 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <?php endif; ?>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </section>
+
+        <section class="sl-grid sl-grid-2 sl-stable-block" style="margin-top:20px;">
+            <div class="card">
+                <h3>Accès rapides</h3>
+                <div class="btn-group" style="flex-direction:column;align-items:flex-start;">
+                    <a class="btn btn-outline" href="<?= APP_URL ?>modules/admin_functional/manage_services.php">Gérer les services</a>
+                    <a class="btn btn-outline" href="<?= APP_URL ?>modules/admin_functional/manage_operation_types.php">Gérer les types d’opération</a>
+                    <a class="btn btn-outline" href="<?= APP_URL ?>modules/admin_functional/manage_accounts.php">Gérer les comptes</a>
+                    <a class="btn btn-outline" href="<?= APP_URL ?>modules/clients/clients_list.php">Gérer les clients</a>
+                    <a class="btn btn-outline" href="<?= APP_URL ?>modules/admin_functional/manage_accounting_rules.php">Gérer les règles comptables</a>
+                </div>
+            </div>
+
+            <div class="dashboard-panel">
+                <h3 class="section-title">Lecture métier</h3>
+                <div class="dashboard-note">
+                    Ce dashboard doit conserver la vision globale, les engagements, la trésorerie, les virements projetés et l’analyse dynamique du chiffre d’affaires par pays, période et catégorie. :contentReference[oaicite:2]{index=2} :contentReference[oaicite:3]{index=3}
                 </div>
             </div>
         </section>
@@ -1132,6 +1234,32 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         responsive: true,
                         maintainAspectRatio: false,
                         resizeDelay: 200
+                    }
+                });
+            }
+
+            const futureTransferCanvas = document.getElementById('futureTransferChart');
+            if (futureTransferCanvas) {
+                new Chart(futureTransferCanvas, {
+                    type: 'bar',
+                    data: {
+                        labels: <?= json_encode($futureTransferLabels, JSON_UNESCAPED_UNICODE) ?>,
+                        datasets: [{
+                            label: 'Montant à virer',
+                            data: <?= json_encode($futureTransferAmounts, JSON_UNESCAPED_UNICODE) ?>,
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        animation: false,
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        resizeDelay: 200,
+                        plugins: {
+                            legend: {
+                                display: false
+                            }
+                        }
                     }
                 });
             }

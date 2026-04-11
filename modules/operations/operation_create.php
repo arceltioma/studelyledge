@@ -64,7 +64,6 @@ $treasuryAccounts = function_exists('sl_fetch_postable_treasury_accounts')
             SELECT id, account_code, account_label
             FROM treasury_accounts
             WHERE COALESCE(is_active,1)=1
-              AND COALESCE(is_postable,0)=1
             ORDER BY account_code ASC
         ")->fetchAll(PDO::FETCH_ASSOC)
         : []);
@@ -76,7 +75,6 @@ $serviceAccounts = function_exists('sl_fetch_postable_service_accounts')
             SELECT id, account_code, account_label
             FROM service_accounts
             WHERE COALESCE(is_active,1)=1
-              AND COALESCE(is_postable,0)=1
             ORDER BY account_code ASC
         ")->fetchAll(PDO::FETCH_ASSOC)
         : []);
@@ -90,9 +88,9 @@ $bankAccounts = tableExists($pdo, 'bank_accounts')
     ")->fetchAll(PDO::FETCH_ASSOC)
     : [];
 
-$currencies = function_exists('sl_get_currency_options') ? sl_get_currency_options($pdo) : [
-    ['code' => 'EUR', 'label' => 'Euro']
-];
+$currencies = function_exists('sl_get_currency_options')
+    ? sl_get_currency_options($pdo)
+    : [['code' => 'EUR', 'label' => 'Euro']];
 
 if (!function_exists('sl_find_by_id')) {
     function sl_find_by_id(array $rows, int $id): ?array
@@ -147,7 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $operationDate = $formData['operation_date'];
-        $amount = (float)$formData['amount'];
+        $amount = (float)str_replace(',', '.', $formData['amount']);
         $currencyCode = $formData['currency_code'] !== '' ? $formData['currency_code'] : 'EUR';
         $clientId = $formData['client_id'] !== '' ? (int)$formData['client_id'] : null;
         $operationTypeId = $formData['operation_type_id'] !== '' ? (int)$formData['operation_type_id'] : 0;
@@ -160,20 +158,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $destinationAccountCode = $formData['destination_account_code'];
         $actionMode = trim((string)($_POST['action_mode'] ?? 'preview'));
 
-        if ($operationDate === '') {
-            throw new RuntimeException('Date obligatoire.');
-        }
-        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $operationDate)) {
+        if ($operationDate === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $operationDate)) {
             throw new RuntimeException('Date invalide.');
         }
+
         if ($amount <= 0) {
             throw new RuntimeException('Montant invalide.');
         }
+
         if ($operationTypeId <= 0) {
             throw new RuntimeException('Type d’opération obligatoire.');
         }
-        if ($serviceId === null) {
-            throw new RuntimeException('Type de service obligatoire.');
+
+        if ($serviceId === null || $serviceId <= 0) {
+            throw new RuntimeException('Service obligatoire.');
         }
 
         $selectedType = sl_find_by_id($operationTypes, $operationTypeId);
@@ -182,20 +180,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!$selectedType) {
             throw new RuntimeException('Type d’opération introuvable.');
         }
+
         if (!$selectedService) {
             throw new RuntimeException('Service introuvable.');
         }
 
-        $typeCode = sl_normalize_code((string)($selectedType['code'] ?? ''));
-        $serviceCode = sl_normalize_code((string)($selectedService['code'] ?? ''));
+        $typeCode = function_exists('sl_normalize_code')
+            ? sl_normalize_code((string)($selectedType['code'] ?? ''))
+            : strtoupper(trim((string)($selectedType['code'] ?? '')));
 
-        if (!sl_service_allowed_for_type($typeCode, $serviceCode)) {
+        $serviceCode = function_exists('sl_normalize_code')
+            ? sl_normalize_code((string)($selectedService['code'] ?? ''))
+            : strtoupper(trim((string)($selectedService['code'] ?? '')));
+
+        if (function_exists('sl_service_allowed_for_type') && !sl_service_allowed_for_type($typeCode, $serviceCode)) {
             throw new RuntimeException('Service incompatible avec le type d’opération.');
-        }
-
-        $requiresClient = !($typeCode === 'VIREMENT' && $serviceCode === 'INTERNE');
-        if ($requiresClient && !$clientId) {
-            throw new RuntimeException('Le client est obligatoire pour cette opération.');
         }
 
         $manualCases = [
@@ -208,10 +207,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ];
 
         $manualKey = $typeCode . '::' . $serviceCode;
+        $isInternalTransfer = ($manualKey === 'VIREMENT::INTERNE');
         $isManualCase = in_array($manualKey, $manualCases, true);
 
-        if ($isManualCase && ($sourceAccountCode === '' || $destinationAccountCode === '')) {
-            throw new RuntimeException('Le compte source et le compte destination sont obligatoires pour ce cas.');
+        $requiresClient = !$isInternalTransfer;
+        if ($requiresClient && !$clientId) {
+            throw new RuntimeException('Le client est obligatoire pour cette opération.');
+        }
+
+        if (($isInternalTransfer || $isManualCase) && ($sourceAccountCode === '' || $destinationAccountCode === '')) {
+            throw new RuntimeException('Le compte source et le compte destination sont obligatoires.');
         }
 
         $payload = [
@@ -225,12 +230,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'operation_type_code' => $typeCode,
             'linked_bank_account_id' => $linkedBankAccountId,
             'reference' => $reference !== '' ? $reference : null,
-            'label' => $label !== '' ? $label : trim(($selectedType['label'] ?? '') . ' - ' . ($selectedService['label'] ?? '')),
+            'label' => $label !== '' ? $label : trim((string)($selectedType['label'] ?? '') . ' - ' . (string)($selectedService['label'] ?? '')),
             'notes' => $notes !== '' ? $notes : null,
             'source_type' => 'manual',
             'operation_kind' => 'manual',
-            'source_treasury_code' => ($typeCode === 'VIREMENT' && $serviceCode === 'INTERNE') ? $sourceAccountCode : '',
-            'target_treasury_code' => ($typeCode === 'VIREMENT' && $serviceCode === 'INTERNE') ? $destinationAccountCode : '',
+            'source_treasury_code' => $isInternalTransfer ? $sourceAccountCode : '',
+            'target_treasury_code' => $isInternalTransfer ? $destinationAccountCode : '',
             'manual_debit_account_code' => $isManualCase ? $sourceAccountCode : '',
             'manual_credit_account_code' => $isManualCase ? $destinationAccountCode : '',
         ];
@@ -360,7 +365,11 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <select name="operation_type_id" id="operation_type_id" required>
                                 <option value="">Choisir</option>
                                 <?php foreach ($operationTypes as $typeRow): ?>
-                                    <option value="<?= (int)$typeRow['id'] ?>" data-type-code="<?= e(sl_normalize_code($typeRow['code'] ?? '')) ?>" <?= $formData['operation_type_id'] == $typeRow['id'] ? 'selected' : '' ?>>
+                                    <option
+                                        value="<?= (int)$typeRow['id'] ?>"
+                                        data-type-code="<?= e(function_exists('sl_normalize_code') ? sl_normalize_code($typeRow['code'] ?? '') : strtoupper(trim((string)($typeRow['code'] ?? '')))) ?>"
+                                        <?= $formData['operation_type_id'] == $typeRow['id'] ? 'selected' : '' ?>
+                                    >
                                         <?= e($typeRow['label']) ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -368,15 +377,15 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         </div>
 
                         <div>
-                            <label>Type service</label>
+                            <label>Service</label>
                             <select name="service_id" id="service_id" required>
                                 <option value="">Choisir d’abord un type</option>
                                 <?php foreach ($services as $serviceRow): ?>
                                     <option
                                         value="<?= (int)$serviceRow['id'] ?>"
                                         data-type-id="<?= (int)($serviceRow['operation_type_id'] ?? 0) ?>"
-                                        data-type-code="<?= e(sl_normalize_code($serviceRow['operation_type_code'] ?? '')) ?>"
-                                        data-service-code="<?= e(sl_normalize_code($serviceRow['code'] ?? '')) ?>"
+                                        data-type-code="<?= e(function_exists('sl_normalize_code') ? sl_normalize_code($serviceRow['operation_type_code'] ?? '') : strtoupper(trim((string)($serviceRow['operation_type_code'] ?? '')))) ?>"
+                                        data-service-code="<?= e(function_exists('sl_normalize_code') ? sl_normalize_code($serviceRow['code'] ?? '') : strtoupper(trim((string)($serviceRow['code'] ?? '')))) ?>"
                                         <?= $formData['service_id'] == $serviceRow['id'] ? 'selected' : '' ?>
                                     >
                                         <?= e($serviceRow['label']) ?>
@@ -398,7 +407,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         </div>
 
                         <div>
-                            <label>Référence / Intitulé</label>
+                            <label>Référence</label>
                             <input type="text" name="reference" value="<?= e($formData['reference']) ?>">
                         </div>
 
@@ -460,30 +469,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                 <?php if ($preview): ?>
                     <div class="sl-data-list">
-                        <div class="sl-data-list__row">
-                            <span>Date</span>
-                            <strong><?= e($formData['operation_date']) ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Montant</span>
-                            <strong><?= e(number_format((float)$formData['amount'], 2, ',', ' ')) ?> <?= e($formData['currency_code']) ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Compte débité</span>
-                            <strong><?= e($preview['debit_account_code'] ?? '') ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Compte crédité</span>
-                            <strong><?= e($preview['credit_account_code'] ?? '') ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Mode manuel</span>
-                            <strong><?= !empty($preview['is_manual_accounting']) ? 'Oui' : 'Non' ?></strong>
-                        </div>
-                        <div class="sl-data-list__row">
-                            <span>Hash anti-doublon</span>
-                            <strong style="word-break:break-all;"><?= e($preview['operation_hash'] ?? '') ?></strong>
-                        </div>
+                        <div class="sl-data-list__row"><span>Date</span><strong><?= e($formData['operation_date']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Montant</span><strong><?= e(number_format((float)$formData['amount'], 2, ',', ' ')) ?> <?= e($formData['currency_code']) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Compte débité</span><strong><?= e($preview['debit_account_code'] ?? '') ?></strong></div>
+                        <div class="sl-data-list__row"><span>Compte crédité</span><strong><?= e($preview['credit_account_code'] ?? '') ?></strong></div>
+                        <div class="sl-data-list__row"><span>Mode manuel</span><strong><?= !empty($preview['is_manual_accounting']) ? 'Oui' : 'Non' ?></strong></div>
+                        <div class="sl-data-list__row"><span>Hash anti-doublon</span><strong style="word-break:break-all;"><?= e($preview['operation_hash'] ?? '') ?></strong></div>
                     </div>
 
                     <?php if (!empty($preview['preview_lines']) && is_array($preview['preview_lines'])): ?>
@@ -506,14 +497,9 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             </table>
                         </div>
                     <?php endif; ?>
-
-                    <div class="dashboard-note" style="margin-top:18px;">
-                        La prévisualisation est correcte. Tu peux maintenant valider l’enregistrement à gauche.
-                    </div>
                 <?php else: ?>
                     <div class="dashboard-note">
-                        Remplis le formulaire puis clique sur <strong>Prévisualiser</strong>.  
-                        L’aperçu comptable complet apparaîtra ici avant validation définitive.
+                        Remplis le formulaire puis clique sur <strong>Prévisualiser</strong>.
                     </div>
                 <?php endif; ?>
             </div>
@@ -521,7 +507,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
         <script>
         document.addEventListener('DOMContentLoaded', function () {
-            const map = <?= json_encode(sl_operation_service_map(), JSON_UNESCAPED_UNICODE) ?>;
+            const map = <?= json_encode(function_exists('sl_operation_service_map') ? sl_operation_service_map() : [], JSON_UNESCAPED_UNICODE) ?>;
             const typeSelect = document.getElementById('operation_type_id');
             const serviceSelect = document.getElementById('service_id');
             const clientWrapper = document.getElementById('client-wrapper');
@@ -560,7 +546,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 originalServiceOptions.forEach(option => {
                     if (option.value === '') return;
                     const serviceCode = option.getAttribute('data-service-code') || '';
-                    if (allowedCodes.includes(serviceCode)) {
+                    if (allowedCodes.length === 0 || allowedCodes.includes(serviceCode)) {
                         const cloned = option.cloneNode(true);
                         if (cloned.value === currentValue) stillValid = true;
                         serviceSelect.appendChild(cloned);

@@ -5,7 +5,6 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
-require_once __DIR__ . '/../../config/security.php';
 
 if (function_exists('studelyEnforceAccess')) {
     studelyEnforceAccess($pdo, 'admin_functional_page');
@@ -13,12 +12,15 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'admin_functional_view');
 }
 
-if (!tableExists($pdo, 'accounting_rules')) {
-    exit('Table accounting_rules introuvable.');
+if (!function_exists('mar_table_name')) {
+    function mar_table_name(PDO $pdo, string $preferred, string $fallback): string
+    {
+        if (tableExists($pdo, $preferred)) {
+            return $preferred;
+        }
+        return $fallback;
+    }
 }
-
-$pageTitle = 'Règles comptables';
-$pageSubtitle = 'Pilotage des règles débit / crédit par type d’opération et service';
 
 if (!function_exists('mar_like')) {
     function mar_like(string $value): string
@@ -27,120 +29,164 @@ if (!function_exists('mar_like')) {
     }
 }
 
+$operationTypeTable = mar_table_name($pdo, 'ref_operation_types', 'operation_types');
+$serviceTable = mar_table_name($pdo, 'ref_services', 'services');
+
+$pageTitle = 'Règles comptables';
+$pageSubtitle = 'Pilotage des règles de résolution débit / crédit, contrôle des contraintes et maintenance du référentiel.';
+
+$successMessage = '';
+if (isset($_GET['deleted']) && $_GET['deleted'] === '1') {
+    $successMessage = 'La règle comptable a bien été supprimée.';
+} elseif (isset($_GET['created']) && $_GET['created'] === '1') {
+    $successMessage = 'La règle comptable a bien été créée.';
+} elseif (isset($_GET['updated']) && $_GET['updated'] === '1') {
+    $successMessage = 'La règle comptable a bien été mise à jour.';
+}
+
 $filterSearch = trim((string)($_GET['filter_search'] ?? ''));
+$filterStatus = trim((string)($_GET['filter_status'] ?? ''));
 $filterOperationTypeId = trim((string)($_GET['filter_operation_type_id'] ?? ''));
 $filterServiceId = trim((string)($_GET['filter_service_id'] ?? ''));
-$filterStatus = trim((string)($_GET['filter_status'] ?? ''));
 $filterDebitMode = trim((string)($_GET['filter_debit_mode'] ?? ''));
 $filterCreditMode = trim((string)($_GET['filter_credit_mode'] ?? ''));
 
-$operationTypes = tableExists($pdo, 'ref_operation_types')
-    ? $pdo->query("
+$operationTypes = [];
+if (tableExists($pdo, $operationTypeTable)) {
+    $stmt = $pdo->query("
         SELECT id, code, label
-        FROM ref_operation_types
+        FROM {$operationTypeTable}
         ORDER BY label ASC
-    ")->fetchAll(PDO::FETCH_ASSOC)
-    : [];
+    ");
+    $operationTypes = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
 
-$services = tableExists($pdo, 'ref_services')
-    ? $pdo->query("
+$services = [];
+if (tableExists($pdo, $serviceTable)) {
+    $stmt = $pdo->query("
         SELECT id, code, label
-        FROM ref_services
+        FROM {$serviceTable}
         ORDER BY label ASC
-    ")->fetchAll(PDO::FETCH_ASSOC)
-    : [];
+    ");
+    $services = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+}
 
-$availableModes = [
-    'CLIENT_411' => 'CLIENT_411',
-    'CLIENT_512' => 'CLIENT_512',
-    'SERVICE_706' => 'SERVICE_706',
-    'SOURCE_512' => 'SOURCE_512',
-    'TARGET_512' => 'TARGET_512',
-    'MANUAL_DEBIT' => 'MANUAL_DEBIT',
-    'MANUAL_CREDIT' => 'MANUAL_CREDIT',
-    'FIXED_ACCOUNT' => 'FIXED_ACCOUNT',
-];
+$debitModes = [];
+$creditModes = [];
+if (tableExists($pdo, 'accounting_rules')) {
+    if (columnExists($pdo, 'accounting_rules', 'debit_mode')) {
+        $debitModes = $pdo->query("
+            SELECT DISTINCT debit_mode
+            FROM accounting_rules
+            WHERE COALESCE(debit_mode,'') <> ''
+            ORDER BY debit_mode ASC
+        ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+    }
 
-$sql = "
-    SELECT
-        ar.*,
-        rot.code AS operation_type_code,
-        rot.label AS operation_type_label,
-        rs.code AS service_code,
-        rs.label AS service_label
-    FROM accounting_rules ar
-    LEFT JOIN ref_operation_types rot ON rot.id = ar.operation_type_id
-    LEFT JOIN ref_services rs ON rs.id = ar.service_id
-    WHERE 1=1
-";
-$params = [];
-
-if ($filterSearch !== '') {
-    $sql .= "
-        AND (
-            COALESCE(ar.rule_code, '') LIKE ?
-            OR COALESCE(ar.rule_label, '') LIKE ?
-            OR COALESCE(rot.code, '') LIKE ?
-            OR COALESCE(rot.label, '') LIKE ?
-            OR COALESCE(rs.code, '') LIKE ?
-            OR COALESCE(rs.label, '') LIKE ?
-            OR COALESCE(ar.debit_mode, '') LIKE ?
-            OR COALESCE(ar.credit_mode, '') LIKE ?
-            OR COALESCE(ar.label_pattern, '') LIKE ?
-            OR COALESCE(ar.debit_fixed_account_code, '') LIKE ?
-            OR COALESCE(ar.credit_fixed_account_code, '') LIKE ?
-        )
-    ";
-    for ($i = 0; $i < 11; $i++) {
-        $params[] = mar_like($filterSearch);
+    if (columnExists($pdo, 'accounting_rules', 'credit_mode')) {
+        $creditModes = $pdo->query("
+            SELECT DISTINCT credit_mode
+            FROM accounting_rules
+            WHERE COALESCE(credit_mode,'') <> ''
+            ORDER BY credit_mode ASC
+        ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
     }
 }
 
-if ($filterOperationTypeId !== '') {
-    $sql .= " AND ar.operation_type_id = ? ";
-    $params[] = (int)$filterOperationTypeId;
+$rows = [];
+if (tableExists($pdo, 'accounting_rules')) {
+    $sql = "
+        SELECT
+            ar.*,
+            ot.code AS operation_type_code,
+            ot.label AS operation_type_label,
+            ot.direction AS operation_type_direction,
+            s.code AS service_code,
+            s.label AS service_label,
+            sa.account_code AS linked_service_account_code,
+            sa.account_label AS linked_service_account_label,
+            ta.account_code AS linked_treasury_account_code,
+            ta.account_label AS linked_treasury_account_label
+        FROM accounting_rules ar
+        LEFT JOIN {$operationTypeTable} ot ON ot.id = ar.operation_type_id
+        LEFT JOIN {$serviceTable} s ON s.id = ar.service_id
+        LEFT JOIN service_accounts sa ON sa.id = s.service_account_id
+        LEFT JOIN treasury_accounts ta ON ta.id = s.treasury_account_id
+        WHERE 1=1
+    ";
+    $params = [];
+
+    if ($filterSearch !== '') {
+        $sql .= "
+            AND (
+                COALESCE(ar.rule_code,'') LIKE ?
+                OR COALESCE(ar.rule_label,'') LIKE ?
+                OR COALESCE(ar.debit_mode,'') LIKE ?
+                OR COALESCE(ar.credit_mode,'') LIKE ?
+                OR COALESCE(ar.label_pattern,'') LIKE ?
+                OR COALESCE(ot.code,'') LIKE ?
+                OR COALESCE(ot.label,'') LIKE ?
+                OR COALESCE(s.code,'') LIKE ?
+                OR COALESCE(s.label,'') LIKE ?
+            )
+        ";
+        for ($i = 0; $i < 9; $i++) {
+            $params[] = mar_like($filterSearch);
+        }
+    }
+
+    if ($filterStatus === 'active') {
+        $sql .= " AND COALESCE(ar.is_active,1) = 1 ";
+    } elseif ($filterStatus === 'inactive') {
+        $sql .= " AND COALESCE(ar.is_active,1) <> 1 ";
+    } elseif ($filterStatus === 'requires_client') {
+        $sql .= " AND COALESCE(ar.requires_client,0) = 1 ";
+    } elseif ($filterStatus === 'requires_manual') {
+        $sql .= " AND COALESCE(ar.requires_manual_accounts,0) = 1 ";
+    } elseif ($filterStatus === 'requires_bank') {
+        $sql .= " AND COALESCE(ar.requires_linked_bank,0) = 1 ";
+    } elseif ($filterStatus === 'fixed_accounts') {
+        $sql .= " AND (
+            COALESCE(ar.debit_fixed_account_code,'') <> ''
+            OR COALESCE(ar.credit_fixed_account_code,'') <> ''
+        ) ";
+    }
+
+    if ($filterOperationTypeId !== '') {
+        $sql .= " AND ar.operation_type_id = ? ";
+        $params[] = (int)$filterOperationTypeId;
+    }
+
+    if ($filterServiceId !== '') {
+        $sql .= " AND ar.service_id = ? ";
+        $params[] = (int)$filterServiceId;
+    }
+
+    if ($filterDebitMode !== '') {
+        $sql .= " AND COALESCE(ar.debit_mode,'') = ? ";
+        $params[] = $filterDebitMode;
+    }
+
+    if ($filterCreditMode !== '') {
+        $sql .= " AND COALESCE(ar.credit_mode,'') = ? ";
+        $params[] = $filterCreditMode;
+    }
+
+    $sql .= " ORDER BY COALESCE(ar.updated_at, ar.created_at) DESC, ar.id DESC ";
+
+    $stmtRows = $pdo->prepare($sql);
+    $stmtRows->execute($params);
+    $rows = $stmtRows->fetchAll(PDO::FETCH_ASSOC) ?: [];
 }
-
-if ($filterServiceId !== '') {
-    $sql .= " AND ar.service_id = ? ";
-    $params[] = (int)$filterServiceId;
-}
-
-if ($filterStatus === 'active') {
-    $sql .= " AND COALESCE(ar.is_active,1) = 1 ";
-} elseif ($filterStatus === 'inactive') {
-    $sql .= " AND COALESCE(ar.is_active,1) = 0 ";
-} elseif ($filterStatus === 'client_required') {
-    $sql .= " AND COALESCE(ar.requires_client,0) = 1 ";
-} elseif ($filterStatus === 'manual_required') {
-    $sql .= " AND COALESCE(ar.requires_manual_accounts,0) = 1 ";
-} elseif ($filterStatus === 'linked_bank_required') {
-    $sql .= " AND COALESCE(ar.requires_linked_bank,0) = 1 ";
-}
-
-if ($filterDebitMode !== '') {
-    $sql .= " AND COALESCE(ar.debit_mode, '') = ? ";
-    $params[] = $filterDebitMode;
-}
-
-if ($filterCreditMode !== '') {
-    $sql .= " AND COALESCE(ar.credit_mode, '') = ? ";
-    $params[] = $filterCreditMode;
-}
-
-$sql .= " ORDER BY COALESCE(rot.label, ''), COALESCE(rs.label, ''), ar.id DESC ";
-
-$stmt = $pdo->prepare($sql);
-$stmt->execute($params);
-$rules = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 $dashboard = [
-    'total' => count($rules),
-    'active' => count(array_filter($rules, fn($r) => (int)($r['is_active'] ?? 1) === 1)),
-    'inactive' => count(array_filter($rules, fn($r) => (int)($r['is_active'] ?? 1) !== 1)),
-    'requires_client' => count(array_filter($rules, fn($r) => (int)($r['requires_client'] ?? 0) === 1)),
-    'requires_manual' => count(array_filter($rules, fn($r) => (int)($r['requires_manual_accounts'] ?? 0) === 1)),
-    'requires_linked_bank' => count(array_filter($rules, fn($r) => (int)($r['requires_linked_bank'] ?? 0) === 1)),
+    'total' => count($rows),
+    'active' => count(array_filter($rows, fn($r) => (int)($r['is_active'] ?? 1) === 1)),
+    'inactive' => count(array_filter($rows, fn($r) => (int)($r['is_active'] ?? 1) !== 1)),
+    'requires_client' => count(array_filter($rows, fn($r) => (int)($r['requires_client'] ?? 0) === 1)),
+    'requires_manual' => count(array_filter($rows, fn($r) => (int)($r['requires_manual_accounts'] ?? 0) === 1)),
+    'requires_bank' => count(array_filter($rows, fn($r) => (int)($r['requires_linked_bank'] ?? 0) === 1)),
+    'fixed_accounts' => count(array_filter($rows, fn($r) => trim((string)($r['debit_fixed_account_code'] ?? '')) !== '' || trim((string)($r['credit_fixed_account_code'] ?? '')) !== '')),
 ];
 
 require_once __DIR__ . '/../../includes/document_start.php';
@@ -152,50 +198,130 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <div class="dashboard-grid-2" style="margin-bottom:20px;">
-            <div class="card">
-                <h3 class="section-title">Dashboard règles comptables</h3>
+        <?php if ($successMessage !== ''): ?>
+            <div class="success"><?= e($successMessage) ?></div>
+        <?php endif; ?>
+
+        <div class="dashboard-grid-4" style="margin-bottom:20px;">
+            <div class="sl-card sl-premium-card sl-kpi-card sl-kpi-card--blue">
+                <div class="sl-kpi-card__label">Règles</div>
+                <div class="sl-kpi-card__value"><?= (int)$dashboard['total'] ?></div>
+                <div class="sl-kpi-card__meta"><strong>Total paramétré</strong></div>
+            </div>
+
+            <div class="sl-card sl-premium-card sl-kpi-card sl-kpi-card--emerald">
+                <div class="sl-kpi-card__label">Actives</div>
+                <div class="sl-kpi-card__value"><?= (int)$dashboard['active'] ?></div>
+                <div class="sl-kpi-card__meta"><strong>En production</strong></div>
+            </div>
+
+            <div class="sl-card sl-premium-card sl-kpi-card sl-kpi-card--violet">
+                <div class="sl-kpi-card__label">Client requis</div>
+                <div class="sl-kpi-card__value"><?= (int)$dashboard['requires_client'] ?></div>
+                <div class="sl-kpi-card__meta"><strong>Règles conditionnées</strong></div>
+            </div>
+
+            <div class="sl-card sl-premium-card sl-kpi-card sl-kpi-card--green">
+                <div class="sl-kpi-card__label">Comptes manuels</div>
+                <div class="sl-kpi-card__value"><?= (int)$dashboard['requires_manual'] ?></div>
+                <div class="sl-kpi-card__meta"><strong>Cas sensibles</strong></div>
+            </div>
+        </div>
+
+        <div class="dashboard-grid-3" style="margin-bottom:20px;">
+            <div class="sl-card sl-premium-card">
+                <div class="sl-card-head">
+                    <div>
+                        <h3>Vue pilotage</h3>
+                        <p class="sl-card-head-subtitle">Résumé rapide du moteur paramétrique</p>
+                    </div>
+                    <span class="sl-pill sl-pill-soft">Synthèse</span>
+                </div>
+
                 <div class="sl-data-list">
-                    <div class="sl-data-list__row"><span>Total</span><strong><?= (int)$dashboard['total'] ?></strong></div>
-                    <div class="sl-data-list__row"><span>Actives</span><strong><?= (int)$dashboard['active'] ?></strong></div>
                     <div class="sl-data-list__row"><span>Inactives</span><strong><?= (int)$dashboard['inactive'] ?></strong></div>
-                    <div class="sl-data-list__row"><span>Client requis</span><strong><?= (int)$dashboard['requires_client'] ?></strong></div>
-                    <div class="sl-data-list__row"><span>Comptes manuels requis</span><strong><?= (int)$dashboard['requires_manual'] ?></strong></div>
-                    <div class="sl-data-list__row"><span>Banque liée requise</span><strong><?= (int)$dashboard['requires_linked_bank'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Compte lié requis</span><strong><?= (int)$dashboard['requires_bank'] ?></strong></div>
+                    <div class="sl-data-list__row"><span>Comptes fixes</span><strong><?= (int)$dashboard['fixed_accounts'] ?></strong></div>
                 </div>
             </div>
 
-            <div class="card">
-                <h3 class="section-title">Actions rapides</h3>
-                <div class="dashboard-note" style="margin-bottom:16px;">
-                    Les règles comptables pilotent la résolution débit / crédit avant fallback sur le moteur historique.
+            <div class="sl-card sl-premium-card">
+                <div class="sl-card-head">
+                    <div>
+                        <h3>Actions rapides</h3>
+                        <p class="sl-card-head-subtitle">Raccourcis vers les objets liés</p>
+                    </div>
+                    <span class="sl-pill sl-pill-soft">Navigation</span>
                 </div>
 
                 <div class="btn-group">
-                    <a href="<?= e(APP_URL) ?>modules/admin_functional/accounting_rule_create.php" class="btn btn-success">Nouvelle règle</a>
-                    <a href="<?= e(APP_URL) ?>modules/admin_functional/manage_operation_types.php" class="btn btn-outline">Types d’opérations</a>
-                    <a href="<?= e(APP_URL) ?>modules/admin_functional/manage_services.php" class="btn btn-outline">Services</a>
+                    <a href="<?= e(APP_URL) ?>modules/admin_functional/accounting_rule_create.php" class="btn btn-success">➕ Nouvelle règle</a>
+                    <a href="<?= e(APP_URL) ?>modules/admin_functional/manage_operation_types.php" class="btn btn-secondary">🧠 Types d’opérations</a>
+                    <a href="<?= e(APP_URL) ?>modules/admin_functional/manage_services.php" class="btn btn-secondary">🧩 Services</a>
+                    <a href="<?= e(APP_URL) ?>modules/admin_functional/accounting_balance_audit.php" class="btn btn-outline">🧾 Audit soldes</a>
+                </div>
+            </div>
+
+            <div class="sl-card sl-premium-card">
+                <div class="sl-card-head">
+                    <div>
+                        <h3>Lecture fonctionnelle</h3>
+                        <p class="sl-card-head-subtitle">Aide rapide sur les modes les plus utilisés</p>
+                    </div>
+                    <span class="sl-pill sl-pill-soft">Référence</span>
+                </div>
+
+                <div class="sl-anomaly-list">
+                    <div class="sl-anomaly-list__item">
+                        <span class="sl-anomaly-list__label">CLIENT_411</span>
+                        <strong class="sl-anomaly-list__value">Compte client</strong>
+                    </div>
+                    <div class="sl-anomaly-list__item">
+                        <span class="sl-anomaly-list__label">CLIENT_512</span>
+                        <strong class="sl-anomaly-list__value">Trésorerie client</strong>
+                    </div>
+                    <div class="sl-anomaly-list__item">
+                        <span class="sl-anomaly-list__label">SERVICE_706</span>
+                        <strong class="sl-anomaly-list__value">Produit / service</strong>
+                    </div>
+                    <div class="sl-anomaly-list__item">
+                        <span class="sl-anomaly-list__label">SOURCE_512 / TARGET_512</span>
+                        <strong class="sl-anomaly-list__value">Flux internes</strong>
+                    </div>
                 </div>
             </div>
         </div>
 
         <div class="form-card" style="margin-bottom:20px;">
-            <h3 class="section-title">Filtres utiles</h3>
+            <h3 class="section-title">Filtres</h3>
 
             <form method="GET">
-                <div class="dashboard-grid-2">
+                <div class="dashboard-grid-3">
                     <div>
                         <label>Recherche</label>
-                        <input type="text" name="filter_search" value="<?= e($filterSearch) ?>" placeholder="Code règle, label, type, service, compte...">
+                        <input type="text" name="filter_search" value="<?= e($filterSearch) ?>" placeholder="Code, libellé, type, service, mode...">
+                    </div>
+
+                    <div>
+                        <label>Statut / contrainte</label>
+                        <select name="filter_status">
+                            <option value="">Tous</option>
+                            <option value="active" <?= $filterStatus === 'active' ? 'selected' : '' ?>>Actives</option>
+                            <option value="inactive" <?= $filterStatus === 'inactive' ? 'selected' : '' ?>>Inactives</option>
+                            <option value="requires_client" <?= $filterStatus === 'requires_client' ? 'selected' : '' ?>>Client requis</option>
+                            <option value="requires_manual" <?= $filterStatus === 'requires_manual' ? 'selected' : '' ?>>Comptes manuels requis</option>
+                            <option value="requires_bank" <?= $filterStatus === 'requires_bank' ? 'selected' : '' ?>>Compte lié requis</option>
+                            <option value="fixed_accounts" <?= $filterStatus === 'fixed_accounts' ? 'selected' : '' ?>>Avec comptes fixes</option>
+                        </select>
                     </div>
 
                     <div>
                         <label>Type d’opération</label>
                         <select name="filter_operation_type_id">
                             <option value="">Tous</option>
-                            <?php foreach ($operationTypes as $type): ?>
-                                <option value="<?= (int)$type['id'] ?>" <?= $filterOperationTypeId === (string)$type['id'] ? 'selected' : '' ?>>
-                                    <?= e(($type['label'] ?? '') . ' (' . ($type['code'] ?? '') . ')') ?>
+                            <?php foreach ($operationTypes as $item): ?>
+                                <option value="<?= (int)$item['id'] ?>" <?= $filterOperationTypeId === (string)$item['id'] ? 'selected' : '' ?>>
+                                    <?= e(trim((string)($item['label'] ?? '') . ' (' . (string)($item['code'] ?? '') . ')')) ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -205,23 +331,11 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <label>Service</label>
                         <select name="filter_service_id">
                             <option value="">Tous</option>
-                            <?php foreach ($services as $service): ?>
-                                <option value="<?= (int)$service['id'] ?>" <?= $filterServiceId === (string)$service['id'] ? 'selected' : '' ?>>
-                                    <?= e(($service['label'] ?? '') . ' (' . ($service['code'] ?? '') . ')') ?>
+                            <?php foreach ($services as $item): ?>
+                                <option value="<?= (int)$item['id'] ?>" <?= $filterServiceId === (string)$item['id'] ? 'selected' : '' ?>>
+                                    <?= e(trim((string)($item['label'] ?? '') . ' (' . (string)($item['code'] ?? '') . ')')) ?>
                                 </option>
                             <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label>Statut / contraintes</label>
-                        <select name="filter_status">
-                            <option value="">Tous</option>
-                            <option value="active" <?= $filterStatus === 'active' ? 'selected' : '' ?>>Actives</option>
-                            <option value="inactive" <?= $filterStatus === 'inactive' ? 'selected' : '' ?>>Inactives</option>
-                            <option value="client_required" <?= $filterStatus === 'client_required' ? 'selected' : '' ?>>Client requis</option>
-                            <option value="manual_required" <?= $filterStatus === 'manual_required' ? 'selected' : '' ?>>Comptes manuels requis</option>
-                            <option value="linked_bank_required" <?= $filterStatus === 'linked_bank_required' ? 'selected' : '' ?>>Banque liée requise</option>
                         </select>
                     </div>
 
@@ -229,8 +343,10 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <label>Mode débit</label>
                         <select name="filter_debit_mode">
                             <option value="">Tous</option>
-                            <?php foreach ($availableModes as $mode): ?>
-                                <option value="<?= e($mode) ?>" <?= $filterDebitMode === $mode ? 'selected' : '' ?>><?= e($mode) ?></option>
+                            <?php foreach ($debitModes as $mode): ?>
+                                <option value="<?= e((string)$mode) ?>" <?= $filterDebitMode === (string)$mode ? 'selected' : '' ?>>
+                                    <?= e((string)$mode) ?>
+                                </option>
                             <?php endforeach; ?>
                         </select>
                     </div>
@@ -239,8 +355,10 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <label>Mode crédit</label>
                         <select name="filter_credit_mode">
                             <option value="">Tous</option>
-                            <?php foreach ($availableModes as $mode): ?>
-                                <option value="<?= e($mode) ?>" <?= $filterCreditMode === $mode ? 'selected' : '' ?>><?= e($mode) ?></option>
+                            <?php foreach ($creditModes as $mode): ?>
+                                <option value="<?= e((string)$mode) ?>" <?= $filterCreditMode === (string)$mode ? 'selected' : '' ?>>
+                                    <?= e((string)$mode) ?>
+                                </option>
                             <?php endforeach; ?>
                         </select>
                     </div>
@@ -253,70 +371,105 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </form>
         </div>
 
-        <div class="card">
-            <h3 class="section-title">Liste des règles comptables</h3>
+        <div class="table-card">
+            <div class="page-title page-title-inline">
+                <div>
+                    <h3 class="section-title">Liste des règles</h3>
+                    <p class="muted"><?= count($rows) ?> règle(s) trouvée(s)</p>
+                </div>
+            </div>
 
             <div class="table-responsive">
                 <table class="modern-table">
                     <thead>
                         <tr>
                             <th>ID</th>
+                            <th>Code règle</th>
                             <th>Type d’opération</th>
                             <th>Service</th>
-                            <th>Code règle</th>
                             <th>Débit</th>
                             <th>Crédit</th>
                             <th>Contraintes</th>
                             <th>Statut</th>
+                            <th>Dernière mise à jour</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($rules as $r): ?>
+                        <?php foreach ($rows as $row): ?>
+                            <?php
+                            $constraints = [];
+                            if ((int)($row['requires_client'] ?? 0) === 1) {
+                                $constraints[] = 'Client';
+                            }
+                            if ((int)($row['requires_linked_bank'] ?? 0) === 1) {
+                                $constraints[] = 'Banque liée';
+                            }
+                            if ((int)($row['requires_manual_accounts'] ?? 0) === 1) {
+                                $constraints[] = 'Manuel';
+                            }
+                            if (trim((string)($row['debit_fixed_account_code'] ?? '')) !== '' || trim((string)($row['credit_fixed_account_code'] ?? '')) !== '') {
+                                $constraints[] = 'Compte fixe';
+                            }
+                            ?>
                             <tr>
-                                <td><?= (int)($r['id'] ?? 0) ?></td>
-                                <td><?= e(trim((string)($r['operation_type_label'] ?? '') . ' (' . (string)($r['operation_type_code'] ?? '') . ')')) ?></td>
-                                <td><?= e(trim((string)($r['service_label'] ?? '') . ' (' . (string)($r['service_code'] ?? '') . ')')) ?></td>
+                                <td><?= (int)$row['id'] ?></td>
                                 <td>
-                                    <strong><?= e((string)($r['rule_code'] ?? '')) ?></strong>
-                                    <?php if (!empty($r['rule_label'])): ?>
-                                        <div class="muted"><?= e((string)$r['rule_label']) ?></div>
+                                    <strong><?= e((string)($row['rule_code'] ?? '')) ?></strong>
+                                    <?php if (!empty($row['rule_label'])): ?>
+                                        <div class="muted"><?= e((string)$row['rule_label']) ?></div>
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <?= e((string)($r['debit_mode'] ?? '')) ?>
-                                    <?php if (!empty($r['debit_fixed_account_code'])): ?>
-                                        <div class="muted">Fixe : <?= e((string)$r['debit_fixed_account_code']) ?></div>
+                                    <?= e(trim((string)($row['operation_type_label'] ?? '') . ' (' . (string)($row['operation_type_code'] ?? '') . ')')) ?>
+                                </td>
+                                <td>
+                                    <?= e(trim((string)($row['service_label'] ?? '') . ' (' . (string)($row['service_code'] ?? '') . ')')) ?>
+                                </td>
+                                <td>
+                                    <strong><?= e((string)($row['debit_mode'] ?? '')) ?></strong>
+                                    <?php if (!empty($row['debit_fixed_account_code'])): ?>
+                                        <div class="muted">Fixe : <?= e((string)$row['debit_fixed_account_code']) ?></div>
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <?= e((string)($r['credit_mode'] ?? '')) ?>
-                                    <?php if (!empty($r['credit_fixed_account_code'])): ?>
-                                        <div class="muted">Fixe : <?= e((string)$r['credit_fixed_account_code']) ?></div>
+                                    <strong><?= e((string)($row['credit_mode'] ?? '')) ?></strong>
+                                    <?php if (!empty($row['credit_fixed_account_code'])): ?>
+                                        <div class="muted">Fixe : <?= e((string)$row['credit_fixed_account_code']) ?></div>
                                     <?php endif; ?>
                                 </td>
                                 <td>
-                                    <div class="muted">
-                                        Client : <?= (int)($r['requires_client'] ?? 0) === 1 ? 'Oui' : 'Non' ?><br>
-                                        Banque liée : <?= (int)($r['requires_linked_bank'] ?? 0) === 1 ? 'Oui' : 'Non' ?><br>
-                                        Manuel : <?= (int)($r['requires_manual_accounts'] ?? 0) === 1 ? 'Oui' : 'Non' ?>
-                                        <?php if (!empty($r['label_pattern'])): ?>
-                                            <br>Pattern : <?= e((string)$r['label_pattern']) ?>
-                                        <?php endif; ?>
-                                    </div>
+                                    <?php if ($constraints): ?>
+                                        <div class="btn-group">
+                                            <?php foreach ($constraints as $badge): ?>
+                                                <span class="sl-pill sl-pill-soft"><?= e($badge) ?></span>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    <?php else: ?>
+                                        <span class="muted">Aucune</span>
+                                    <?php endif; ?>
                                 </td>
-                                <td><?= (int)($r['is_active'] ?? 1) === 1 ? 'Active' : 'Inactive' ?></td>
+                                <td>
+                                    <span class="status-pill <?= (int)($row['is_active'] ?? 1) === 1 ? 'status-success' : 'status-danger' ?>">
+                                        <?= (int)($row['is_active'] ?? 1) === 1 ? 'Active' : 'Inactive' ?>
+                                    </span>
+                                </td>
+                                <td>
+                                    <?= e((string)($row['updated_at'] ?? $row['created_at'] ?? '—')) ?>
+                                </td>
                                 <td>
                                     <div class="btn-group">
-                                        <a href="<?= e(APP_URL) ?>modules/admin_functional/accounting_rule_edit.php?id=<?= (int)$r['id'] ?>" class="btn btn-secondary">Modifier</a>
+                                        <a href="<?= e(APP_URL) ?>modules/admin_functional/accounting_rule_view.php?id=<?= (int)$row['id'] ?>" class="btn btn-outline">Voir</a>
+                                        <a href="<?= e(APP_URL) ?>modules/admin_functional/accounting_rule_edit.php?id=<?= (int)$row['id'] ?>" class="btn btn-secondary">Modifier</a>
+                                        <a href="<?= e(APP_URL) ?>modules/admin_functional/accounting_rule_delete.php?id=<?= (int)$row['id'] ?>" class="btn btn-danger">Supprimer</a>
                                     </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
 
-                        <?php if (!$rules): ?>
+                        <?php if (!$rows): ?>
                             <tr>
-                                <td colspan="9">Aucune règle comptable trouvée.</td>
+                                <td colspan="10">Aucune règle trouvée.</td>
                             </tr>
                         <?php endif; ?>
                     </tbody>

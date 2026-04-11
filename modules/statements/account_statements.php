@@ -20,13 +20,76 @@ if (session_status() === PHP_SESSION_NONE) {
 $pageTitle = 'Relevés de comptes';
 $pageSubtitle = 'Prévisualisation puis génération des relevés PDF, en unitaire ou en masse';
 
-$clients = tableExists($pdo, 'clients')
+if (!function_exists('as_like')) {
+    function as_like(string $value): string
+    {
+        return '%' . trim($value) . '%';
+    }
+}
+
+if (!function_exists('as_valid_date')) {
+    function as_valid_date(string $value): bool
+    {
+        return (bool)preg_match('/^\d{4}-\d{2}-\d{2}$/', $value);
+    }
+}
+
+$filterSearch = trim((string)($_GET['filter_search'] ?? ''));
+$filterCountry = trim((string)($_GET['filter_country'] ?? ''));
+
+$prefillClientId = (int)($_GET['prefill_client_id'] ?? 0);
+$prefillDateFrom = trim((string)($_GET['prefill_date_from'] ?? date('Y-m-01')));
+$prefillDateTo = trim((string)($_GET['prefill_date_to'] ?? date('Y-m-t')));
+
+if (!as_valid_date($prefillDateFrom)) {
+    $prefillDateFrom = date('Y-m-01');
+}
+if (!as_valid_date($prefillDateTo)) {
+    $prefillDateTo = date('Y-m-t');
+}
+if ($prefillDateFrom > $prefillDateTo) {
+    [$prefillDateFrom, $prefillDateTo] = [$prefillDateTo, $prefillDateFrom];
+}
+
+$sqlClients = "
+    SELECT id, client_code, full_name, country_commercial, generated_client_account, client_type
+    FROM clients
+    WHERE COALESCE(is_active,1)=1
+";
+$paramsClients = [];
+
+if ($filterSearch !== '') {
+    $sqlClients .= "
+        AND (
+            client_code LIKE ?
+            OR full_name LIKE ?
+            OR COALESCE(generated_client_account,'') LIKE ?
+        )
+    ";
+    $paramsClients[] = as_like($filterSearch);
+    $paramsClients[] = as_like($filterSearch);
+    $paramsClients[] = as_like($filterSearch);
+}
+
+if ($filterCountry !== '') {
+    $sqlClients .= " AND COALESCE(country_commercial,'') = ? ";
+    $paramsClients[] = $filterCountry;
+}
+
+$sqlClients .= " ORDER BY client_code ASC ";
+
+$stmtClients = $pdo->prepare($sqlClients);
+$stmtClients->execute($paramsClients);
+$clients = $stmtClients->fetchAll(PDO::FETCH_ASSOC);
+
+$countryOptions = tableExists($pdo, 'clients')
     ? $pdo->query("
-        SELECT id, client_code, full_name, country_commercial
+        SELECT DISTINCT country_commercial
         FROM clients
         WHERE COALESCE(is_active,1)=1
-        ORDER BY client_code ASC
-    ")->fetchAll(PDO::FETCH_ASSOC)
+          AND COALESCE(country_commercial,'') <> ''
+        ORDER BY country_commercial ASC
+    ")->fetchAll(PDO::FETCH_COLUMN)
     : [];
 
 $previewPdf = (string)($_SESSION['account_statements_preview_pdf'] ?? '');
@@ -37,11 +100,6 @@ if (isset($_GET['cancel_preview']) && $_GET['cancel_preview'] === '1') {
     header('Location: ' . APP_URL . 'modules/statements/account_statements.php');
     exit;
 }
-
-$prefillClientId = (int)($_GET['prefill_client_id'] ?? 0);
-$dateFrom = trim((string)($_GET['date_from'] ?? ''));
-$dateTo = trim((string)($_GET['date_to'] ?? ''));
-$fromClientAccounts = (int)($_GET['source_client_accounts'] ?? 0) === 1;
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -61,11 +119,65 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <?php unset($_SESSION['error_message']); ?>
         <?php endif; ?>
 
-        <?php if ($fromClientAccounts && $prefillClientId > 0): ?>
-            <div class="dashboard-note" style="margin-bottom:16px;">
-                Le client concerné a été présélectionné depuis la page des comptes clients 411.
+        <div class="dashboard-grid-2" style="margin-bottom:20px;">
+            <div class="card">
+                <h3 class="section-title">Filtres clients</h3>
+
+                <form method="GET">
+                    <input type="hidden" name="prefill_client_id" value="<?= (int)$prefillClientId ?>">
+                    <input type="hidden" name="prefill_date_from" value="<?= e($prefillDateFrom) ?>">
+                    <input type="hidden" name="prefill_date_to" value="<?= e($prefillDateTo) ?>">
+
+                    <div class="dashboard-grid-2">
+                        <div>
+                            <label>Recherche</label>
+                            <input
+                                type="text"
+                                name="filter_search"
+                                value="<?= e($filterSearch) ?>"
+                                placeholder="Code client, nom, compte 411..."
+                            >
+                        </div>
+
+                        <div>
+                            <label>Pays commercial</label>
+                            <select name="filter_country">
+                                <option value="">Tous</option>
+                                <?php foreach ($countryOptions as $country): ?>
+                                    <option value="<?= e((string)$country) ?>" <?= $filterCountry === (string)$country ? 'selected' : '' ?>>
+                                        <?= e((string)$country) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="btn-group" style="margin-top:20px;">
+                        <button type="submit" class="btn btn-secondary">Filtrer</button>
+                        <a href="<?= e(APP_URL) ?>modules/statements/account_statements.php" class="btn btn-outline">Réinitialiser</a>
+                    </div>
+                </form>
             </div>
-        <?php endif; ?>
+
+            <div class="card">
+                <h3 class="section-title">Contexte de prévisualisation</h3>
+
+                <div class="sl-data-list">
+                    <div class="sl-data-list__row">
+                        <span>Client pré-sélectionné</span>
+                        <strong><?= $prefillClientId > 0 ? (int)$prefillClientId : '—' ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Période</span>
+                        <strong><?= e($prefillDateFrom) ?> → <?= e($prefillDateTo) ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Clients visibles</span>
+                        <strong><?= count($clients) ?></strong>
+                    </div>
+                </div>
+            </div>
+        </div>
 
         <div class="dashboard-grid-2">
             <div class="card">
@@ -78,11 +190,11 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <div class="dashboard-grid-2" style="margin-bottom:16px;">
                         <div>
                             <label>Du</label>
-                            <input type="date" name="date_from" value="<?= e($dateFrom) ?>" required>
+                            <input type="date" name="date_from" value="<?= e($prefillDateFrom) ?>" required>
                         </div>
                         <div>
                             <label>Au</label>
-                            <input type="date" name="date_to" value="<?= e($dateTo) ?>" required>
+                            <input type="date" name="date_to" value="<?= e($prefillDateTo) ?>" required>
                         </div>
                     </div>
 
@@ -94,12 +206,14 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                     <th>Code</th>
                                     <th>Nom</th>
                                     <th>Pays commercial</th>
+                                    <th>Compte 411</th>
+                                    <th>Type</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 <?php if ($clients): ?>
                                     <?php foreach ($clients as $client): ?>
-                                        <tr>
+                                        <tr class="<?= $prefillClientId === (int)$client['id'] ? 'table-row-highlight' : '' ?>">
                                             <td>
                                                 <input
                                                     type="checkbox"
@@ -111,10 +225,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                             <td><?= e((string)$client['client_code']) ?></td>
                                             <td><?= e((string)$client['full_name']) ?></td>
                                             <td><?= e((string)($client['country_commercial'] ?? '—')) ?></td>
+                                            <td><?= e((string)($client['generated_client_account'] ?? '—')) ?></td>
+                                            <td><?= e((string)($client['client_type'] ?? '—')) ?></td>
                                         </tr>
                                     <?php endforeach; ?>
                                 <?php else: ?>
-                                    <tr><td colspan="4">Aucun client disponible.</td></tr>
+                                    <tr><td colspan="6">Aucun client disponible.</td></tr>
                                 <?php endif; ?>
                             </tbody>
                         </table>

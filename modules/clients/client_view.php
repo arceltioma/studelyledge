@@ -20,10 +20,10 @@ if ($id <= 0) {
 $stmt = $pdo->prepare("
     SELECT
         c.*,
-        ta.account_code AS treasury_account_code,
-        ta.account_label AS treasury_account_label
+        ta_monthly.account_code AS monthly_treasury_account_code,
+        ta_monthly.account_label AS monthly_treasury_account_label
     FROM clients c
-    LEFT JOIN treasury_accounts ta ON ta.id = c.initial_treasury_account_id
+    LEFT JOIN treasury_accounts ta_monthly ON ta_monthly.id = c.monthly_treasury_account_id
     WHERE c.id = ?
     LIMIT 1
 ");
@@ -61,7 +61,7 @@ if (!$bankAccount && tableExists($pdo, 'bank_accounts') && !empty($client['gener
 }
 
 $pageTitle = 'Fiche client';
-$pageSubtitle = 'Consultation complète du client, de son compte 411 et de son rattachement.';
+$pageSubtitle = 'Consultation complète du client, de son compte 411 et de sa mensualité.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -103,12 +103,37 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <div class="sl-data-list__row"><span>Solde initial</span><strong><?= e(number_format((float)($bankAccount['initial_balance'] ?? 0), 2, ',', ' ')) ?></strong></div>
                     <div class="sl-data-list__row"><span>Solde courant</span><strong><?= e(number_format((float)($bankAccount['balance'] ?? 0), 2, ',', ' ')) ?></strong></div>
                     <div class="sl-data-list__row"><span>Devise</span><strong><?= e((string)($client['currency'] ?? 'EUR')) ?></strong></div>
-                    <div class="sl-data-list__row"><span>Compte 512 lié</span><strong><?= e(trim((string)($client['treasury_account_code'] ?? '') . ' - ' . (string)($client['treasury_account_label'] ?? ''))) ?></strong></div>
                 </div>
             </div>
         </div>
 
         <div class="dashboard-grid-2" style="margin-top:20px;">
+            <div class="card">
+                <h3>Mensualité client</h3>
+                <div class="sl-data-list">
+                    <div class="sl-data-list__row">
+                        <span>Mensualité active</span>
+                        <strong><?= ((int)($client['monthly_enabled'] ?? 0) === 1) ? 'Oui' : 'Non' ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Montant</span>
+                        <strong><?= e(number_format((float)($client['monthly_amount'] ?? 0), 2, ',', ' ')) ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Jour du mois</span>
+                        <strong><?= (int)($client['monthly_day'] ?? 26) ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Compte Mensualité (512)</span>
+                        <strong><?= e(trim((string)($client['monthly_treasury_account_code'] ?? '') . ' - ' . (string)($client['monthly_treasury_account_label'] ?? '')) ?: '—') ?></strong>
+                    </div>
+                    <div class="sl-data-list__row">
+                        <span>Dernière génération</span>
+                        <strong><?= e((string)($client['monthly_last_generated_at'] ?? '—')) ?></strong>
+                    </div>
+                </div>
+            </div>
+
             <div class="card">
                 <h3>Passeport</h3>
                 <div class="sl-data-list">
@@ -118,7 +143,9 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <div class="sl-data-list__row"><span>Date d’expiration</span><strong><?= e((string)($client['passport_expiry_date'] ?? '—')) ?></strong></div>
                 </div>
             </div>
+        </div>
 
+        <div class="dashboard-grid-2" style="margin-top:20px;">
             <div class="card">
                 <h3>Zones & rattachement</h3>
                 <div class="sl-data-list">
@@ -127,6 +154,14 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <div class="sl-data-list__row"><span>Pays commercial</span><strong><?= e((string)($client['country_commercial'] ?? '—')) ?></strong></div>
                     <div class="sl-data-list__row"><span>Créé le</span><strong><?= e((string)($client['created_at'] ?? '—')) ?></strong></div>
                     <div class="sl-data-list__row"><span>Mis à jour</span><strong><?= e((string)($client['updated_at'] ?? '—')) ?></strong></div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Résumé</h3>
+                <div class="dashboard-note">
+                    Le compte 512 historiquement lié au client n’est plus affiché ici.  
+                    La logique visible côté métier repose désormais sur la <strong>mensualité</strong> et son <strong>compte 512 dédié</strong>.
                 </div>
             </div>
         </div>

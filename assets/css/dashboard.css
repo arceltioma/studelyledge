@@ -794,3 +794,307 @@ canvas {
     color: #334155;
     background: #fff;
 }
+/* =========================
+   PREMIUM ADMIN CARDS
+========================= */
+.sl-premium-card {
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 22px;
+    box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.98) 0%, rgba(248,250,252,0.98) 100%);
+    overflow: hidden;
+}
+
+.sl-danger-card {
+    border: 1px solid rgba(220, 38, 38, 0.18);
+    box-shadow: 0 18px 40px rgba(220, 38, 38, 0.08);
+}
+
+.sl-card-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.sl-card-head h3 {
+    margin: 0;
+    font-size: 1.12rem;
+    font-weight: 700;
+    color: #0f172a;
+}
+
+.sl-card-head-subtitle {
+    margin: 6px 0 0;
+    color: #64748b;
+    font-size: 0.94rem;
+    line-height: 1.45;
+}
+
+/* =========================
+   PILLS / BADGES
+========================= */
+.sl-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 34px;
+    padding: 0 12px;
+    border-radius: 999px;
+    font-size: 0.84rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.sl-pill-soft {
+    background: #eef2ff;
+    color: #4338ca;
+}
+
+.audit-badge-success {
+    background: rgba(22, 163, 74, 0.12);
+    color: #15803d;
+}
+
+.audit-badge-warning {
+    background: rgba(245, 158, 11, 0.14);
+    color: #b45309;
+}
+
+.audit-badge-danger {
+    background: rgba(220, 38, 38, 0.12);
+    color: #b91c1c;
+}
+
+/* =========================
+   DATA LIST
+========================= */
+.sl-data-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.sl-data-list__row {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    align-items: center;
+    padding: 12px 14px;
+    background: rgba(248, 250, 252, 0.95);
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    border-radius: 14px;
+}
+
+.sl-data-list__row span {
+    color: #475569;
+    font-weight: 500;
+}
+
+.sl-data-list__row strong {
+    color: #0f172a;
+    text-align: right;
+}
+
+/* =========================
+   RULE FLOW
+========================= */
+.sl-rule-flow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.sl-rule-flow__item {
+    flex: 1 1 220px;
+    min-width: 220px;
+    padding: 16px;
+    border-radius: 16px;
+    background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
+    border: 1px solid rgba(99, 102, 241, 0.12);
+}
+
+.sl-rule-flow__label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #6366f1;
+    font-weight: 700;
+}
+
+.sl-rule-flow__arrow {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #64748b;
+}
+
+/* =========================
+   TABLES
+========================= */
+.table-responsive,
+.sl-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.modern-table,
+.table-card table,
+.sl-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+.modern-table thead th,
+.table-card table thead th,
+.sl-table thead th {
+    position: sticky;
+    top: 0;
+    background: #f8fafc;
+    color: #334155;
+    font-size: 0.9rem;
+    font-weight: 700;
+    text-align: left;
+    padding: 14px 14px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.modern-table tbody td,
+.table-card table tbody td,
+.sl-table tbody td {
+    padding: 14px 14px;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    vertical-align: middle;
+    color: #0f172a;
+    background: #fff;
+}
+
+.modern-table tbody tr:hover td,
+.table-card table tbody tr:hover td,
+.sl-table tbody tr:hover td {
+    background: #f8fbff;
+}
+
+/* =========================
+   STATUS
+========================= */
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    padding: 0 12px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 700;
+}
+
+.status-success {
+    background: rgba(22, 163, 74, 0.12);
+    color: #15803d;
+}
+
+.status-danger {
+    background: rgba(220, 38, 38, 0.12);
+    color: #b91c1c;
+}
+
+/* =========================
+   METRIC STACK
+========================= */
+.sl-metric-stack {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+}
+
+.sl-metric-tile {
+    padding: 16px;
+    border-radius: 18px;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    border: 1px solid rgba(148, 163, 184, 0.14);
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+}
+
+.sl-metric-tile__label {
+    display: block;
+    color: #64748b;
+    font-size: 0.9rem;
+    margin-bottom: 8px;
+}
+
+.sl-metric-tile__value {
+    font-size: 1.15rem;
+    color: #0f172a;
+}
+
+/* =========================
+   PAGE TITLE INLINE
+========================= */
+.page-title-inline {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+}
+
+/* =========================
+   NOTES / MUTED
+========================= */
+.dashboard-note {
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: #f8fafc;
+    border: 1px solid rgba(148, 163, 184, 0.15);
+    color: #475569;
+    line-height: 1.55;
+}
+
+.muted {
+    color: #64748b;
+    font-size: 0.92rem;
+}
+
+/* =========================
+   BUTTON GROUP
+========================= */
+.btn-group {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+/* =========================
+   RESPONSIVE
+========================= */
+@media (max-width: 980px) {
+    .sl-metric-stack {
+        grid-template-columns: 1fr;
+    }
+
+    .sl-rule-flow {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .sl-rule-flow__arrow {
+        align-self: center;
+        transform: rotate(90deg);
+    }
+}
+.table-row-highlight {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.table-row-highlight td {
+    border-top: 1px solid rgba(59, 130, 246, 0.18);
+    border-bottom: 1px solid rgba(59, 130, 246, 0.18);
+}
