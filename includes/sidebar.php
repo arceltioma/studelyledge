@@ -55,6 +55,7 @@ $groupMainOpen = sidebarGroupOpen([
 
 $groupImportsOpen = sidebarGroupOpen([
     '/modules/imports/',
+    '/modules/monthly_payments/',
     '/modules/clients/import_clients_csv.php',
     '/modules/treasury/import_treasury_csv.php',
     '/modules/service_accounts/import_service_accounts_csv.php'
@@ -190,6 +191,30 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
                         <?php if ($can('imports_journal_page')): ?>
                             <a class="sidebar-link <?= sidebarActive('/modules/imports/import_journal.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/imports/import_journal.php">
                                 <span>🧾</span><span>Journal imports</span>
+                            </a>
+                        <?php endif; ?>
+
+                        <?php if ($can('imports_upload_page')): ?>
+                            <a class="sidebar-link <?= sidebarActiveMulti([
+                                '/modules/monthly_payments/monthly_payments_import.php',
+                                '/modules/monthly_payments/monthly_import_create.php',
+                                '/modules/monthly_payments/monthly_import_preview.php',
+                                '/modules/monthly_payments/monthly_import_validate.php',
+                                '/modules/monthly_payments/import_monthly_payments.php',
+                                '/modules/monthly_payments/monthly_payments_preview.php',
+                                '/modules/monthly_payments/monthly_payments_validate.php'
+                            ], $currentUri) ?>" href="<?= e(APP_URL) ?>modules/monthly_payments/monthly_payments_import.php">
+                                <span>📅</span><span>Import mensualités</span>
+                            </a>
+
+                            <a class="sidebar-link <?= sidebarActiveMulti([
+                                '/modules/monthly_payments/monthly_runs_list.php',
+                                '/modules/monthly_payments/monthly_run_view.php',
+                                '/modules/monthly_payments/monthly_run_execute.php',
+                                '/modules/monthly_payments/monthly_run_cancel.php',
+                                '/modules/monthly_payments/monthly_payments_run.php'
+                            ], $currentUri) ?>" href="<?= e(APP_URL) ?>modules/monthly_payments/monthly_runs_list.php">
+                                <span>🔁</span><span>Runs mensualités</span>
                             </a>
                         <?php endif; ?>
 

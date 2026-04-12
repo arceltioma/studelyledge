@@ -27,6 +27,7 @@ $joinServices = '';
 $joinTypes = '';
 $joinLinkedBank = '';
 $joinMainBank = '';
+$joinMonthlyRun = '';
 
 if (tableExists($pdo, 'clients') && columnExists($pdo, 'operations', 'client_id')) {
     $joinClients = 'LEFT JOIN clients c ON c.id = o.client_id';
@@ -60,6 +61,14 @@ if (tableExists($pdo, 'bank_accounts') && columnExists($pdo, 'operations', 'bank
     $selectParts[] = 'mba.account_number AS bank_account_number';
 }
 
+if (tableExists($pdo, 'monthly_payment_runs') && columnExists($pdo, 'operations', 'monthly_run_id')) {
+    $joinMonthlyRun = 'LEFT JOIN monthly_payment_runs mr ON mr.id = o.monthly_run_id';
+    $selectParts[] = 'mr.id AS monthly_run_ref_id';
+    $selectParts[] = columnExists($pdo, 'monthly_payment_runs', 'run_date') ? 'mr.run_date AS monthly_run_date' : "NULL AS monthly_run_date";
+    $selectParts[] = columnExists($pdo, 'monthly_payment_runs', 'scheduled_day') ? 'mr.scheduled_day AS monthly_run_scheduled_day' : "NULL AS monthly_run_scheduled_day";
+    $selectParts[] = columnExists($pdo, 'monthly_payment_runs', 'status') ? 'mr.status AS monthly_run_status' : "NULL AS monthly_run_status";
+}
+
 $sql = "
     SELECT
         " . implode(",\n ", $selectParts) . "
@@ -69,6 +78,7 @@ $sql = "
     {$joinTypes}
     {$joinLinkedBank}
     {$joinMainBank}
+    {$joinMonthlyRun}
     WHERE o.id = ?
     LIMIT 1
 ";
@@ -104,6 +114,19 @@ $mainBankDisplay = trim((string)(
     (($operation['bank_account_number'] ?? '') !== '' ? ($operation['bank_account_number'] . ' - ') : '') .
     ($operation['bank_account_name'] ?? '')
 ));
+
+$monthlyRunDisplay = '';
+if (!empty($operation['monthly_run_id'])) {
+    $monthlyRunDisplay = 'Run #' . (int)$operation['monthly_run_id'];
+
+    if (!empty($operation['monthly_run_date'])) {
+        $monthlyRunDisplay .= ' - ' . $operation['monthly_run_date'];
+    }
+
+    if (!empty($operation['monthly_run_status'])) {
+        $monthlyRunDisplay .= ' - ' . $operation['monthly_run_status'];
+    }
+}
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -153,6 +176,21 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <?php if (!empty($operation['country_destination'])): ?>
                     <div class="stat-row"><span class="metric-label">Pays destination</span><span class="metric-value"><?= e((string)$operation['country_destination']) ?></span></div>
                 <?php endif; ?>
+
+                <?php if (columnExists($pdo, 'operations', 'monthly_run_id')): ?>
+                    <div class="stat-row">
+                        <span class="metric-label">Run mensuel</span>
+                        <span class="metric-value">
+                            <?php if (!empty($operation['monthly_run_id'])): ?>
+                                <a href="<?= e(APP_URL) ?>modules/monthly_payments/monthly_run_view.php?id=<?= (int)$operation['monthly_run_id'] ?>">
+                                    <?= e($monthlyRunDisplay !== '' ? $monthlyRunDisplay : ('Run #' . (int)$operation['monthly_run_id'])) ?>
+                                </a>
+                            <?php else: ?>
+                                —
+                            <?php endif; ?>
+                        </span>
+                    </div>
+                <?php endif; ?>
             </div>
 
             <div class="card">
@@ -162,7 +200,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <div class="stat-row"><span class="metric-label">Compte crédité</span><span class="metric-value"><?= e((string)($operation['credit_account_code'] ?? '')) ?></span></div>
                 <div class="stat-row"><span class="metric-label">Compte de service</span><span class="metric-value"><?= e((string)($operation['service_account_code'] ?? '')) ?></span></div>
                 <div class="stat-row"><span class="metric-label">Mode manuel</span><span class="metric-value"><?= ((int)($operation['is_manual_accounting'] ?? 0) === 1) ? 'Oui' : 'Non' ?></span></div>
-                <div class="stat-row"><span class="metric-label">Hash anti-doublon</span><span class="metric-value"><?= e((string)($operation['operation_hash'] ?? '')) ?></span></div>
+                <div class="stat-row"><span class="metric-label">Hash anti-doublon</span><span class="metric-value" style="word-break:break-all;"><?= e((string)($operation['operation_hash'] ?? '')) ?></span></div>
             </div>
         </div>
 
@@ -185,6 +223,13 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <div class="stat-row"><span class="metric-label">Mis à jour le</span><span class="metric-value"><?= e((string)($operation['updated_at'] ?? '')) ?></span></div>
                 <div class="stat-row"><span class="metric-label">Compte bancaire lié</span><span class="metric-value"><?= e($linkedBankDisplay !== '' ? $linkedBankDisplay : ((string)($operation['linked_bank_account_id'] ?? '—'))) ?></span></div>
                 <div class="stat-row"><span class="metric-label">Compte bancaire interne</span><span class="metric-value"><?= e($mainBankDisplay !== '' ? $mainBankDisplay : ((string)($operation['bank_account_id'] ?? '—'))) ?></span></div>
+
+                <?php if (columnExists($pdo, 'operations', 'monthly_run_id')): ?>
+                    <div class="stat-row">
+                        <span class="metric-label">ID run mensuel</span>
+                        <span class="metric-value"><?= !empty($operation['monthly_run_id']) ? (int)$operation['monthly_run_id'] : '—' ?></span>
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
 

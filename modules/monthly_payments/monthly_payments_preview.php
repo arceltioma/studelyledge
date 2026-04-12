@@ -5,15 +5,14 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
-require_once __DIR__ . '/../../config/security.php';
 
 if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'operations_create_page');
+    studelyEnforceAccess($pdo, 'imports_preview_page');
 } else {
-    enforcePagePermission($pdo, 'operations_create');
+    enforcePagePermission($pdo, 'imports_preview');
 }
 
-$importId = (int)($_GET['import_id'] ?? $_POST['import_id'] ?? 0);
+$importId = (int)($_GET['import_id'] ?? 0);
 if ($importId <= 0) {
     exit('Import invalide.');
 }
@@ -26,52 +25,92 @@ if (!$import) {
     exit('Import introuvable.');
 }
 
-$successMessage = '';
-$errorMessage = '';
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    try {
-        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
-            throw new RuntimeException('Jeton CSRF invalide.');
-        }
-
-        $action = trim((string)($_POST['action'] ?? ''));
-
-        if ($action === 'validate') {
-            $stmtCheck = $pdo->prepare("
-                SELECT COUNT(*) FROM monthly_payment_import_rows
-                WHERE import_id = ?
-                  AND status = 'error'
-            ");
-            $stmtCheck->execute([$importId]);
-
-            if ((int)$stmtCheck->fetchColumn() > 0) {
-                throw new RuntimeException('Des lignes en erreur empêchent la validation.');
-            }
-
-            $stmtUpdate = $pdo->prepare("
-                UPDATE monthly_payment_imports
-                SET status = 'validated', updated_at = NOW()
-                WHERE id = ?
-            ");
-            $stmtUpdate->execute([$importId]);
-
-            $successMessage = 'Import validé manuellement avec succès.';
-            $import['status'] = 'validated';
-        }
-    } catch (Throwable $e) {
-        $errorMessage = $e->getMessage();
-    }
-}
-
 $stmtRows = $pdo->prepare("
-    SELECT *
-    FROM monthly_payment_import_rows
-    WHERE import_id = ?
-    ORDER BY row_number ASC
+    SELECT r.*
+    FROM monthly_payment_import_rows r
+    WHERE r.import_id = ?
+    ORDER BY r.id ASC
 ");
 $stmtRows->execute([$importId]);
-$rows = $stmtRows->fetchAll(PDO::FETCH_ASSOC);
+$rows = $stmtRows->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+$validatedRows = [];
+$totals = [
+    'rows' => 0,
+    'valid' => 0,
+    'invalid' => 0,
+    'amount' => 0,
+];
+
+foreach ($rows as $row) {
+    $totals['rows']++;
+
+    $clientCode = trim((string)($row['client_code'] ?? ''));
+    $amount = (float)($row['monthly_amount'] ?? 0);
+    $day = (int)($row['monthly_day'] ?? 26);
+    $treasuryCode = trim((string)($row['treasury_account_code'] ?? ''));
+
+    $message = [];
+    $rowStatus = 'ready';
+    $client = null;
+    $treasury = null;
+
+    if ($clientCode === '') {
+        $rowStatus = 'error';
+        $message[] = 'Code client absent';
+    } else {
+        $stmt = $pdo->prepare("SELECT * FROM clients WHERE client_code = ? LIMIT 1");
+        $stmt->execute([$clientCode]);
+        $client = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+
+        if (!$client) {
+            $rowStatus = 'error';
+            $message[] = 'Client introuvable';
+        }
+    }
+
+    if ($amount <= 0) {
+        $rowStatus = 'error';
+        $message[] = 'Montant invalide';
+    }
+
+    if ($day < 1 || $day > 31) {
+        $rowStatus = 'error';
+        $message[] = 'Jour mensuel invalide';
+    }
+
+    if ($treasuryCode === '') {
+        $rowStatus = 'error';
+        $message[] = 'Compte 512 absent';
+    } else {
+        $stmt = $pdo->prepare("SELECT * FROM treasury_accounts WHERE account_code = ? LIMIT 1");
+        $stmt->execute([$treasuryCode]);
+        $treasury = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+
+        if (!$treasury) {
+            $rowStatus = 'error';
+            $message[] = 'Compte 512 introuvable';
+        }
+    }
+
+    if ($rowStatus === 'ready') {
+        $totals['valid']++;
+        $totals['amount'] += $amount;
+    } else {
+        $totals['invalid']++;
+    }
+
+    $validatedRows[] = [
+        'raw' => $row,
+        'client' => $client,
+        'treasury' => $treasury,
+        'status' => $rowStatus,
+        'message' => implode(' | ', $message),
+    ];
+}
+
+$pageTitle = 'Prévisualisation des mensualités';
+$pageSubtitle = 'Contrôle des lignes importées avant validation manuelle';
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -82,61 +121,77 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
-        <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
+        <div class="dashboard-grid-4" style="margin-bottom:20px;">
+            <div class="card stat-card">
+                <div class="stat-title">Lignes</div>
+                <div class="stat-value"><?= (int)$totals['rows'] ?></div>
+                <div class="stat-subtitle">Importées</div>
+            </div>
+
+            <div class="card stat-card">
+                <div class="stat-title">Valides</div>
+                <div class="stat-value"><?= (int)$totals['valid'] ?></div>
+                <div class="stat-subtitle">Prêtes à valider</div>
+            </div>
+
+            <div class="card stat-card">
+                <div class="stat-title">Invalides</div>
+                <div class="stat-value"><?= (int)$totals['invalid'] ?></div>
+                <div class="stat-subtitle">À corriger</div>
+            </div>
+
+            <div class="card stat-card">
+                <div class="stat-title">Montant total</div>
+                <div class="stat-value" style="font-size:1.4rem;">
+                    <?= e(number_format((float)$totals['amount'], 2, ',', ' ')) ?>
+                </div>
+                <div class="stat-subtitle">Mensualités valides</div>
+            </div>
+        </div>
 
         <div class="card">
-            <h3>Aperçu import mensualités</h3>
-
-            <div class="sl-data-list">
-                <div class="sl-data-list__row"><span>Fichier</span><strong><?= e((string)($import['file_name'] ?? '')) ?></strong></div>
-                <div class="sl-data-list__row"><span>Statut</span><strong><?= e((string)($import['status'] ?? 'draft')) ?></strong></div>
-                <div class="sl-data-list__row"><span>Nombre de lignes</span><strong><?= count($rows) ?></strong></div>
+            <div class="btn-group" style="margin-bottom:16px;">
+                <a href="<?= e(APP_URL) ?>modules/monthly_payments/monthly_import_validate.php?import_id=<?= (int)$importId ?>" class="btn btn-success">
+                    Valider cet import
+                </a>
+                <a href="<?= e(APP_URL) ?>modules/monthly_payments/import_monthly_payments.php" class="btn btn-outline">
+                    Nouvel import
+                </a>
             </div>
 
-            <div class="btn-group" style="margin:20px 0;">
-                <?php if (($import['status'] ?? 'draft') !== 'validated'): ?>
-                    <form method="POST" style="display:inline-block;">
-                        <?= csrf_input() ?>
-                        <input type="hidden" name="import_id" value="<?= (int)$importId ?>">
-                        <button type="submit" name="action" value="validate" class="btn btn-success">Valider manuellement</button>
-                    </form>
-                <?php endif; ?>
-
-                <a href="<?= e(APP_URL) ?>modules/monthly_payments/monthly_payments_import.php" class="btn btn-outline">Nouvel import</a>
-            </div>
+            <h3>Détail des lignes</h3>
 
             <div class="table-responsive">
                 <table class="modern-table">
                     <thead>
                         <tr>
-                            <th>Ligne</th>
                             <th>Client</th>
                             <th>Montant</th>
-                            <th>Compte mensualité</th>
                             <th>Jour</th>
-                            <th>Libellé</th>
+                            <th>Compte 512</th>
                             <th>Statut</th>
-                            <th>Erreur</th>
+                            <th>Message</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($rows as $row): ?>
+                        <?php foreach ($validatedRows as $item): ?>
                             <tr>
-                                <td><?= (int)$row['row_number'] ?></td>
-                                <td><?= e((string)($row['client_code'] ?? '')) ?></td>
-                                <td><?= number_format((float)($row['monthly_amount'] ?? 0), 2, ',', ' ') ?></td>
-                                <td><?= e((string)($row['treasury_account_code'] ?? '')) ?></td>
-                                <td><?= (int)($row['monthly_day'] ?? 26) ?></td>
-                                <td><?= e((string)($row['label'] ?? '')) ?></td>
-                                <td><?= e((string)($row['status'] ?? 'pending')) ?></td>
-                                <td><?= e((string)($row['error_message'] ?? '')) ?></td>
+                                <td><?= e((string)($item['raw']['client_code'] ?? '')) ?></td>
+                                <td><?= e(number_format((float)($item['raw']['monthly_amount'] ?? 0), 2, ',', ' ')) ?></td>
+                                <td><?= (int)($item['raw']['monthly_day'] ?? 26) ?></td>
+                                <td><?= e((string)($item['raw']['treasury_account_code'] ?? '')) ?></td>
+                                <td>
+                                    <span class="sl-pill <?= $item['status'] === 'ready' ? 'audit-badge-success' : 'audit-badge-danger' ?>">
+                                        <?= $item['status'] === 'ready' ? 'Valide' : 'Erreur' ?>
+                                    </span>
+                                </td>
+                                <td><?= e($item['message'] !== '' ? $item['message'] : 'OK') ?></td>
                             </tr>
                         <?php endforeach; ?>
 
-                        <?php if (!$rows): ?>
+                        <?php if (!$validatedRows): ?>
                             <tr>
-                                <td colspan="8">Aucune ligne importée.</td>
+                                <td colspan="6">Aucune ligne.</td>
                             </tr>
                         <?php endif; ?>
                     </tbody>

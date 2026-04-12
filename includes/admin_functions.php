@@ -3315,3 +3315,530 @@ if (!function_exists('sl_run_monthly_client_operations')) {
         return $report;
     }
 }
+if (!function_exists('sl_monthly_payment_parse_csv')) {
+    function sl_monthly_payment_parse_csv(string $filePath, string $delimiter = ';'): array
+    {
+        if (!is_file($filePath)) {
+            throw new RuntimeException('Fichier import introuvable.');
+        }
+
+        $rows = [];
+        $handle = fopen($filePath, 'r');
+        if (!$handle) {
+            throw new RuntimeException('Impossible d’ouvrir le fichier CSV.');
+        }
+
+        $header = fgetcsv($handle, 0, $delimiter);
+        if (!$header) {
+            fclose($handle);
+            throw new RuntimeException('Le fichier CSV est vide.');
+        }
+
+        $header = array_map(static function ($value) {
+            $value = trim((string) $value);
+            $value = mb_strtolower($value);
+            $value = str_replace(['é', 'è', 'ê', 'à', 'â', 'î', 'ï', 'ô', 'ù', 'û', 'ç'], ['e', 'e', 'e', 'a', 'a', 'i', 'i', 'o', 'u', 'u', 'c'], $value);
+            return $value;
+        }, $header);
+
+        $lineNumber = 1;
+        while (($data = fgetcsv($handle, 0, $delimiter)) !== false) {
+            $lineNumber++;
+            if (count(array_filter($data, static fn($v) => trim((string) $v) !== '')) === 0) {
+                continue;
+            }
+
+            $assoc = [];
+            foreach ($header as $index => $key) {
+                $assoc[$key] = trim((string) ($data[$index] ?? ''));
+            }
+
+            $rows[] = [
+                'row_number' => $lineNumber,
+                'client_code' => $assoc['client_code'] ?? $assoc['code_client'] ?? '',
+                'monthly_amount' => $assoc['monthly_amount'] ?? $assoc['mensualite'] ?? $assoc['montant'] ?? '',
+                'treasury_account_code' => $assoc['treasury_account_code'] ?? $assoc['compte_512'] ?? '',
+                'monthly_day' => $assoc['monthly_day'] ?? $assoc['jour'] ?? '26',
+                'label' => $assoc['label'] ?? $assoc['libelle'] ?? '',
+                'raw' => $assoc,
+            ];
+        }
+
+        fclose($handle);
+
+        return $rows;
+    }
+}
+
+if (!function_exists('sl_monthly_payment_find_client_by_code')) {
+    function sl_monthly_payment_find_client_by_code(PDO $pdo, string $clientCode): ?array
+    {
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM clients
+            WHERE client_code = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$clientCode]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $row ?: null;
+    }
+}
+
+if (!function_exists('sl_monthly_payment_find_treasury_by_code')) {
+    function sl_monthly_payment_find_treasury_by_code(PDO $pdo, string $accountCode): ?array
+    {
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM treasury_accounts
+            WHERE account_code = ?
+              AND COALESCE(is_active,1)=1
+            LIMIT 1
+        ");
+        $stmt->execute([$accountCode]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $row ?: null;
+    }
+}
+
+if (!function_exists('sl_monthly_payment_validate_row')) {
+    function sl_monthly_payment_validate_row(PDO $pdo, array $row): array
+    {
+        $errors = [];
+
+        $clientCode = trim((string) ($row['client_code'] ?? ''));
+        $amount = (float) str_replace(',', '.', (string) ($row['monthly_amount'] ?? '0'));
+        $treasuryCode = trim((string) ($row['treasury_account_code'] ?? ''));
+        $monthlyDay = (int) ($row['monthly_day'] ?? 26);
+
+        $client = null;
+        $treasury = null;
+
+        if ($clientCode === '') {
+            $errors[] = 'Code client manquant.';
+        } else {
+            $client = sl_monthly_payment_find_client_by_code($pdo, $clientCode);
+            if (!$client) {
+                $errors[] = 'Client introuvable.';
+            }
+        }
+
+        if ($amount <= 0) {
+            $errors[] = 'Montant de mensualité invalide.';
+        }
+
+        if ($treasuryCode === '') {
+            $errors[] = 'Compte 512 manquant.';
+        } else {
+            $treasury = sl_monthly_payment_find_treasury_by_code($pdo, $treasuryCode);
+            if (!$treasury) {
+                $errors[] = 'Compte 512 introuvable ou inactif.';
+            }
+        }
+
+        if ($monthlyDay < 1 || $monthlyDay > 31) {
+            $errors[] = 'Jour de mensualité invalide.';
+        }
+
+        return [
+            'is_valid' => count($errors) === 0,
+            'errors' => $errors,
+            'client' => $client,
+            'treasury' => $treasury,
+            'amount' => $amount,
+            'monthly_day' => $monthlyDay,
+        ];
+    }
+}
+
+if (!function_exists('sl_monthly_payment_default_label')) {
+    function sl_monthly_payment_default_label(array $client): string
+    {
+        return 'Mensualité client - ' . (($client['client_code'] ?? '') . ' - ' . ($client['full_name'] ?? ''));
+    }
+}
+
+if (!function_exists('sl_monthly_payment_operation_exists')) {
+    function sl_monthly_payment_operation_exists(PDO $pdo, int $clientId, string $operationDate, float $amount, string $reference): bool
+    {
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*)
+            FROM operations
+            WHERE client_id = ?
+              AND operation_date = ?
+              AND amount = ?
+              AND reference = ?
+        ");
+        $stmt->execute([$clientId, $operationDate, $amount, $reference]);
+
+        return ((int) $stmt->fetchColumn()) > 0;
+    }
+}
+
+if (!function_exists('sl_monthly_payment_create_operation')) {
+    function sl_monthly_payment_create_operation(
+        PDO $pdo,
+        array $client,
+        array $treasury,
+        float $amount,
+        int $scheduledDay,
+        string $runDate,
+        ?int $userId = null,
+        string $label = ''
+    ): int {
+        $clientId = (int) ($client['id'] ?? 0);
+        $clientAccount = (string) ($client['generated_client_account'] ?? '');
+        $clientCurrency = (string) ($client['currency'] ?? 'EUR');
+        $treasuryCode = (string) ($treasury['account_code'] ?? '');
+        $clientCode = (string) ($client['client_code'] ?? '');
+
+        if ($clientId <= 0 || $clientAccount === '' || $treasuryCode === '') {
+            throw new RuntimeException('Données insuffisantes pour créer l’opération mensuelle.');
+        }
+
+        $reference = 'MENS-' . $clientCode . '-' . str_replace('-', '', $runDate);
+        $finalLabel = trim($label) !== '' ? trim($label) : sl_monthly_payment_default_label($client);
+
+        if (sl_monthly_payment_operation_exists($pdo, $clientId, $runDate, $amount, $reference)) {
+            throw new RuntimeException('Opération mensuelle déjà générée pour ce client à cette date.');
+        }
+
+        $bankAccountId = null;
+        if (function_exists('findPrimaryBankAccountForClient')) {
+            $bankAccount = findPrimaryBankAccountForClient($pdo, $clientId);
+            if ($bankAccount && !empty($bankAccount['id'])) {
+                $bankAccountId = (int)$bankAccount['id'];
+            }
+        }
+
+        $stmt = $pdo->prepare("
+            INSERT INTO operations (
+                client_id,
+                service_id,
+                operation_type_id,
+                bank_account_id,
+                linked_bank_account_id,
+                operation_date,
+                operation_type_code,
+                operation_kind,
+                label,
+                amount,
+                currency_code,
+                reference,
+                source_type,
+                debit_account_code,
+                credit_account_code,
+                service_account_code,
+                operation_hash,
+                is_manual_accounting,
+                notes,
+                created_by,
+                created_at,
+                updated_at
+            ) VALUES (
+                :client_id,
+                NULL,
+                NULL,
+                :bank_account_id,
+                :linked_bank_account_id,
+                :operation_date,
+                'VIREMENT_MENSUEL',
+                'monthly_run',
+                :label,
+                :amount,
+                :currency_code,
+                :reference,
+                'monthly_import',
+                :debit_account_code,
+                :credit_account_code,
+                NULL,
+                :operation_hash,
+                0,
+                :notes,
+                :created_by,
+                NOW(),
+                NOW()
+            )
+        ");
+
+        $operationHash = hash(
+            'sha256',
+            implode('|', [
+                'monthly_run',
+                $clientId,
+                $runDate,
+                number_format($amount, 2, '.', ''),
+                $reference,
+                $treasuryCode,
+                $clientAccount
+            ])
+        );
+
+        $stmt->execute([
+            ':client_id' => $clientId,
+            ':bank_account_id' => $bankAccountId,
+            ':linked_bank_account_id' => $bankAccountId,
+            ':operation_date' => $runDate,
+            ':label' => $finalLabel,
+            ':amount' => $amount,
+            ':currency_code' => $clientCurrency !== '' ? $clientCurrency : 'EUR',
+            ':reference' => $reference,
+            ':debit_account_code' => $clientAccount,
+            ':credit_account_code' => $treasuryCode,
+            ':operation_hash' => $operationHash,
+            ':notes' => 'Mensualité générée automatiquement - jour planifié: ' . $scheduledDay,
+            ':created_by' => $userId,
+        ]);
+
+        $operationId = (int) $pdo->lastInsertId();
+
+        $stmt = $pdo->prepare("
+            UPDATE clients
+            SET monthly_last_generated_at = NOW(), updated_at = NOW()
+            WHERE id = ?
+        ");
+        $stmt->execute([$clientId]);
+
+        if (function_exists('recomputeAllBalances')) {
+            recomputeAllBalances($pdo);
+        }
+
+        if (function_exists('logUserAction') && $userId) {
+            logUserAction(
+                $pdo,
+                $userId,
+                'create_operation',
+                'monthly_payments',
+                'operation',
+                $operationId,
+                'Génération d’une mensualité'
+            );
+        }
+
+        return $operationId;
+    }
+}
+if (!function_exists('sl_monthly_payment_create_run_item')) {
+    function sl_monthly_payment_create_run_item(PDO $pdo, array $data): int
+    {
+        $stmt = $pdo->prepare("
+            INSERT INTO monthly_payment_run_items (
+                run_id,
+                client_id,
+                client_code,
+                operation_id,
+                status,
+                amount,
+                treasury_account_id,
+                treasury_account_code,
+                reference,
+                label,
+                message,
+                created_at,
+                updated_at
+            ) VALUES (
+                :run_id,
+                :client_id,
+                :client_code,
+                :operation_id,
+                :status,
+                :amount,
+                :treasury_account_id,
+                :treasury_account_code,
+                :reference,
+                :label,
+                :message,
+                NOW(),
+                NOW()
+            )
+        ");
+
+        $stmt->execute([
+            ':run_id' => (int)($data['run_id'] ?? 0),
+            ':client_id' => $data['client_id'] !== null ? (int)$data['client_id'] : null,
+            ':client_code' => $data['client_code'] ?? null,
+            ':operation_id' => $data['operation_id'] !== null ? (int)$data['operation_id'] : null,
+            ':status' => $data['status'] ?? 'pending',
+            ':amount' => (float)($data['amount'] ?? 0),
+            ':treasury_account_id' => $data['treasury_account_id'] !== null ? (int)$data['treasury_account_id'] : null,
+            ':treasury_account_code' => $data['treasury_account_code'] ?? null,
+            ':reference' => $data['reference'] ?? null,
+            ':label' => $data['label'] ?? null,
+            ':message' => $data['message'] ?? null,
+        ]);
+
+        return (int)$pdo->lastInsertId();
+    }
+}
+
+if (!function_exists('sl_monthly_payment_build_reference')) {
+    function sl_monthly_payment_build_reference(array $client, string $runDate): string
+    {
+        return 'MENS-' . ((string)($client['client_code'] ?? '')) . '-' . str_replace('-', '', $runDate);
+    }
+}
+
+if (!function_exists('sl_monthly_payment_mark_operation_with_run')) {
+    function sl_monthly_payment_mark_operation_with_run(PDO $pdo, int $operationId, int $runId): void
+    {
+        if ($operationId <= 0 || $runId <= 0) {
+            return;
+        }
+
+        if (!tableExists($pdo, 'operations') || !columnExists($pdo, 'operations', 'monthly_run_id')) {
+            return;
+        }
+
+        $stmt = $pdo->prepare("
+            UPDATE operations
+            SET monthly_run_id = ?, updated_at = NOW()
+            WHERE id = ?
+        ");
+        $stmt->execute([$runId, $operationId]);
+    }
+}
+
+if (!function_exists('sl_monthly_payment_create_operation_with_run')) {
+    function sl_monthly_payment_create_operation_with_run(
+        PDO $pdo,
+        array $client,
+        array $treasury,
+        float $amount,
+        int $scheduledDay,
+        string $runDate,
+        int $runId,
+        ?int $userId = null,
+        string $label = ''
+    ): int {
+        $operationId = sl_monthly_payment_create_operation(
+            $pdo,
+            $client,
+            $treasury,
+            $amount,
+            $scheduledDay,
+            $runDate,
+            $userId,
+            $label
+        );
+
+        sl_monthly_payment_mark_operation_with_run($pdo, $operationId, $runId);
+
+        return $operationId;
+    }
+}
+
+if (!function_exists('sl_monthly_payment_get_run_totals')) {
+    function sl_monthly_payment_get_run_totals(PDO $pdo, int $runId): array
+    {
+        if ($runId <= 0 || !tableExists($pdo, 'monthly_payment_run_items')) {
+            return [
+                'total_items' => 0,
+                'success_count' => 0,
+                'skipped_count' => 0,
+                'error_count' => 0,
+                'total_amount_created' => 0,
+            ];
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT
+                COUNT(*) AS total_items,
+                COALESCE(SUM(CASE WHEN status = 'created' THEN 1 ELSE 0 END), 0) AS success_count,
+                COALESCE(SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END), 0) AS skipped_count,
+                COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0) AS error_count,
+                COALESCE(SUM(CASE WHEN status = 'created' THEN amount ELSE 0 END), 0) AS total_amount_created
+            FROM monthly_payment_run_items
+            WHERE run_id = ?
+        ");
+        $stmt->execute([$runId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        return $row ?: [
+            'total_items' => 0,
+            'success_count' => 0,
+            'skipped_count' => 0,
+            'error_count' => 0,
+            'total_amount_created' => 0,
+        ];
+    }
+}
+if (!function_exists('sl_monthly_payment_cancel_run')) {
+    function sl_monthly_payment_cancel_run(PDO $pdo, int $runId, ?int $userId = null): array
+    {
+        if ($runId <= 0) {
+            throw new RuntimeException('Run invalide.');
+        }
+
+        $stmt = $pdo->prepare("SELECT * FROM monthly_payment_runs WHERE id = ?");
+        $stmt->execute([$runId]);
+        $run = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$run) {
+            throw new RuntimeException('Run introuvable.');
+        }
+
+        if (($run['status'] ?? '') === 'cancelled') {
+            throw new RuntimeException('Ce run est déjà annulé.');
+        }
+
+        $pdo->beginTransaction();
+
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM monthly_payment_run_items
+            WHERE run_id = ?
+        ");
+        $stmt->execute([$runId]);
+        $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $deleted = 0;
+        $skipped = 0;
+
+        foreach ($items as $item) {
+            $operationId = (int)($item['operation_id'] ?? 0);
+
+            if ($operationId > 0) {
+                $stmtDelete = $pdo->prepare("DELETE FROM operations WHERE id = ?");
+                $stmtDelete->execute([$operationId]);
+                $deleted++;
+            } else {
+                $skipped++;
+            }
+
+            $stmtUpdate = $pdo->prepare("
+                UPDATE monthly_payment_run_items
+                SET is_cancelled = 1, updated_at = NOW()
+                WHERE id = ?
+            ");
+            $stmtUpdate->execute([$item['id']]);
+        }
+
+        $stmtRun = $pdo->prepare("
+            UPDATE monthly_payment_runs
+            SET status = 'cancelled'
+            WHERE id = ?
+        ");
+        $stmtRun->execute([$runId]);
+
+        if (function_exists('logUserAction') && $userId) {
+            logUserAction(
+                $pdo,
+                $userId,
+                'cancel_monthly_run',
+                'monthly_payments',
+                'monthly_payment_run',
+                $runId,
+                'Annulation complète du run'
+            );
+        }
+
+        $pdo->commit();
+
+        return [
+            'deleted_operations' => $deleted,
+            'skipped_items' => $skipped
+        ];
+    }
+}

@@ -13,7 +13,7 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'clients_edit');
 }
 
-$id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
+$id = (int) ($_GET['id'] ?? $_POST['id'] ?? 0);
 if ($id <= 0) {
     exit('Client invalide.');
 }
@@ -36,7 +36,7 @@ if (!function_exists('sl_client_fetch_treasury_accounts')) {
         $stmt = $pdo->query("
             SELECT id, account_code, account_label, currency_code
             FROM treasury_accounts
-            WHERE COALESCE(is_active,1) = 1
+            WHERE COALESCE(is_active,1)=1
             ORDER BY account_code ASC
         ");
 
@@ -155,7 +155,7 @@ if (!function_exists('sl_sync_client_bank_account')) {
             }
 
             if ($fields) {
-                $params[] = (int)$existing['id'];
+                $params[] = (int) $existing['id'];
                 $stmt = $pdo->prepare("
                     UPDATE bank_accounts
                     SET " . implode(', ', $fields) . "
@@ -164,7 +164,7 @@ if (!function_exists('sl_sync_client_bank_account')) {
                 $stmt->execute($params);
             }
 
-            $bankAccountId = (int)$existing['id'];
+            $bankAccountId = (int) $existing['id'];
         } else {
             $columns = [];
             $values = [];
@@ -203,7 +203,7 @@ if (!function_exists('sl_sync_client_bank_account')) {
                 VALUES (" . implode(', ', $values) . ")
             ");
             $stmt->execute($params);
-            $bankAccountId = (int)$pdo->lastInsertId();
+            $bankAccountId = (int) $pdo->lastInsertId();
         }
 
         if (tableExists($pdo, 'client_bank_accounts')) {
@@ -237,7 +237,7 @@ $originCountries = function_exists('studely_origin_countries') ? studely_origin_
 $destinationCountries = function_exists('studely_destination_countries') ? studely_destination_countries() : [];
 $commercialCountries = function_exists('studely_commercial_countries') ? studely_commercial_countries() : [];
 
-$linkedBankAccount = sl_find_client_bank_account($pdo, $id, (string)($client['generated_client_account'] ?? ''));
+$linkedBankAccount = sl_find_client_bank_account($pdo, $id, (string) ($client['generated_client_account'] ?? ''));
 
 $errorMessage = '';
 $successMessage = '';
@@ -260,43 +260,45 @@ $formData = [
     'country_commercial' => $client['country_commercial'] ?? '',
     'currency' => $client['currency'] ?? 'EUR',
     'generated_client_account' => $client['generated_client_account'] ?? ('411' . ($client['client_code'] ?? '')),
-    'initial_balance' => isset($linkedBankAccount['initial_balance']) ? (string)$linkedBankAccount['initial_balance'] : '0',
-    'balance' => isset($linkedBankAccount['balance']) ? (string)$linkedBankAccount['balance'] : '0',
-    'monthly_amount' => isset($client['monthly_amount']) ? (string)$client['monthly_amount'] : '0',
+    'initial_balance' => isset($linkedBankAccount['initial_balance']) ? (string) $linkedBankAccount['initial_balance'] : '0',
+    'balance' => isset($linkedBankAccount['balance']) ? (string) $linkedBankAccount['balance'] : '0',
+    'initial_treasury_account_id' => $client['initial_treasury_account_id'] ?? '',
+    'monthly_amount' => isset($client['monthly_amount']) ? (string) $client['monthly_amount'] : '0',
     'monthly_treasury_account_id' => $client['monthly_treasury_account_id'] ?? '',
-    'monthly_day' => isset($client['monthly_day']) ? (string)$client['monthly_day'] : '26',
-    'monthly_enabled' => (int)($client['monthly_enabled'] ?? 0),
-    'is_active' => (int)($client['is_active'] ?? 1),
+    'monthly_day' => isset($client['monthly_day']) ? (string) $client['monthly_day'] : '26',
+    'monthly_enabled' => (int) ($client['monthly_enabled'] ?? 0),
+    'is_active' => (int) ($client['is_active'] ?? 1),
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $formData = [
-        'client_code' => trim((string)($_POST['client_code'] ?? '')),
-        'first_name' => trim((string)($_POST['first_name'] ?? '')),
-        'last_name' => trim((string)($_POST['last_name'] ?? '')),
-        'email' => trim((string)($_POST['email'] ?? '')),
-        'phone' => trim((string)($_POST['phone'] ?? '')),
-        'postal_address' => trim((string)($_POST['postal_address'] ?? '')),
-        'passport_number' => trim((string)($_POST['passport_number'] ?? '')),
-        'passport_issue_country' => trim((string)($_POST['passport_issue_country'] ?? '')),
-        'passport_issue_date' => trim((string)($_POST['passport_issue_date'] ?? '')),
-        'passport_expiry_date' => trim((string)($_POST['passport_expiry_date'] ?? '')),
-        'client_type' => trim((string)($_POST['client_type'] ?? '')),
-        'country_origin' => trim((string)($_POST['country_origin'] ?? '')),
-        'country_destination' => trim((string)($_POST['country_destination'] ?? '')),
-        'country_commercial' => trim((string)($_POST['country_commercial'] ?? '')),
-        'currency' => trim((string)($_POST['currency'] ?? 'EUR')),
-        'generated_client_account' => trim((string)($_POST['generated_client_account'] ?? '')),
-        'initial_balance' => trim((string)($_POST['initial_balance'] ?? '0')),
-        'balance' => trim((string)($_POST['balance'] ?? '0')),
-        'monthly_amount' => trim((string)($_POST['monthly_amount'] ?? '0')),
-        'monthly_treasury_account_id' => ($_POST['monthly_treasury_account_id'] ?? '') !== '' ? (int)$_POST['monthly_treasury_account_id'] : '',
-        'monthly_day' => trim((string)($_POST['monthly_day'] ?? '26')),
+        'client_code' => trim((string) ($_POST['client_code'] ?? '')),
+        'first_name' => trim((string) ($_POST['first_name'] ?? '')),
+        'last_name' => trim((string) ($_POST['last_name'] ?? '')),
+        'email' => trim((string) ($_POST['email'] ?? '')),
+        'phone' => trim((string) ($_POST['phone'] ?? '')),
+        'postal_address' => trim((string) ($_POST['postal_address'] ?? '')),
+        'passport_number' => trim((string) ($_POST['passport_number'] ?? '')),
+        'passport_issue_country' => trim((string) ($_POST['passport_issue_country'] ?? '')),
+        'passport_issue_date' => trim((string) ($_POST['passport_issue_date'] ?? '')),
+        'passport_expiry_date' => trim((string) ($_POST['passport_expiry_date'] ?? '')),
+        'client_type' => trim((string) ($_POST['client_type'] ?? '')),
+        'country_origin' => trim((string) ($_POST['country_origin'] ?? '')),
+        'country_destination' => trim((string) ($_POST['country_destination'] ?? '')),
+        'country_commercial' => trim((string) ($_POST['country_commercial'] ?? '')),
+        'currency' => trim((string) ($_POST['currency'] ?? 'EUR')),
+        'generated_client_account' => trim((string) ($_POST['generated_client_account'] ?? '')),
+        'initial_balance' => trim((string) ($_POST['initial_balance'] ?? '0')),
+        'balance' => trim((string) ($_POST['balance'] ?? '0')),
+        'initial_treasury_account_id' => ($_POST['initial_treasury_account_id'] ?? '') !== '' ? (int) $_POST['initial_treasury_account_id'] : '',
+        'monthly_amount' => trim((string) ($_POST['monthly_amount'] ?? '0')),
+        'monthly_treasury_account_id' => ($_POST['monthly_treasury_account_id'] ?? '') !== '' ? (int) $_POST['monthly_treasury_account_id'] : '',
+        'monthly_day' => trim((string) ($_POST['monthly_day'] ?? '26')),
         'monthly_enabled' => isset($_POST['monthly_enabled']) ? 1 : 0,
         'is_active' => isset($_POST['is_active']) ? 1 : 0,
     ];
 
-    $actionMode = trim((string)($_POST['action_mode'] ?? 'preview'));
+    $actionMode = trim((string) ($_POST['action_mode'] ?? 'preview'));
     $previewMode = true;
 
     try {
@@ -340,6 +342,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('La date d’expiration du passport doit être postérieure à la date de délivrance.');
         }
 
+        $monthlyAmount = (float) str_replace(',', '.', $formData['monthly_amount']);
+        $monthlyDay = (int) $formData['monthly_day'];
+
+        if ($monthlyAmount < 0) {
+            throw new RuntimeException('La mensualité ne peut pas être négative.');
+        }
+
+        if ($monthlyDay < 1 || $monthlyDay > 31) {
+            throw new RuntimeException('Le jour de mensualité doit être compris entre 1 et 31.');
+        }
+
+        if ((int) $formData['monthly_enabled'] === 1) {
+            if ($monthlyAmount <= 0) {
+                throw new RuntimeException('La mensualité doit être supérieure à 0 pour être activée.');
+            }
+            if ($formData['monthly_treasury_account_id'] === '') {
+                throw new RuntimeException('Le compte 512 de mensualité est obligatoire si la mensualité est activée.');
+            }
+        }
+
         $stmtCheck411 = $pdo->prepare("
             SELECT COUNT(*)
             FROM clients
@@ -347,28 +369,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
               AND id <> ?
         ");
         $stmtCheck411->execute([$formData['generated_client_account'], $id]);
-        if ((int)$stmtCheck411->fetchColumn() > 0) {
+        if ((int) $stmtCheck411->fetchColumn() > 0) {
             throw new RuntimeException('Ce compte 411 est déjà utilisé par un autre client.');
         }
 
-        $initialBalance = (float)str_replace(',', '.', $formData['initial_balance']);
-        $balance = (float)str_replace(',', '.', $formData['balance']);
-        $monthlyAmount = (float)str_replace(',', '.', $formData['monthly_amount']);
-        $monthlyDay = (int)$formData['monthly_day'];
-
-        if ($monthlyDay < 1 || $monthlyDay > 28) {
-            throw new RuntimeException('La date de mensualité doit être comprise entre 1 et 28.');
-        }
-
-        if ((int)$formData['monthly_enabled'] === 1) {
-            if ($monthlyAmount <= 0) {
-                throw new RuntimeException('Le montant de la mensualité doit être supérieur à 0.');
-            }
-
-            if ($formData['monthly_treasury_account_id'] === '' || (int)$formData['monthly_treasury_account_id'] <= 0) {
-                throw new RuntimeException('Le compte mensualité est obligatoire lorsque la mensualité est activée.');
-            }
-        }
+        $initialBalance = (float) str_replace(',', '.', $formData['initial_balance']);
+        $balance = (float) str_replace(',', '.', $formData['balance']);
 
         if ($actionMode === 'save') {
             $pdo->beginTransaction();
@@ -397,10 +403,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'country_commercial' => $formData['country_commercial'],
                 'currency' => $formData['currency'] !== '' ? $formData['currency'] : 'EUR',
                 'generated_client_account' => $formData['generated_client_account'],
+                'initial_treasury_account_id' => $formData['initial_treasury_account_id'] !== '' ? (int) $formData['initial_treasury_account_id'] : null,
                 'monthly_amount' => $monthlyAmount,
-                'monthly_treasury_account_id' => $formData['monthly_treasury_account_id'] !== '' ? (int)$formData['monthly_treasury_account_id'] : null,
+                'monthly_treasury_account_id' => $formData['monthly_treasury_account_id'] !== '' ? (int) $formData['monthly_treasury_account_id'] : null,
                 'monthly_day' => $monthlyDay,
-                'monthly_enabled' => (int)$formData['monthly_enabled'],
+                'monthly_enabled' => (int) $formData['monthly_enabled'],
                 'is_active' => $formData['is_active'],
             ];
 
@@ -440,16 +447,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->execute([$id]);
             $client = $stmt->fetch(PDO::FETCH_ASSOC) ?: $client;
 
-            $linkedBankAccount = sl_find_client_bank_account($pdo, $id, (string)$formData['generated_client_account']);
+            $linkedBankAccount = sl_find_client_bank_account($pdo, $id, (string) $formData['generated_client_account']);
 
             if (function_exists('auditEntityChanges') && isset($_SESSION['user_id'])) {
-                auditEntityChanges($pdo, 'client', $id, $before, $client, (int)$_SESSION['user_id']);
+                auditEntityChanges($pdo, 'client', $id, $before, $client, (int) $_SESSION['user_id']);
             }
 
             if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
                 logUserAction(
                     $pdo,
-                    (int)$_SESSION['user_id'],
+                    (int) $_SESSION['user_id'],
                     'edit_client',
                     'clients',
                     'client',
@@ -467,15 +474,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     APP_URL . 'modules/clients/client_view.php?id=' . $id,
                     'client',
                     $id,
-                    (int)$_SESSION['user_id']
+                    (int) $_SESSION['user_id']
                 );
             }
 
             $successMessage = 'Client mis à jour avec succès.';
             $previewMode = false;
 
-            $formData['initial_balance'] = isset($linkedBankAccount['initial_balance']) ? (string)$linkedBankAccount['initial_balance'] : $formData['initial_balance'];
-            $formData['balance'] = isset($linkedBankAccount['balance']) ? (string)$linkedBankAccount['balance'] : $formData['balance'];
+            $formData['initial_balance'] = isset($linkedBankAccount['initial_balance']) ? (string) $linkedBankAccount['initial_balance'] : $formData['initial_balance'];
+            $formData['balance'] = isset($linkedBankAccount['balance']) ? (string) $linkedBankAccount['balance'] : $formData['balance'];
 
             $pdo->commit();
         }
@@ -488,7 +495,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $pageTitle = 'Modifier un client';
-$pageSubtitle = 'Mise à jour du profil client, passeport, compte 411 et mensualité.';
+$pageSubtitle = 'Mise à jour du profil client, du compte 411, du 512 principal et des paramètres de mensualité.';
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -509,7 +516,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="form-card">
                 <form method="POST">
                     <?= csrf_input() ?>
-                    <input type="hidden" name="id" value="<?= (int)$id ?>">
+                    <input type="hidden" name="id" value="<?= (int) $id ?>">
 
                     <div class="dashboard-grid-2">
                         <div>
@@ -546,8 +553,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <label>Devise</label>
                             <select name="currency" required>
                                 <?php foreach ($currencies as $currency): ?>
-                                    <option value="<?= e((string)$currency['code']) ?>" <?= (string)$formData['currency'] === (string)$currency['code'] ? 'selected' : '' ?>>
-                                        <?= e((string)$currency['code'] . ' - ' . (string)$currency['label']) ?>
+                                    <option value="<?= e((string) $currency['code']) ?>" <?= (string) $formData['currency'] === (string) $currency['code'] ? 'selected' : '' ?>>
+                                        <?= e((string) $currency['code'] . ' - ' . (string) $currency['label']) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -573,35 +580,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <div>
                             <label>Solde courant du 411</label>
                             <input type="number" step="0.01" name="balance" value="<?= e($formData['balance']) ?>">
-                        </div>
-
-                        <div>
-                            <label>Mensualité</label>
-                            <input type="number" step="0.01" min="0" name="monthly_amount" value="<?= e($formData['monthly_amount']) ?>">
-                        </div>
-
-                        <div>
-                            <label>Compte Mensualité</label>
-                            <select name="monthly_treasury_account_id">
-                                <option value="">Choisir un compte 512</option>
-                                <?php foreach ($treasuryAccounts as $account): ?>
-                                    <option value="<?= (int)$account['id'] ?>" <?= (string)$formData['monthly_treasury_account_id'] === (string)$account['id'] ? 'selected' : '' ?>>
-                                        <?= e(($account['account_code'] ?? '') . ' - ' . ($account['account_label'] ?? '') . (!empty($account['currency_code']) ? ' [' . $account['currency_code'] . ']' : '')) ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label>Date Mensualité (jour du mois)</label>
-                            <input type="number" min="1" max="28" name="monthly_day" value="<?= e($formData['monthly_day']) ?>">
-                        </div>
-
-                        <div style="display:flex;align-items:flex-end;">
-                            <label style="display:flex; gap:10px; align-items:center;">
-                                <input type="checkbox" name="monthly_enabled" value="1" <?= (int)$formData['monthly_enabled'] === 1 ? 'checked' : '' ?>>
-                                Mensualité active
-                            </label>
                         </div>
 
                         <div style="grid-column: 1 / -1;">
@@ -671,11 +649,50 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <?php endforeach; ?>
                             </select>
                         </div>
+
+                        <div>
+                            <label>Compte 512 principal</label>
+                            <select name="initial_treasury_account_id">
+                                <option value="">Aucun</option>
+                                <?php foreach ($treasuryAccounts as $account): ?>
+                                    <option value="<?= (int) $account['id'] ?>" <?= (string) $formData['initial_treasury_account_id'] === (string) $account['id'] ? 'selected' : '' ?>>
+                                        <?= e(($account['account_code'] ?? '') . ' - ' . ($account['account_label'] ?? '')) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Mensualité</label>
+                            <input type="number" step="0.01" min="0" name="monthly_amount" value="<?= e($formData['monthly_amount']) ?>">
+                        </div>
+
+                        <div>
+                            <label>Compte 512 mensualité</label>
+                            <select name="monthly_treasury_account_id">
+                                <option value="">Aucun</option>
+                                <?php foreach ($treasuryAccounts as $account): ?>
+                                    <option value="<?= (int) $account['id'] ?>" <?= (string) $formData['monthly_treasury_account_id'] === (string) $account['id'] ? 'selected' : '' ?>>
+                                        <?= e(($account['account_code'] ?? '') . ' - ' . ($account['account_label'] ?? '')) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label>Jour de mensualité</label>
+                            <input type="number" min="1" max="31" name="monthly_day" value="<?= e($formData['monthly_day']) ?>">
+                        </div>
                     </div>
 
-                    <div style="margin-top:16px;">
+                    <div style="margin-top:16px; display:grid; gap:12px;">
                         <label style="display:flex; gap:10px; align-items:center;">
-                            <input type="checkbox" name="is_active" value="1" <?= (int)$formData['is_active'] === 1 ? 'checked' : '' ?>>
+                            <input type="checkbox" name="monthly_enabled" value="1" <?= (int) $formData['monthly_enabled'] === 1 ? 'checked' : '' ?>>
+                            Mensualité active
+                        </label>
+
+                        <label style="display:flex; gap:10px; align-items:center;">
+                            <input type="checkbox" name="is_active" value="1" <?= (int) $formData['is_active'] === 1 ? 'checked' : '' ?>>
                             Client actif
                         </label>
                     </div>
@@ -683,7 +700,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <div class="btn-group" style="margin-top:20px;">
                         <button type="submit" name="action_mode" value="preview" class="btn btn-secondary">Prévisualiser</button>
                         <button type="submit" name="action_mode" value="save" class="btn btn-success">Enregistrer</button>
-                        <a href="<?= e(APP_URL) ?>modules/clients/client_view.php?id=<?= (int)$id ?>" class="btn btn-outline">Annuler</a>
+                        <a href="<?= e(APP_URL) ?>modules/clients/client_view.php?id=<?= (int) $id ?>" class="btn btn-outline">Annuler</a>
                     </div>
                 </form>
             </div>
@@ -700,30 +717,24 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <div class="sl-data-list__row"><span>Type client</span><strong><?= e($formData['client_type'] !== '' ? $formData['client_type'] : '—') ?></strong></div>
                         <div class="sl-data-list__row"><span>Devise</span><strong><?= e($formData['currency']) ?></strong></div>
                         <div class="sl-data-list__row"><span>Compte 411</span><strong><?= e($formData['generated_client_account']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Solde initial</span><strong><?= e(number_format((float)$formData['initial_balance'], 2, ',', ' ')) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Solde courant</span><strong><?= e(number_format((float)$formData['balance'], 2, ',', ' ')) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Mensualité</span><strong><?= e(number_format((float)$formData['monthly_amount'], 2, ',', ' ')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Solde initial</span><strong><?= e(number_format((float) $formData['initial_balance'], 2, ',', ' ')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Solde courant</span><strong><?= e(number_format((float) $formData['balance'], 2, ',', ' ')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Mensualité</span><strong><?= e(number_format((float) $formData['monthly_amount'], 2, ',', ' ')) ?></strong></div>
                         <div class="sl-data-list__row"><span>Jour mensualité</span><strong><?= e($formData['monthly_day']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Mensualité active</span><strong><?= (int)$formData['monthly_enabled'] === 1 ? 'Oui' : 'Non' ?></strong></div>
-                        <div class="sl-data-list__row"><span>Pays commercial</span><strong><?= e($formData['country_commercial'] !== '' ? $formData['country_commercial'] : '—') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Pays destination</span><strong><?= e($formData['country_destination'] !== '' ? $formData['country_destination'] : '—') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Passport</span><strong><?= e($formData['passport_number'] !== '' ? $formData['passport_number'] : '—') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Délivrance</span><strong><?= e($formData['passport_issue_country'] !== '' ? $formData['passport_issue_country'] : '—') ?></strong></div>
+                        <div class="sl-data-list__row"><span>Mensualité active</span><strong><?= (int) $formData['monthly_enabled'] === 1 ? 'Oui' : 'Non' ?></strong></div>
                     </div>
 
                     <div class="dashboard-note" style="margin-top:16px;">
-                        Contrôle final avant mise à jour du client, du compte 411 et de la mensualité.
+                        Contrôle final avant mise à jour du client, du compte 411, du 512 principal et des paramètres de mensualité.
                     </div>
                 <?php else: ?>
                     <div class="sl-data-list">
-                        <div class="sl-data-list__row"><span>Code client</span><strong><?= e((string)($client['client_code'] ?? '')) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Nom complet</span><strong><?= e((string)($client['full_name'] ?? '')) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Compte 411</span><strong><?= e((string)($formData['generated_client_account'] ?? '')) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Solde initial</span><strong><?= e(number_format((float)($formData['initial_balance'] ?? 0), 2, ',', ' ')) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Solde courant</span><strong><?= e(number_format((float)($formData['balance'] ?? 0), 2, ',', ' ')) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Mensualité</span><strong><?= e(number_format((float)($formData['monthly_amount'] ?? 0), 2, ',', ' ')) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Jour mensualité</span><strong><?= e((string)($formData['monthly_day'] ?? '26')) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Mensualité active</span><strong><?= (int)($formData['monthly_enabled'] ?? 0) === 1 ? 'Oui' : 'Non' ?></strong></div>
+                        <div class="sl-data-list__row"><span>Code client</span><strong><?= e((string) ($client['client_code'] ?? '')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Nom complet</span><strong><?= e((string) ($client['full_name'] ?? '')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Compte 411</span><strong><?= e((string) ($formData['generated_client_account'] ?? '')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Solde initial</span><strong><?= e(number_format((float) ($formData['initial_balance'] ?? 0), 2, ',', ' ')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Solde courant</span><strong><?= e(number_format((float) ($formData['balance'] ?? 0), 2, ',', ' ')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Mensualité</span><strong><?= e(number_format((float) ($formData['monthly_amount'] ?? 0), 2, ',', ' ')) ?></strong></div>
                     </div>
 
                     <div class="dashboard-note" style="margin-top:16px;">

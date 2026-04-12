@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Hôte : 127.0.0.1
--- Généré le : sam. 11 avr. 2026 à 16:16
+-- Généré le : sam. 11 avr. 2026 à 23:23
 -- Version du serveur : 10.4.32-MariaDB
 -- Version de PHP : 8.2.12
 
@@ -325,6 +325,86 @@ CREATE TABLE `import_rows` (
 -- --------------------------------------------------------
 
 --
+-- Structure de la table `monthly_payment_imports`
+--
+
+CREATE TABLE `monthly_payment_imports` (
+  `id` int(11) NOT NULL,
+  `file_name` varchar(255) NOT NULL,
+  `status` varchar(50) NOT NULL DEFAULT 'draft',
+  `created_by` int(11) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `updated_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Structure de la table `monthly_payment_import_rows`
+--
+
+CREATE TABLE `monthly_payment_import_rows` (
+  `id` int(11) NOT NULL,
+  `import_id` int(11) NOT NULL,
+  `row_number` int(11) NOT NULL,
+  `client_code` varchar(50) DEFAULT NULL,
+  `monthly_amount` decimal(15,2) DEFAULT NULL,
+  `treasury_account_code` varchar(50) DEFAULT NULL,
+  `monthly_day` int(11) DEFAULT 26,
+  `label` varchar(255) DEFAULT NULL,
+  `status` varchar(50) NOT NULL DEFAULT 'pending',
+  `error_message` text DEFAULT NULL,
+  `resolved_client_id` int(11) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `updated_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Structure de la table `monthly_payment_runs`
+--
+
+CREATE TABLE `monthly_payment_runs` (
+  `id` int(11) NOT NULL,
+  `run_date` date NOT NULL,
+  `scheduled_day` tinyint(4) NOT NULL DEFAULT 26,
+  `total_clients` int(11) NOT NULL DEFAULT 0,
+  `total_created` int(11) NOT NULL DEFAULT 0,
+  `total_skipped` int(11) NOT NULL DEFAULT 0,
+  `total_errors` int(11) NOT NULL DEFAULT 0,
+  `executed_by` int(11) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `status` varchar(50) DEFAULT 'executed'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Structure de la table `monthly_payment_run_items`
+--
+
+CREATE TABLE `monthly_payment_run_items` (
+  `id` int(11) NOT NULL,
+  `run_id` int(11) NOT NULL,
+  `client_id` int(11) DEFAULT NULL,
+  `client_code` varchar(50) DEFAULT NULL,
+  `operation_id` int(11) DEFAULT NULL,
+  `status` varchar(50) NOT NULL DEFAULT 'pending',
+  `amount` decimal(15,2) NOT NULL DEFAULT 0.00,
+  `treasury_account_id` int(11) DEFAULT NULL,
+  `treasury_account_code` varchar(50) DEFAULT NULL,
+  `reference` varchar(150) DEFAULT NULL,
+  `label` varchar(255) DEFAULT NULL,
+  `message` text DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `updated_at` datetime DEFAULT NULL,
+  `is_cancelled` tinyint(1) DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- --------------------------------------------------------
+
+--
 -- Structure de la table `notifications`
 --
 
@@ -387,6 +467,7 @@ CREATE TABLE `operations` (
   `is_manual_accounting` tinyint(1) NOT NULL DEFAULT 0,
   `notes` text DEFAULT NULL,
   `created_by` int(11) DEFAULT NULL,
+  `monthly_run_id` int(11) DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `updated_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -395,33 +476,33 @@ CREATE TABLE `operations` (
 -- Déchargement des données de la table `operations`
 --
 
-INSERT INTO `operations` (`id`, `client_id`, `service_id`, `operation_type_id`, `bank_account_id`, `linked_bank_account_id`, `operation_date`, `operation_type_code`, `operation_kind`, `label`, `amount`, `currency_code`, `reference`, `source_type`, `debit_account_code`, `credit_account_code`, `service_account_code`, `operation_hash`, `is_manual_accounting`, `notes`, `created_by`, `created_at`, `updated_at`) VALUES
-(1, 1, NULL, NULL, 1, NULL, '2026-03-01', 'VERSEMENT', 'seed', 'Versement initial client 1', 12000.00, NULL, 'TEST-OP-0001', 'seed', '5120101', '411CLT0001', NULL, NULL, 0, 'Alimentation initiale', NULL, '2026-03-29 00:19:28', '2026-03-29 00:19:28'),
-(2, 1, NULL, NULL, 1, NULL, '2026-03-03', 'FRAIS_DE_SERVICE', 'seed', 'Frais de services AVI', 250.00, NULL, 'TEST-OP-0002', 'seed', '411CLT0001', '706101', '706101', NULL, 0, 'Service SRV_AVI_SERVICE', NULL, '2026-03-29 00:19:28', '2026-03-29 00:19:28'),
-(3, 1, NULL, NULL, 1, NULL, '2026-03-10', 'VIREMENT_MENSUEL', 'seed', 'Virement mensuel client 1', 900.00, NULL, 'TEST-OP-0003', 'seed', '411CLT0001', '5120101', NULL, NULL, 0, 'Décaissement mensuel', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(4, 2, NULL, NULL, 2, NULL, '2026-03-02', 'VERSEMENT', 'seed', 'Versement initial client 2', 8500.00, NULL, 'TEST-OP-0004', 'seed', '5120102', '411CLT0002', NULL, NULL, 0, 'Alimentation initiale', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(5, 2, NULL, NULL, 2, NULL, '2026-03-05', 'FRAIS_DE_SERVICE', 'seed', 'Frais de service ATS', 175.00, NULL, 'TEST-OP-0005', 'seed', '411CLT0002', '706104', '706104', NULL, 0, 'Service SRV_ATS_SERVICE', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(6, 2, NULL, NULL, 2, NULL, '2026-03-08', 'REGULARISATION_POSITIVE', 'seed', 'Régularisation positive client 2', 300.00, NULL, 'TEST-OP-0006', 'seed', '5120102', '411CLT0002', NULL, NULL, 0, 'Correction en faveur du client', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(7, 2, NULL, NULL, 2, NULL, '2026-03-16', 'REGULARISATION_NEGATIVE', 'seed', 'Régularisation négative client 2', 120.00, NULL, 'TEST-OP-0007', 'seed', '411CLT0002', '5120102', NULL, NULL, 0, 'Correction défavorable au client', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(8, 3, NULL, NULL, 3, NULL, '2026-03-04', 'VERSEMENT', 'seed', 'Versement initial client 3', 15000.00, NULL, 'TEST-OP-0008', 'seed', '5120301', '411CLT0003', NULL, NULL, 0, 'Alimentation initiale', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(9, 3, NULL, NULL, 3, NULL, '2026-03-06', 'VIREMENT_EXCEPTIONEL', 'seed', 'Commission de transfert', 420.00, NULL, 'TEST-OP-0009', 'seed', '411CLT0003', '5120301', '706103', NULL, 0, 'Virement exceptionnel avec commission', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(10, 4, NULL, NULL, 4, NULL, '2026-03-07', 'VERSEMENT', 'seed', 'Versement initial client 4', 600000.00, NULL, 'TEST-OP-0010', 'seed', '5120401', '411CLT0004', NULL, NULL, 0, 'Alimentation locale', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(11, 4, NULL, NULL, 4, NULL, '2026-03-09', 'FRAIS_BANCAIRES', 'seed', 'Frais de gestion', 15000.00, NULL, 'TEST-OP-0011', 'seed', '411CLT0004', '706102', '706102', NULL, 0, 'Service SRV_FRAIS_GESTION', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(12, 5, NULL, NULL, 5, NULL, '2026-03-11', 'VERSEMENT', 'seed', 'Versement initial client 5', 900000.00, NULL, 'TEST-OP-0012', 'seed', '5121401', '411CLT0005', NULL, NULL, 0, 'Alimentation initiale', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(13, 5, NULL, NULL, 5, NULL, '2026-03-13', 'VIREMENT_REGULIER', 'seed', 'Virement régulier client 5', 175000.00, NULL, 'TEST-OP-0013', 'seed', '411CLT0005', '5121401', NULL, NULL, 0, 'Décaissement régulier', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(14, 6, NULL, NULL, 6, NULL, '2026-03-12', 'VERSEMENT', 'seed', 'Versement initial client 6', 300000.00, NULL, 'TEST-OP-0014', 'seed', '5121701', '411CLT0006', NULL, NULL, 0, 'Alimentation initiale', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(15, 6, NULL, NULL, 6, NULL, '2026-03-18', 'FRAIS_DE_SERVICE', 'seed', 'Frais de services AVI', 6000.00, NULL, 'TEST-OP-0015', 'seed', '411CLT0006', '706101', '706101', NULL, 0, 'Facturation service', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(16, 6, NULL, NULL, 6, NULL, '2026-03-21', 'REGULARISATION_NEGATIVE', 'seed', 'Régularisation négative client 6', 12000.00, NULL, 'TEST-OP-0016', 'seed', '411CLT0006', '5121701', NULL, NULL, 0, 'Correction négative', NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
-(17, 1, NULL, NULL, 1, NULL, '2026-03-30', 'VERSEMENT', 'manual', 'VERSEMENT', 200.00, NULL, NULL, 'manual', '5120101', '411CLT0001', NULL, NULL, 0, NULL, 1, '2026-03-30 03:20:23', NULL),
-(19, 5, NULL, NULL, 5, NULL, '2026-03-30', 'FRAIS_DE_SERVICE', 'manual', 'FRAIS DE SERVICE', 150.00, NULL, NULL, 'manual', '411CLT0005', '7061314', '7061314', NULL, 0, NULL, 1, '2026-03-30 03:25:40', NULL),
-(20, 1, 18, 17, 1, 1, '2026-03-31', 'VERSEMENT', 'manual', 'VERSEMENT - VERSEMENT', 200.00, 'EUR', 'VERS31032026', 'manual', '5120101', '411CLT0001', NULL, 'bf0311b14fdc83d1d17e3d94ef11cc59d5f351dc15d043c6781b0568415b5534', 0, 'Versement client', 1, '2026-03-31 22:57:06', '2026-03-31 22:57:06'),
-(21, 5, 18, 17, 5, 5, '2026-03-31', 'VERSEMENT', 'manual', 'VERSEMENT - VERSEMENT', 542.00, 'EUR', 'VERS0124520', 'manual', '5121401', '411CLT0005', NULL, 'e3197241aba8eccfc0daf230f97e8cf52eed8100860455a982e322099341f215', 0, NULL, 1, '2026-03-31 22:59:02', '2026-03-31 22:59:02'),
-(22, 1, 22, 18, 1, 1, '2026-04-01', 'VIREMENT', 'manual', 'VIREMENT - INTERNE', 100.00, 'EUR', NULL, 'manual', '706311', '5120401', NULL, '0df8271cd21f3059fc5d53e0b4fba31e499096d1505a12619a6e2e0262453e11', 1, NULL, 1, '2026-04-01 21:44:06', '2026-04-01 21:44:06'),
-(23, 1, 17, 19, 1, 1, '2026-04-01', 'REGULARISATION', 'manual', 'REGULARISATION - POSITIVE', 200.00, 'EUR', NULL, 'manual', '5120101', '411CLT0001', NULL, '697d9a8af0484b5cb9b1d5cd1d65324d8231907cf20b7ea2158deaa4e513b48a', 0, NULL, 1, '2026-04-01 21:45:23', '2026-04-01 21:45:23'),
-(24, 6, 18, 17, 6, 6, '2026-04-08', 'VERSEMENT', 'manual', 'VERSEMENT - VERSEMENT', 500.00, 'EUR', NULL, 'manual', '5121701', '411CLT0006', NULL, 'b6e95752625e8b742b46985956d412021c954a57f0aa976680a7878481174a87', 0, NULL, 1, '2026-04-08 17:58:53', '2026-04-08 17:58:53'),
-(25, 3, 11, 22, 3, 3, '2026-04-08', 'COMMISSION_DE_TRANSFERT', 'manual', 'COMMISSION DE TRANSFERT - COMMISSION DE TRANSFERT', 200.00, 'EUR', NULL, 'manual', '411CLT0003', '706303', '706303', '2bb96aae061c15190021ba35b71f6334bb2767bac8ccde828de87b6c87fa2060', 0, NULL, 1, '2026-04-08 17:59:27', '2026-04-08 17:59:27'),
-(26, 2, 15, 20, 2, 2, '2026-04-10', 'FRAIS_SERVICE', 'manual', 'test frais AVI crédit/débit auto', 200.00, 'EUR', 'VERS0124520356', 'manual', '411CLT0002', '7061101', '7061101', 'b7f1608c7e6ade19ac4779a297a222af62d15bb204081b144a65d0de013764b1', 0, 'vzhkdhjksdhbfjlzednd', 1, '2026-04-10 22:21:46', '2026-04-10 22:21:46'),
-(27, 7, 13, 21, NULL, NULL, '2026-04-10', 'FRAIS_GESTION', 'manual', 'FRAIS GESTION - GESTION', 100.00, 'EUR', NULL, 'manual', '411983200894', '706204', '706204', 'dc6d32d8708b47d9d8d9b6262c1e0691f4ae563ee2d5ae9a800bbc7952503d95', 0, NULL, 1, '2026-04-10 22:23:13', '2026-04-10 22:23:13');
+INSERT INTO `operations` (`id`, `client_id`, `service_id`, `operation_type_id`, `bank_account_id`, `linked_bank_account_id`, `operation_date`, `operation_type_code`, `operation_kind`, `label`, `amount`, `currency_code`, `reference`, `source_type`, `debit_account_code`, `credit_account_code`, `service_account_code`, `operation_hash`, `is_manual_accounting`, `notes`, `created_by`, `monthly_run_id`, `created_at`, `updated_at`) VALUES
+(1, 1, NULL, NULL, 1, NULL, '2026-03-01', 'VERSEMENT', 'seed', 'Versement initial client 1', 12000.00, NULL, 'TEST-OP-0001', 'seed', '5120101', '411CLT0001', NULL, NULL, 0, 'Alimentation initiale', NULL, NULL, '2026-03-29 00:19:28', '2026-03-29 00:19:28'),
+(2, 1, NULL, NULL, 1, NULL, '2026-03-03', 'FRAIS_DE_SERVICE', 'seed', 'Frais de services AVI', 250.00, NULL, 'TEST-OP-0002', 'seed', '411CLT0001', '706101', '706101', NULL, 0, 'Service SRV_AVI_SERVICE', NULL, NULL, '2026-03-29 00:19:28', '2026-03-29 00:19:28'),
+(3, 1, NULL, NULL, 1, NULL, '2026-03-10', 'VIREMENT_MENSUEL', 'seed', 'Virement mensuel client 1', 900.00, NULL, 'TEST-OP-0003', 'seed', '411CLT0001', '5120101', NULL, NULL, 0, 'Décaissement mensuel', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(4, 2, NULL, NULL, 2, NULL, '2026-03-02', 'VERSEMENT', 'seed', 'Versement initial client 2', 8500.00, NULL, 'TEST-OP-0004', 'seed', '5120102', '411CLT0002', NULL, NULL, 0, 'Alimentation initiale', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(5, 2, NULL, NULL, 2, NULL, '2026-03-05', 'FRAIS_DE_SERVICE', 'seed', 'Frais de service ATS', 175.00, NULL, 'TEST-OP-0005', 'seed', '411CLT0002', '706104', '706104', NULL, 0, 'Service SRV_ATS_SERVICE', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(6, 2, NULL, NULL, 2, NULL, '2026-03-08', 'REGULARISATION_POSITIVE', 'seed', 'Régularisation positive client 2', 300.00, NULL, 'TEST-OP-0006', 'seed', '5120102', '411CLT0002', NULL, NULL, 0, 'Correction en faveur du client', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(7, 2, NULL, NULL, 2, NULL, '2026-03-16', 'REGULARISATION_NEGATIVE', 'seed', 'Régularisation négative client 2', 120.00, NULL, 'TEST-OP-0007', 'seed', '411CLT0002', '5120102', NULL, NULL, 0, 'Correction défavorable au client', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(8, 3, NULL, NULL, 3, NULL, '2026-03-04', 'VERSEMENT', 'seed', 'Versement initial client 3', 15000.00, NULL, 'TEST-OP-0008', 'seed', '5120301', '411CLT0003', NULL, NULL, 0, 'Alimentation initiale', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(9, 3, NULL, NULL, 3, NULL, '2026-03-06', 'VIREMENT_EXCEPTIONEL', 'seed', 'Commission de transfert', 420.00, NULL, 'TEST-OP-0009', 'seed', '411CLT0003', '5120301', '706103', NULL, 0, 'Virement exceptionnel avec commission', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(10, 4, NULL, NULL, 4, NULL, '2026-03-07', 'VERSEMENT', 'seed', 'Versement initial client 4', 600000.00, NULL, 'TEST-OP-0010', 'seed', '5120401', '411CLT0004', NULL, NULL, 0, 'Alimentation locale', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(11, 4, NULL, NULL, 4, NULL, '2026-03-09', 'FRAIS_BANCAIRES', 'seed', 'Frais de gestion', 15000.00, NULL, 'TEST-OP-0011', 'seed', '411CLT0004', '706102', '706102', NULL, 0, 'Service SRV_FRAIS_GESTION', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(12, 5, NULL, NULL, 5, NULL, '2026-03-11', 'VERSEMENT', 'seed', 'Versement initial client 5', 900000.00, NULL, 'TEST-OP-0012', 'seed', '5121401', '411CLT0005', NULL, NULL, 0, 'Alimentation initiale', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(13, 5, NULL, NULL, 5, NULL, '2026-03-13', 'VIREMENT_REGULIER', 'seed', 'Virement régulier client 5', 175000.00, NULL, 'TEST-OP-0013', 'seed', '411CLT0005', '5121401', NULL, NULL, 0, 'Décaissement régulier', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(14, 6, NULL, NULL, 6, NULL, '2026-03-12', 'VERSEMENT', 'seed', 'Versement initial client 6', 300000.00, NULL, 'TEST-OP-0014', 'seed', '5121701', '411CLT0006', NULL, NULL, 0, 'Alimentation initiale', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(15, 6, NULL, NULL, 6, NULL, '2026-03-18', 'FRAIS_DE_SERVICE', 'seed', 'Frais de services AVI', 6000.00, NULL, 'TEST-OP-0015', 'seed', '411CLT0006', '706101', '706101', NULL, 0, 'Facturation service', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(16, 6, NULL, NULL, 6, NULL, '2026-03-21', 'REGULARISATION_NEGATIVE', 'seed', 'Régularisation négative client 6', 12000.00, NULL, 'TEST-OP-0016', 'seed', '411CLT0006', '5121701', NULL, NULL, 0, 'Correction négative', NULL, NULL, '2026-03-29 00:19:29', '2026-03-29 00:19:29'),
+(17, 1, NULL, NULL, 1, NULL, '2026-03-30', 'VERSEMENT', 'manual', 'VERSEMENT', 200.00, NULL, NULL, 'manual', '5120101', '411CLT0001', NULL, NULL, 0, NULL, 1, NULL, '2026-03-30 03:20:23', NULL),
+(19, 5, NULL, NULL, 5, NULL, '2026-03-30', 'FRAIS_DE_SERVICE', 'manual', 'FRAIS DE SERVICE', 150.00, NULL, NULL, 'manual', '411CLT0005', '7061314', '7061314', NULL, 0, NULL, 1, NULL, '2026-03-30 03:25:40', NULL),
+(20, 1, 18, 17, 1, 1, '2026-03-31', 'VERSEMENT', 'manual', 'VERSEMENT - VERSEMENT', 200.00, 'EUR', 'VERS31032026', 'manual', '5120101', '411CLT0001', NULL, 'bf0311b14fdc83d1d17e3d94ef11cc59d5f351dc15d043c6781b0568415b5534', 0, 'Versement client', 1, NULL, '2026-03-31 22:57:06', '2026-03-31 22:57:06'),
+(21, 5, 18, 17, 5, 5, '2026-03-31', 'VERSEMENT', 'manual', 'VERSEMENT - VERSEMENT', 542.00, 'EUR', 'VERS0124520', 'manual', '5121401', '411CLT0005', NULL, 'e3197241aba8eccfc0daf230f97e8cf52eed8100860455a982e322099341f215', 0, NULL, 1, NULL, '2026-03-31 22:59:02', '2026-03-31 22:59:02'),
+(22, 1, 22, 18, 1, 1, '2026-04-01', 'VIREMENT', 'manual', 'VIREMENT - INTERNE', 100.00, 'EUR', NULL, 'manual', '706311', '5120401', NULL, '0df8271cd21f3059fc5d53e0b4fba31e499096d1505a12619a6e2e0262453e11', 1, NULL, 1, NULL, '2026-04-01 21:44:06', '2026-04-01 21:44:06'),
+(23, 1, 17, 19, 1, 1, '2026-04-01', 'REGULARISATION', 'manual', 'REGULARISATION - POSITIVE', 200.00, 'EUR', NULL, 'manual', '5120101', '411CLT0001', NULL, '697d9a8af0484b5cb9b1d5cd1d65324d8231907cf20b7ea2158deaa4e513b48a', 0, NULL, 1, NULL, '2026-04-01 21:45:23', '2026-04-01 21:45:23'),
+(24, 6, 18, 17, 6, 6, '2026-04-08', 'VERSEMENT', 'manual', 'VERSEMENT - VERSEMENT', 500.00, 'EUR', NULL, 'manual', '5121701', '411CLT0006', NULL, 'b6e95752625e8b742b46985956d412021c954a57f0aa976680a7878481174a87', 0, NULL, 1, NULL, '2026-04-08 17:58:53', '2026-04-08 17:58:53'),
+(25, 3, 11, 22, 3, 3, '2026-04-08', 'COMMISSION_DE_TRANSFERT', 'manual', 'COMMISSION DE TRANSFERT - COMMISSION DE TRANSFERT', 200.00, 'EUR', NULL, 'manual', '411CLT0003', '706303', '706303', '2bb96aae061c15190021ba35b71f6334bb2767bac8ccde828de87b6c87fa2060', 0, NULL, 1, NULL, '2026-04-08 17:59:27', '2026-04-08 17:59:27'),
+(26, 2, 15, 20, 2, 2, '2026-04-10', 'FRAIS_SERVICE', 'manual', 'test frais AVI crédit/débit auto', 200.00, 'EUR', 'VERS0124520356', 'manual', '411CLT0002', '7061101', '7061101', 'b7f1608c7e6ade19ac4779a297a222af62d15bb204081b144a65d0de013764b1', 0, 'vzhkdhjksdhbfjlzednd', 1, NULL, '2026-04-10 22:21:46', '2026-04-10 22:21:46'),
+(27, 7, 13, 21, NULL, NULL, '2026-04-10', 'FRAIS_GESTION', 'manual', 'FRAIS GESTION - GESTION', 100.00, 'EUR', NULL, 'manual', '411983200894', '706204', '706204', 'dc6d32d8708b47d9d8d9b6262c1e0691f4ae563ee2d5ae9a800bbc7952503d95', 0, NULL, 1, NULL, '2026-04-10 22:23:13', '2026-04-10 22:23:13');
 
 -- --------------------------------------------------------
 
@@ -1384,6 +1465,39 @@ ALTER TABLE `import_rows`
   ADD KEY `idx_import_rows_import` (`import_id`);
 
 --
+-- Index pour la table `monthly_payment_imports`
+--
+ALTER TABLE `monthly_payment_imports`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `fk_monthly_payment_imports_user` (`created_by`);
+
+--
+-- Index pour la table `monthly_payment_import_rows`
+--
+ALTER TABLE `monthly_payment_import_rows`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `fk_monthly_payment_import_rows_import` (`import_id`),
+  ADD KEY `fk_monthly_payment_import_rows_client` (`resolved_client_id`);
+
+--
+-- Index pour la table `monthly_payment_runs`
+--
+ALTER TABLE `monthly_payment_runs`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `fk_monthly_payment_runs_user` (`executed_by`);
+
+--
+-- Index pour la table `monthly_payment_run_items`
+--
+ALTER TABLE `monthly_payment_run_items`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `idx_monthly_payment_run_items_run` (`run_id`),
+  ADD KEY `idx_monthly_payment_run_items_client` (`client_id`),
+  ADD KEY `idx_monthly_payment_run_items_operation` (`operation_id`),
+  ADD KEY `idx_monthly_payment_run_items_status` (`status`),
+  ADD KEY `fk_monthly_payment_run_items_treasury` (`treasury_account_id`);
+
+--
 -- Index pour la table `notifications`
 --
 ALTER TABLE `notifications`
@@ -1404,7 +1518,8 @@ ALTER TABLE `operations`
   ADD KEY `idx_operations_source_type` (`source_type`),
   ADD KEY `idx_operations_debit` (`debit_account_code`),
   ADD KEY `idx_operations_credit` (`credit_account_code`),
-  ADD KEY `idx_operations_hash` (`operation_hash`);
+  ADD KEY `idx_operations_hash` (`operation_hash`),
+  ADD KEY `idx_operations_monthly_run_id` (`monthly_run_id`);
 
 --
 -- Index pour la table `permissions`
@@ -1581,6 +1696,30 @@ ALTER TABLE `import_rows`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 --
+-- AUTO_INCREMENT pour la table `monthly_payment_imports`
+--
+ALTER TABLE `monthly_payment_imports`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT pour la table `monthly_payment_import_rows`
+--
+ALTER TABLE `monthly_payment_import_rows`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT pour la table `monthly_payment_runs`
+--
+ALTER TABLE `monthly_payment_runs`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT pour la table `monthly_payment_run_items`
+--
+ALTER TABLE `monthly_payment_run_items`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
 -- AUTO_INCREMENT pour la table `notifications`
 --
 ALTER TABLE `notifications`
@@ -1692,12 +1831,41 @@ ALTER TABLE `import_rows`
   ADD CONSTRAINT `fk_import_rows_import` FOREIGN KEY (`import_id`) REFERENCES `imports` (`id`) ON DELETE CASCADE;
 
 --
+-- Contraintes pour la table `monthly_payment_imports`
+--
+ALTER TABLE `monthly_payment_imports`
+  ADD CONSTRAINT `fk_monthly_payment_imports_user` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL;
+
+--
+-- Contraintes pour la table `monthly_payment_import_rows`
+--
+ALTER TABLE `monthly_payment_import_rows`
+  ADD CONSTRAINT `fk_monthly_payment_import_rows_client` FOREIGN KEY (`resolved_client_id`) REFERENCES `clients` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_monthly_payment_import_rows_import` FOREIGN KEY (`import_id`) REFERENCES `monthly_payment_imports` (`id`) ON DELETE CASCADE;
+
+--
+-- Contraintes pour la table `monthly_payment_runs`
+--
+ALTER TABLE `monthly_payment_runs`
+  ADD CONSTRAINT `fk_monthly_payment_runs_user` FOREIGN KEY (`executed_by`) REFERENCES `users` (`id`) ON DELETE SET NULL;
+
+--
+-- Contraintes pour la table `monthly_payment_run_items`
+--
+ALTER TABLE `monthly_payment_run_items`
+  ADD CONSTRAINT `fk_monthly_payment_run_items_client` FOREIGN KEY (`client_id`) REFERENCES `clients` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_monthly_payment_run_items_operation` FOREIGN KEY (`operation_id`) REFERENCES `operations` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_monthly_payment_run_items_run` FOREIGN KEY (`run_id`) REFERENCES `monthly_payment_runs` (`id`) ON DELETE CASCADE,
+  ADD CONSTRAINT `fk_monthly_payment_run_items_treasury` FOREIGN KEY (`treasury_account_id`) REFERENCES `treasury_accounts` (`id`) ON DELETE SET NULL;
+
+--
 -- Contraintes pour la table `operations`
 --
 ALTER TABLE `operations`
   ADD CONSTRAINT `fk_operations_bank` FOREIGN KEY (`bank_account_id`) REFERENCES `bank_accounts` (`id`) ON DELETE SET NULL,
   ADD CONSTRAINT `fk_operations_client` FOREIGN KEY (`client_id`) REFERENCES `clients` (`id`) ON DELETE SET NULL,
-  ADD CONSTRAINT `fk_operations_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL;
+  ADD CONSTRAINT `fk_operations_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL,
+  ADD CONSTRAINT `fk_operations_monthly_run` FOREIGN KEY (`monthly_run_id`) REFERENCES `monthly_payment_runs` (`id`) ON DELETE SET NULL;
 
 --
 -- Contraintes pour la table `ref_services`
