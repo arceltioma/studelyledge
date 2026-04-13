@@ -289,6 +289,17 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
                             <span>⚙️</span><span>Dashboard Admin Fonctionnelle</span>
                         </a>
 
+                        <?php if (isset($pdo) && currentUserCanAny($pdo, ['pending_debits_view', 'pending_debits_manage', 'admin_manage'])): ?>
+    <a class="sidebar-link <?= sidebarActiveMulti([
+        '/modules/pending_debits/pending_debits_list.php',
+        '/modules/pending_debits/pending_debit_view.php',
+        '/modules/pending_debits/pending_debit_edit.php',
+        '/modules/pending_debits/pending_debit_execute.php'
+    ], $currentUri) ?>" href="<?= e(APP_URL) ?>modules/pending_debits/pending_debits_list.php">
+        <span>⛔</span><span>Débits dus 411</span>
+    </a>
+<?php endif; ?>
+
                         <?php if ($can('services_manage_page')): ?>
                             <a class="sidebar-link <?= sidebarActive('/modules/admin_functional/manage_services.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/admin_functional/manage_services.php">
                                 <span>🧩</span><span>Services</span>

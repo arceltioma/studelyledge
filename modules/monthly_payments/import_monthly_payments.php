@@ -13,6 +13,10 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'imports_upload');
 }
 
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
 $pageTitle = 'Import des mensualités';
 $pageSubtitle = 'Import CSV des mensualités clients avec prévisualisation et validation manuelle';
 
@@ -23,6 +27,19 @@ if (!function_exists('sl_monthly_payments_tables_exist')) {
     function sl_monthly_payments_tables_exist(PDO $pdo): bool
     {
         return tableExists($pdo, 'monthly_payment_imports') && tableExists($pdo, 'monthly_payment_import_rows');
+    }
+}
+
+if (!function_exists('sl_monthly_normalize_header')) {
+    function sl_monthly_normalize_header(string $value): string
+    {
+        $value = trim(mb_strtolower($value, 'UTF-8'));
+        $value = str_replace(
+            ['é', 'è', 'ê', 'à', 'â', 'î', 'ï', 'ô', 'ù', 'û', 'ç', ' '],
+            ['e', 'e', 'e', 'a', 'a', 'i', 'i', 'o', 'u', 'u', 'c', '_'],
+            $value
+        );
+        return $value;
     }
 }
 
@@ -45,7 +62,7 @@ if (!function_exists('sl_parse_monthly_payment_csv')) {
         while (($data = fgetcsv($handle, 0, ';')) !== false) {
             if ($header === null) {
                 $header = array_map(static function ($value) {
-                    return trim((string)$value);
+                    return sl_monthly_normalize_header((string)$value);
                 }, $data);
                 continue;
             }
@@ -65,6 +82,19 @@ if (!function_exists('sl_parse_monthly_payment_csv')) {
         fclose($handle);
 
         return $rows;
+    }
+}
+
+if (!function_exists('sl_monthly_row_value')) {
+    function sl_monthly_row_value(array $row, array $keys, ?string $default = null): ?string
+    {
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $row) && trim((string)$row[$key]) !== '') {
+                return trim((string)$row[$key]);
+            }
+        }
+
+        return $default;
     }
 }
 
@@ -92,55 +122,113 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $pdo->beginTransaction();
 
+        $importColumns = [];
+        $importValues = [];
+        $importParams = [];
+
+        if (columnExists($pdo, 'monthly_payment_imports', 'file_name')) {
+            $importColumns[] = 'file_name';
+            $importValues[] = '?';
+            $importParams[] = $originalName;
+        }
+
+        if (columnExists($pdo, 'monthly_payment_imports', 'imported_by')) {
+            $importColumns[] = 'imported_by';
+            $importValues[] = '?';
+            $importParams[] = $_SESSION['user_id'] ?? null;
+        } elseif (columnExists($pdo, 'monthly_payment_imports', 'created_by')) {
+            $importColumns[] = 'created_by';
+            $importValues[] = '?';
+            $importParams[] = $_SESSION['user_id'] ?? null;
+        }
+
+        if (columnExists($pdo, 'monthly_payment_imports', 'status')) {
+            $importColumns[] = 'status';
+            $importValues[] = '?';
+            $importParams[] = 'pending';
+        }
+
+        if (columnExists($pdo, 'monthly_payment_imports', 'created_at')) {
+            $importColumns[] = 'created_at';
+            $importValues[] = 'NOW()';
+        }
+
+        if (columnExists($pdo, 'monthly_payment_imports', 'updated_at')) {
+            $importColumns[] = 'updated_at';
+            $importValues[] = 'NOW()';
+        }
+
+        if (!$importColumns) {
+            throw new RuntimeException('Structure de monthly_payment_imports invalide.');
+        }
+
         $stmtImport = $pdo->prepare("
-            INSERT INTO monthly_payment_imports (
-                file_name,
-                imported_by,
-                status,
-                created_at
-            ) VALUES (?, ?, 'pending', NOW())
+            INSERT INTO monthly_payment_imports (" . implode(', ', $importColumns) . ")
+            VALUES (" . implode(', ', $importValues) . ")
         ");
-        $stmtImport->execute([
-            $originalName,
-            $_SESSION['user_id'] ?? null
-        ]);
+        $stmtImport->execute($importParams);
 
         $importId = (int)$pdo->lastInsertId();
-
-        $stmtRow = $pdo->prepare("
-            INSERT INTO monthly_payment_import_rows (
-                import_id,
-                client_code,
-                monthly_amount,
-                monthly_day,
-                treasury_account_code,
-                row_status,
-                row_message,
-                payload_json,
-                created_at
-            ) VALUES (?, ?, ?, ?, ?, 'pending', NULL, ?, NOW())
-        ");
+        $_SESSION['monthly_payment_current_import_id'] = $importId;
 
         foreach ($rows as $row) {
-            $clientCode = trim((string)($row['client_code'] ?? ''));
-            $amount = (float)str_replace(',', '.', (string)($row['monthly_amount'] ?? '0'));
-            $day = (int)($row['monthly_day'] ?? 26);
-            $treasuryCode = trim((string)($row['treasury_account_code'] ?? ''));
+            $clientCode = sl_monthly_row_value($row, ['client_code', 'code_client'], '');
+            $amountRaw = sl_monthly_row_value($row, ['monthly_amount', 'mensualite', 'montant', 'amount'], '0');
+            $dayRaw = sl_monthly_row_value($row, ['monthly_day', 'jour', 'day'], '26');
+            $treasuryCode = sl_monthly_row_value($row, ['treasury_account_code', 'compte_512', 'account_code'], '');
+            $label = sl_monthly_row_value($row, ['label', 'libelle'], '');
+
+            $amount = (float)str_replace(',', '.', (string)$amountRaw);
+            $day = (int)$dayRaw;
 
             if ($day < 1 || $day > 31) {
                 $day = 26;
             }
 
-            $payload = json_encode($row, JSON_UNESCAPED_UNICODE);
+            $rowColumns = [];
+            $rowValues = [];
+            $rowParams = [];
 
-            $stmtRow->execute([
-                $importId,
-                $clientCode !== '' ? $clientCode : null,
-                $amount,
-                $day,
-                $treasuryCode !== '' ? $treasuryCode : null,
-                $payload
-            ]);
+            $rowMap = [
+                'import_id' => $importId,
+                'client_code' => $clientCode !== '' ? $clientCode : null,
+                'monthly_amount' => $amount,
+                'mensualite_amount' => $amount,
+                'monthly_day' => $day,
+                'treasury_account_code' => $treasuryCode !== '' ? $treasuryCode : null,
+                'label' => $label !== '' ? $label : null,
+                'row_status' => 'pending',
+                'row_message' => null,
+                'payload_json' => json_encode($row, JSON_UNESCAPED_UNICODE),
+            ];
+
+            foreach ($rowMap as $column => $value) {
+                if (columnExists($pdo, 'monthly_payment_import_rows', $column)) {
+                    $rowColumns[] = $column;
+                    $rowValues[] = '?';
+                    $rowParams[] = $value;
+                }
+            }
+
+            if (columnExists($pdo, 'monthly_payment_import_rows', 'created_at')) {
+                $rowColumns[] = 'created_at';
+                $rowValues[] = 'NOW()';
+            }
+
+            if (columnExists($pdo, 'monthly_payment_import_rows', 'updated_at')) {
+                $rowColumns[] = 'updated_at';
+                $rowValues[] = 'NOW()';
+            }
+
+            if (!$rowColumns) {
+                throw new RuntimeException('Structure de monthly_payment_import_rows invalide.');
+            }
+
+            $stmtRow = $pdo->prepare("
+                INSERT INTO monthly_payment_import_rows (" . implode(', ', $rowColumns) . ")
+                VALUES (" . implode(', ', $rowValues) . ")
+            ");
+            $stmtRow->execute($rowParams);
         }
 
         if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
@@ -187,7 +275,14 @@ require_once __DIR__ . '/../../includes/document_start.php';
         <div class="dashboard-grid-2">
             <div class="form-card">
                 <h3>Importer un fichier CSV</h3>
-                <p class="muted">Colonnes attendues : <strong>client_code</strong> ; <strong>monthly_amount</strong> ; <strong>monthly_day</strong> ; <strong>treasury_account_code</strong></p>
+                <p class="muted">
+                    Colonnes acceptées :
+                    <strong>client_code</strong> ;
+                    <strong>monthly_amount</strong> ;
+                    <strong>monthly_day</strong> ;
+                    <strong>treasury_account_code</strong> ;
+                    <strong>label</strong>
+                </p>
 
                 <form method="POST" enctype="multipart/form-data">
                     <?= csrf_input() ?>
@@ -207,13 +302,13 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="card">
                 <h3>Exemple de contenu CSV</h3>
 
-                <pre class="sl-code-preview">client_code;monthly_amount;monthly_day;treasury_account_code
-CLT0001;150;26;5120101
-CLT0002;200;26;5120102
-CLT0005;300;28;5121401</pre>
+                <pre class="sl-code-preview">client_code;monthly_amount;treasury_account_code;monthly_day;label
+CLT0001;150;5120101;26;Mensualité standard
+CLT0002;200;5120102;26;Mensualité standard
+CLT0005;300;5121401;28;Mensualité premium</pre>
 
                 <div class="dashboard-note" style="margin-top:16px;">
-                    Après import, chaque ligne est contrôlée, enrichie puis soumise à validation manuelle.
+                    Après import, chaque ligne est contrôlée, prévisualisée puis soumise à validation manuelle.
                 </div>
             </div>
         </div>

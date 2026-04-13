@@ -21,6 +21,11 @@ if (is_file($slImportMapperPath)) {
     require_once $slImportMapperPath;
 }
 
+$slPendingDebitsEnginePath = __DIR__ . '/pending_debits_engine.php';
+if (is_file($slPendingDebitsEnginePath)) {
+    require_once $slPendingDebitsEnginePath;
+}
+
 /*
 |--------------------------------------------------------------------------
 | Helpers généraux
@@ -365,7 +370,11 @@ if (!function_exists('studelyAccessMap')) {
 
             'service_accounts_import_page' => ['service_accounts_view', 'service_accounts_manage', 'admin_functional_view', 'admin_manage'],
 
-            /* LOT 2 additif */
+            'pending_debits_view_page' => ['pending_debits_view', 'pending_debits_manage', 'admin_manage'],
+            'pending_debits_edit_page' => ['pending_debits_edit', 'pending_debits_manage', 'admin_manage'],
+            'pending_debits_execute_page' => ['pending_debits_execute', 'pending_debits_manage', 'admin_manage'],
+            'pending_debits_cancel_page' => ['pending_debits_cancel', 'pending_debits_manage', 'admin_manage'],
+
             'notifications_view_page' => ['dashboard_view', 'admin_manage'],
             'intelligence_center_page' => ['admin_dashboard_view', 'admin_manage'],
         ];
@@ -429,16 +438,24 @@ if (!function_exists('studelyModulePermissions')) {
             'support' => ['support_view', 'support_requests_view', 'support_create', 'support_manage', 'support_admin_manage'],
 
             'admin_functional' => [
-    'admin_functional_view',
-    'services_manage',
-    'operation_types_manage',
-    'service_accounts_view',
-    'service_accounts_manage',
-    'statuses_manage'
-],
+                'admin_functional_view',
+                'services_manage',
+                'operation_types_manage',
+                'service_accounts_view',
+                'service_accounts_manage',
+                'statuses_manage'
+            ],
+
             'admin' => ['admin_dashboard_view', 'users_manage', 'roles_manage', 'permissions_manage', 'user_logs_view', 'settings_manage', 'admin_manage'],
 
-            /* LOT 2 additif */
+            'pending_debits' => [
+                'pending_debits_view',
+                'pending_debits_manage',
+                'pending_debits_execute',
+                'pending_debits_edit',
+                'pending_debits_cancel'
+            ],
+
             'notifications' => ['dashboard_view', 'admin_manage'],
             'intelligence' => ['admin_dashboard_view', 'admin_manage'],
         ];
@@ -1278,7 +1295,62 @@ if (!function_exists('sl_find_duplicate_operation')) {
         return $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
     }
 }
+if (!function_exists('sl_resolve_selected_treasury_account')) {
+    function sl_resolve_selected_treasury_account(PDO $pdo, array $payload, ?array $clientContext = null): ?array
+    {
+        $linkedId = isset($payload['linked_bank_account_id']) ? (int)$payload['linked_bank_account_id'] : 0;
 
+        // 1) Priorité au compte 512 explicitement sélectionné dans l'écran
+        if ($linkedId > 0) {
+            $treasury = findTreasuryAccountById($pdo, $linkedId);
+            if ($treasury) {
+                return $treasury;
+            }
+        }
+
+        // 2) Fallback sur un code 512 éventuellement transmis directement
+        $linkedTreasuryCode = trim((string)($payload['linked_treasury_account_code'] ?? ''));
+        if ($linkedTreasuryCode !== '') {
+            $treasury = findTreasuryAccountByCode($pdo, $linkedTreasuryCode);
+            if ($treasury) {
+                return $treasury;
+            }
+        }
+
+        // 3) Fallback sur le 512 principal du client
+        if ($clientContext && !empty($clientContext['initial_treasury_account_id'])) {
+            $treasury = findTreasuryAccountById($pdo, (int)$clientContext['initial_treasury_account_id']);
+            if ($treasury) {
+                return $treasury;
+            }
+        }
+
+        if ($clientContext && !empty($clientContext['treasury_account_code'])) {
+            $treasury = findTreasuryAccountByCode($pdo, (string)$clientContext['treasury_account_code']);
+            if ($treasury) {
+                return $treasury;
+            }
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('sl_operation_uses_selected_treasury')) {
+    function sl_operation_uses_selected_treasury(?string $operationTypeCode, ?string $serviceCode): bool
+    {
+        $key = sl_normalize_code($operationTypeCode) . '::' . sl_normalize_code($serviceCode);
+
+        return in_array($key, [
+            'VERSEMENT::VERSEMENT',
+            'VIREMENT::MENSUEL',
+            'VIREMENT::REGULIER',
+            'VIREMENT::EXCEPTIONEL',
+            'REGULARISATION::POSITIVE',
+            'REGULARISATION::NEGATIVE',
+        ], true);
+    }
+}
 if (!function_exists('resolveAccountingOperationV2')) {
     function resolveAccountingOperationV2(PDO $pdo, array $payload): array
     {
@@ -1286,15 +1358,15 @@ if (!function_exists('resolveAccountingOperationV2')) {
         $serviceCode = sl_normalize_code((string)($payload['service_code'] ?? ''));
         $serviceId = isset($payload['service_id']) ? (int)$payload['service_id'] : null;
         $clientId = isset($payload['client_id']) ? (int)$payload['client_id'] : null;
-        $linkedBankAccountId = isset($payload['linked_bank_account_id']) ? (int)$payload['linked_bank_account_id'] : null;
         $operationTypeId = isset($payload['operation_type_id']) ? (int)$payload['operation_type_id'] : 0;
 
-if ($operationTypeId > 0 && $serviceId > 0 && function_exists('sl_find_accounting_rule')) {
-    $rule = sl_find_accounting_rule($pdo, $operationTypeId, $serviceId);
-    if ($rule) {
-        return sl_resolve_accounting_operation_from_rule($pdo, $payload, $rule);
-    }
-}
+        if ($operationTypeId > 0 && $serviceId > 0 && function_exists('sl_find_accounting_rule')) {
+            $rule = sl_find_accounting_rule($pdo, $operationTypeId, $serviceId);
+            if ($rule) {
+                return sl_resolve_accounting_operation_from_rule($pdo, $payload, $rule);
+            }
+        }
+
         if ($operationTypeCode === '') {
             throw new RuntimeException('Type d’opération manquant.');
         }
@@ -1320,15 +1392,16 @@ if ($operationTypeId > 0 && $serviceId > 0 && function_exists('sl_find_accountin
             $serviceInfo = resolveServiceAccountFromServiceId($pdo, $serviceId);
         }
 
+        // Compatibilité de structure de retour
         $linkedBankAccount = null;
-        if ($linkedBankAccountId > 0 && tableExists($pdo, 'bank_accounts')) {
-            $stmt = $pdo->prepare("SELECT * FROM bank_accounts WHERE id = ? LIMIT 1");
-            $stmt->execute([$linkedBankAccountId]);
-            $linkedBankAccount = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
-        }
 
         $clientAccount = (string)($clientContext['generated_client_account'] ?? '');
         $clientTreasury = (string)($clientContext['treasury_account_code'] ?? '');
+
+        $selectedTreasury = null;
+        if (sl_operation_uses_selected_treasury($operationTypeCode, $serviceCode)) {
+            $selectedTreasury = sl_resolve_selected_treasury_account($pdo, $payload, $clientContext);
+        }
 
         $manualDebit = trim((string)($payload['manual_debit_account_code'] ?? ''));
         $manualCredit = trim((string)($payload['manual_credit_account_code'] ?? ''));
@@ -1351,7 +1424,13 @@ if ($operationTypeId > 0 && $serviceId > 0 && function_exists('sl_find_accountin
                     if (!$clientContext) {
                         throw new RuntimeException('Client obligatoire pour un versement.');
                     }
-                    $debit = $clientTreasury;
+
+                    $target512 = (string)($selectedTreasury['account_code'] ?? $clientTreasury);
+                    if ($target512 === '') {
+                        throw new RuntimeException('Compte 512 introuvable pour ce versement.');
+                    }
+
+                    $debit = $target512;
                     $credit = $clientAccount;
                     break;
 
@@ -1374,15 +1453,27 @@ if ($operationTypeId > 0 && $serviceId > 0 && function_exists('sl_find_accountin
                     if (!$clientContext) {
                         throw new RuntimeException('Client obligatoire pour ce virement.');
                     }
+
+                    $target512 = (string)($selectedTreasury['account_code'] ?? $clientTreasury);
+                    if ($target512 === '') {
+                        throw new RuntimeException('Compte 512 introuvable pour ce virement.');
+                    }
+
                     $debit = $clientAccount;
-                    $credit = $clientTreasury;
+                    $credit = $target512;
                     break;
 
                 case 'REGULARISATION::POSITIVE':
                     if (!$clientContext) {
                         throw new RuntimeException('Client obligatoire pour une régularisation positive.');
                     }
-                    $debit = $clientTreasury;
+
+                    $target512 = (string)($selectedTreasury['account_code'] ?? $clientTreasury);
+                    if ($target512 === '') {
+                        throw new RuntimeException('Compte 512 introuvable pour cette régularisation positive.');
+                    }
+
+                    $debit = $target512;
                     $credit = $clientAccount;
                     break;
 
@@ -1390,8 +1481,14 @@ if ($operationTypeId > 0 && $serviceId > 0 && function_exists('sl_find_accountin
                     if (!$clientContext) {
                         throw new RuntimeException('Client obligatoire pour une régularisation négative.');
                     }
+
+                    $target512 = (string)($selectedTreasury['account_code'] ?? $clientTreasury);
+                    if ($target512 === '') {
+                        throw new RuntimeException('Compte 512 introuvable pour cette régularisation négative.');
+                    }
+
                     $debit = $clientAccount;
-                    $credit = $clientTreasury;
+                    $credit = $target512;
                     break;
 
                 case 'CA_PLACEMENT::CA_PLACEMENT':
@@ -1515,7 +1612,7 @@ if ($operationTypeId > 0 && $serviceId > 0 && function_exists('sl_find_accountin
             }
         }
 
-        if ($debit === '' || $credit === '') {
+        if ($debit === '' || $credit === '' || $debit === null || $credit === null) {
             throw new RuntimeException('Impossible de déterminer les comptes débit/crédit.');
         }
 
@@ -1528,6 +1625,7 @@ if ($operationTypeId > 0 && $serviceId > 0 && function_exists('sl_find_accountin
             'client_context' => $clientContext,
             'service_info' => $serviceInfo,
             'linked_bank_account' => $linkedBankAccount,
+            'selected_treasury_account' => $selectedTreasury,
             'is_manual_accounting' => $manualMode ? 1 : 0,
             'operation_hash' => $operationHash,
             'preview_lines' => [
@@ -1739,23 +1837,68 @@ if (!function_exists('createOperationWithAccountingV2')) {
     {
         $resolved = resolveAccountingOperationV2($pdo, $payload);
 
-        $duplicate = sl_find_duplicate_operation($pdo, (string)$resolved['operation_hash'], $excludeOperationId);
+        $clientId = isset($payload['client_id']) ? (int)$payload['client_id'] : null;
+        $serviceId = isset($payload['service_id']) ? (int)$payload['service_id'] : null;
+        $operationTypeId = isset($payload['operation_type_id']) ? (int)$payload['operation_type_id'] : null;
+        $createdBy = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+
+        $guard = [
+            'mode' => 'normal',
+            'allowed_amount' => (float)($payload['amount'] ?? 0),
+            'remaining_amount' => 0,
+            'bank_account_id' => 0,
+            'pending_debit_id' => 0,
+        ];
+
+        if (function_exists('sl_handle_client_411_non_overdraft_guard')) {
+            $guard = sl_handle_client_411_non_overdraft_guard($pdo, $payload, $resolved, $createdBy);
+        }
+
+        if ($guard['mode'] === 'pending_only') {
+            if (function_exists('logUserAction') && $clientId && $createdBy) {
+                logUserAction(
+                    $pdo,
+                    $createdBy,
+                    'create_pending_debit',
+                    'pending_debits',
+                    'client',
+                    $clientId,
+                    'Création d’un débit dû sans exécution immédiate'
+                );
+            }
+
+            throw new RuntimeException(
+                'Solde 411 insuffisant : aucun débit immédiat exécuté. Un débit dû a été créé et tracé.'
+            );
+        }
+
+        $effectivePayload = $payload;
+        if ($guard['mode'] === 'partial') {
+            $effectivePayload['amount'] = (float)$guard['allowed_amount'];
+        }
+
+        $effectiveResolved = $resolved;
+        $effectiveResolved['operation_hash'] = sl_build_operation_hash(
+            $effectivePayload,
+            (string)$resolved['debit_account_code'],
+            (string)$resolved['credit_account_code']
+        );
+
+        $duplicate = sl_find_duplicate_operation($pdo, (string)$effectiveResolved['operation_hash'], $excludeOperationId);
         if ($duplicate) {
             throw new RuntimeException('Doublon détecté : une opération strictement identique existe déjà.');
         }
 
-        $clientId = isset($payload['client_id']) ? (int)$payload['client_id'] : null;
         $bankAccountId = null;
 
         if (!empty($resolved['linked_bank_account']['id'])) {
             $bankAccountId = (int)$resolved['linked_bank_account']['id'];
+        } elseif (!empty($guard['bank_account_id'])) {
+            $bankAccountId = (int)$guard['bank_account_id'];
         } elseif ($clientId) {
             $bankAccount = findPrimaryBankAccountForClient($pdo, $clientId);
             $bankAccountId = $bankAccount['id'] ?? null;
         }
-
-        $serviceId = isset($payload['service_id']) ? (int)$payload['service_id'] : null;
-        $operationTypeId = isset($payload['operation_type_id']) ? (int)$payload['operation_type_id'] : null;
 
         if ($excludeOperationId !== null && $excludeOperationId > 0) {
             $updateMap = [
@@ -1764,19 +1907,19 @@ if (!function_exists('createOperationWithAccountingV2')) {
                 'operation_type_id' => $operationTypeId,
                 'linked_bank_account_id' => $bankAccountId,
                 'bank_account_id' => $bankAccountId,
-                'operation_date' => $payload['operation_date'] ?? date('Y-m-d'),
-                'amount' => (float)($payload['amount'] ?? 0),
-                'currency_code' => $payload['currency_code'] ?? null,
-                'operation_type_code' => $payload['operation_type_code'] ?? null,
-                'label' => $payload['label'] ?? null,
-                'reference' => $payload['reference'] ?? null,
-                'notes' => $payload['notes'] ?? null,
-                'source_type' => $payload['source_type'] ?? null,
-                'debit_account_code' => $resolved['debit_account_code'],
-                'credit_account_code' => $resolved['credit_account_code'],
-                'service_account_code' => $resolved['analytic_account']['account_code'] ?? null,
-                'operation_hash' => $resolved['operation_hash'],
-                'is_manual_accounting' => (int)$resolved['is_manual_accounting'],
+                'operation_date' => $effectivePayload['operation_date'] ?? date('Y-m-d'),
+                'amount' => (float)($effectivePayload['amount'] ?? 0),
+                'currency_code' => $effectivePayload['currency_code'] ?? null,
+                'operation_type_code' => $effectivePayload['operation_type_code'] ?? null,
+                'label' => $effectivePayload['label'] ?? null,
+                'reference' => $effectivePayload['reference'] ?? null,
+                'notes' => $effectivePayload['notes'] ?? null,
+                'source_type' => $effectivePayload['source_type'] ?? null,
+                'debit_account_code' => $effectiveResolved['debit_account_code'],
+                'credit_account_code' => $effectiveResolved['credit_account_code'],
+                'service_account_code' => $effectiveResolved['analytic_account']['account_code'] ?? null,
+                'operation_hash' => $effectiveResolved['operation_hash'],
+                'is_manual_accounting' => (int)$effectiveResolved['is_manual_accounting'],
             ];
 
             $fields = [];
@@ -1787,8 +1930,13 @@ if (!function_exists('createOperationWithAccountingV2')) {
                     $params[] = $value;
                 }
             }
+
             if (columnExists($pdo, 'operations', 'updated_at')) {
                 $fields[] = 'updated_at = NOW()';
+            }
+
+            if (!$fields) {
+                throw new RuntimeException('Aucune colonne disponible pour mettre à jour l’opération.');
             }
 
             $params[] = $excludeOperationId;
@@ -1804,6 +1952,10 @@ if (!function_exists('createOperationWithAccountingV2')) {
                 recomputeAllBalances($pdo);
             }
 
+            if ($clientId && function_exists('sl_refresh_client_pending_debits_readiness')) {
+                sl_refresh_client_pending_debits_readiness($pdo, $clientId, $createdBy);
+            }
+
             return $excludeOperationId;
         }
 
@@ -1817,21 +1969,21 @@ if (!function_exists('createOperationWithAccountingV2')) {
             'operation_type_id' => $operationTypeId,
             'linked_bank_account_id' => $bankAccountId,
             'bank_account_id' => $bankAccountId,
-            'operation_date' => $payload['operation_date'] ?? date('Y-m-d'),
-            'amount' => (float)($payload['amount'] ?? 0),
-            'currency_code' => $payload['currency_code'] ?? null,
-            'operation_type_code' => $payload['operation_type_code'] ?? null,
-            'operation_kind' => $payload['operation_kind'] ?? null,
-            'label' => $payload['label'] ?? null,
-            'reference' => $payload['reference'] ?? null,
-            'notes' => $payload['notes'] ?? null,
-            'source_type' => $payload['source_type'] ?? null,
-            'debit_account_code' => $resolved['debit_account_code'],
-            'credit_account_code' => $resolved['credit_account_code'],
-            'service_account_code' => $resolved['analytic_account']['account_code'] ?? null,
-            'operation_hash' => $resolved['operation_hash'],
-            'is_manual_accounting' => (int)$resolved['is_manual_accounting'],
-            'created_by' => isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null,
+            'operation_date' => $effectivePayload['operation_date'] ?? date('Y-m-d'),
+            'amount' => (float)($effectivePayload['amount'] ?? 0),
+            'currency_code' => $effectivePayload['currency_code'] ?? null,
+            'operation_type_code' => $effectivePayload['operation_type_code'] ?? null,
+            'operation_kind' => $effectivePayload['operation_kind'] ?? null,
+            'label' => $effectivePayload['label'] ?? null,
+            'reference' => $effectivePayload['reference'] ?? null,
+            'notes' => $effectivePayload['notes'] ?? null,
+            'source_type' => $effectivePayload['source_type'] ?? null,
+            'debit_account_code' => $effectiveResolved['debit_account_code'],
+            'credit_account_code' => $effectiveResolved['credit_account_code'],
+            'service_account_code' => $effectiveResolved['analytic_account']['account_code'] ?? null,
+            'operation_hash' => $effectiveResolved['operation_hash'],
+            'is_manual_accounting' => (int)$effectiveResolved['is_manual_accounting'],
+            'created_by' => $createdBy,
         ];
 
         foreach ($map as $column => $value) {
@@ -1846,9 +1998,14 @@ if (!function_exists('createOperationWithAccountingV2')) {
             $columns[] = 'created_at';
             $values[] = 'NOW()';
         }
+
         if (columnExists($pdo, 'operations', 'updated_at')) {
             $columns[] = 'updated_at';
             $values[] = 'NOW()';
+        }
+
+        if (!$columns) {
+            throw new RuntimeException('Aucune colonne disponible pour créer l’opération.');
         }
 
         $stmt = $pdo->prepare("
@@ -1859,8 +2016,37 @@ if (!function_exists('createOperationWithAccountingV2')) {
 
         $operationId = (int)$pdo->lastInsertId();
 
+        if (
+            $guard['mode'] === 'partial'
+            && !empty($guard['pending_debit_id'])
+            && function_exists('sl_attach_operation_to_pending_debit')
+        ) {
+            sl_attach_operation_to_pending_debit($pdo, (int)$guard['pending_debit_id'], $operationId, $createdBy);
+        }
+
+        if (
+            $guard['mode'] === 'partial'
+            && function_exists('createNotification')
+            && $clientId
+        ) {
+            createNotification(
+                $pdo,
+                'pending_debit_partial_execution',
+                'Débit partiel exécuté sur 411 client. Reliquat placé en débit dû.',
+                'warning',
+                defined('APP_URL') ? APP_URL . 'modules/pending_debits/pending_debit_view.php?id=' . (int)$guard['pending_debit_id'] : null,
+                'pending_client_debit',
+                (int)$guard['pending_debit_id'],
+                $createdBy
+            );
+        }
+
         if (function_exists('recomputeAllBalances')) {
             recomputeAllBalances($pdo);
+        }
+
+        if ($clientId && function_exists('sl_refresh_client_pending_debits_readiness')) {
+            sl_refresh_client_pending_debits_readiness($pdo, $clientId, $createdBy);
         }
 
         return $operationId;
@@ -2593,198 +2779,6 @@ if (!function_exists('sl_create_entity_notification')) {
     }
 }
 
-if (!function_exists('sl_build_notification_link_for_entity')) {
-    function sl_build_notification_link_for_entity(string $entityType, int $entityId): ?string
-    {
-        $entityType = strtolower(trim($entityType));
-        $entityId = (int)$entityId;
-
-        if ($entityId <= 0 || !defined('APP_URL')) {
-            return null;
-        }
-
-        return match ($entityType) {
-            'client' => APP_URL . 'modules/clients/client_view.php?id=' . $entityId,
-            'operation' => APP_URL . 'modules/operations/operation_view.php?id=' . $entityId,
-            'treasury_account' => APP_URL . 'modules/treasury/treasury_view.php?id=' . $entityId,
-            'service_account' => APP_URL . 'modules/service_accounts/view.php?id=' . $entityId,
-            'import' => APP_URL . 'modules/imports/import_journal.php',
-            default => null,
-        };
-    }
-}
-
-if (!function_exists('sl_create_entity_notification')) {
-    function sl_create_entity_notification(
-        PDO $pdo,
-        string $type,
-        string $message,
-        string $level = 'info',
-        ?string $entityType = null,
-        ?int $entityId = null,
-        ?int $createdBy = null
-    ): void {
-        if (!function_exists('createNotification')) {
-            return;
-        }
-
-        $linkUrl = null;
-        if ($entityType !== null && $entityId !== null && function_exists('sl_build_notification_link_for_entity')) {
-            $linkUrl = sl_build_notification_link_for_entity($entityType, $entityId);
-        }
-
-        createNotification(
-            $pdo,
-            $type,
-            $message,
-            $level,
-            $linkUrl,
-            $entityType,
-            $entityId,
-            $createdBy
-        );
-    }
-}
-
-if (!function_exists('sl_get_operation_rules_summary')) {
-    function sl_get_operation_rules_summary(
-        string $operationTypeCode,
-        string $serviceCode,
-        ?string $commercialCountry = null,
-        ?string $destinationCountry = null
-    ): array {
-        $operationTypeCode = sl_normalize_code($operationTypeCode);
-        $serviceCode = sl_normalize_code($serviceCode);
-
-        $manual = sl_is_manual_accounting_case($operationTypeCode, $serviceCode);
-        $isInternal = ($operationTypeCode === 'VIREMENT' && $serviceCode === 'INTERNE');
-
-        $requiresClient = !$isInternal;
-        $requiresLinkedBank =
-            ($operationTypeCode === 'VERSEMENT')
-            || ($operationTypeCode === 'REGULARISATION')
-            || ($operationTypeCode === 'VIREMENT' && $serviceCode !== 'INTERNE');
-
-        $searchText = '—';
-
-        if ($operationTypeCode === 'FRAIS_SERVICE' && $serviceCode === 'AVI') {
-            $searchText = 'AVI + ' . ($destinationCountry ?: '?') . ' + ' . ($commercialCountry ?: '?');
-        } elseif ($operationTypeCode === 'FRAIS_SERVICE' && $serviceCode === 'ATS') {
-            $searchText = 'ATS + ' . ($commercialCountry ?: '?');
-        } elseif ($operationTypeCode === 'FRAIS_GESTION' && $serviceCode === 'GESTION') {
-            $searchText = 'GESTION + ' . ($commercialCountry ?: '?');
-        } elseif ($operationTypeCode === 'COMMISSION_DE_TRANSFERT' && $serviceCode === 'COMMISSION_DE_TRANSFERT') {
-            $searchText = 'TRANSFERT + ' . ($commercialCountry ?: '?');
-        } elseif ($operationTypeCode === 'CA_PLACEMENT' && $serviceCode === 'CA_PLACEMENT') {
-            $searchText = 'CA PLACEMENT + ' . ($commercialCountry ?: '?');
-        }
-
-        return [
-            'operation_type_code' => $operationTypeCode,
-            'service_code' => $serviceCode,
-            'requires_client' => $requiresClient,
-            'requires_linked_bank' => $requiresLinkedBank,
-            'requires_manual_accounts' => $manual,
-            'service_account_search_text' => $searchText,
-        ];
-    }
-}
-
-if (!function_exists('sl_get_operation_anomalies')) {
-    function sl_get_operation_anomalies(array $payload): array
-    {
-        $issues = [];
-
-        $amount = (float)($payload['amount'] ?? 0);
-        $currency = trim((string)($payload['currency_code'] ?? ''));
-        $clientId = (int)($payload['client_id'] ?? 0);
-        $typeCode = sl_normalize_code((string)($payload['operation_type_code'] ?? ''));
-        $serviceCode = sl_normalize_code((string)($payload['service_code'] ?? ''));
-        $manualDebit = trim((string)($payload['manual_debit_account_code'] ?? ''));
-        $manualCredit = trim((string)($payload['manual_credit_account_code'] ?? ''));
-
-        if ($amount <= 0) {
-            $issues[] = ['level' => 'danger', 'message' => 'Montant nul ou négatif.'];
-        }
-
-        if ($currency === '') {
-            $issues[] = ['level' => 'warning', 'message' => 'Devise absente.'];
-        }
-
-        if (!($typeCode === 'VIREMENT' && $serviceCode === 'INTERNE') && $clientId <= 0) {
-            $issues[] = ['level' => 'danger', 'message' => 'Client obligatoire manquant.'];
-        }
-
-        if ($typeCode === '' || $serviceCode === '') {
-            $issues[] = ['level' => 'danger', 'message' => 'Type opération ou service manquant.'];
-        }
-
-        if ($typeCode !== '' && $serviceCode !== '' && !sl_service_allowed_for_type($typeCode, $serviceCode)) {
-            $issues[] = ['level' => 'danger', 'message' => 'Service incompatible avec le type d’opération.'];
-        }
-
-        if (sl_is_manual_accounting_case($typeCode, $serviceCode)) {
-            if ($manualDebit === '' || $manualCredit === '') {
-                $issues[] = ['level' => 'danger', 'message' => 'Comptes source / destination manquants pour un cas manuel.'];
-            }
-        }
-
-        if ($manualDebit !== '' && $manualCredit !== '' && $manualDebit === $manualCredit) {
-            $issues[] = ['level' => 'warning', 'message' => 'Compte débité et crédité identiques.'];
-        }
-
-        if (empty($issues)) {
-            $issues[] = ['level' => 'success', 'message' => 'Aucune anomalie bloquante détectée.'];
-        }
-
-        return $issues;
-    }
-}
-
-if (!function_exists('sl_get_import_mapping_suggestions')) {
-    function sl_get_import_mapping_suggestions(array $headers): array
-    {
-        $map = [];
-        $normalizedHeaders = [];
-
-        foreach ($headers as $header) {
-            $normalizedHeaders[(string)$header] = sl_normalize_match_text((string)$header);
-        }
-
-        $dictionary = [
-            'operation_date' => ['DATE', 'DATE OPERATION', 'DATE_OPERATION'],
-            'amount' => ['MONTANT', 'AMOUNT', 'SOMME', 'VALEUR'],
-            'currency_code' => ['DEVISE', 'CURRENCY', 'CURRENCY CODE'],
-            'client_code' => ['CLIENT', 'CODE CLIENT', 'CLIENT CODE'],
-            'operation_type' => ['TYPE OPERATION', 'TYPE', 'OPERATION TYPE'],
-            'service' => ['SERVICE', 'TYPE SERVICE'],
-            'reference' => ['REFERENCE', 'LIBELLE', 'INTITULE'],
-            'label' => ['LABEL', 'LIBELLE OPERATION'],
-            'notes' => ['NOTE', 'MOTIF', 'COMMENTAIRE'],
-            'source_account_code' => ['COMPTE SOURCE', 'SOURCE ACCOUNT', 'DEBIT'],
-            'destination_account_code' => ['COMPTE DESTINATION', 'DESTINATION ACCOUNT', 'CREDIT'],
-            'linked_bank_account_id' => ['COMPTE BANCAIRE LIE', 'BANK ACCOUNT', 'LINKED BANK'],
-            'account_code' => ['CODE COMPTE', 'ACCOUNT CODE'],
-            'account_label' => ['INTITULE COMPTE', 'ACCOUNT LABEL'],
-            'commercial_country_label' => ['PAYS COMMERCIAL', 'COMMERCIAL COUNTRY'],
-            'destination_country_label' => ['PAYS DESTINATION', 'DESTINATION COUNTRY'],
-        ];
-
-        foreach ($dictionary as $target => $aliases) {
-            foreach ($normalizedHeaders as $original => $normalized) {
-                foreach ($aliases as $alias) {
-                    if ($normalized === sl_normalize_match_text($alias)) {
-                        $map[$target] = $original;
-                        continue 3;
-                    }
-                }
-            }
-        }
-
-        return $map;
-    }
-}
-
 if (!function_exists('renderPostableBadge')) {
     function renderPostableBadge(?int $isPostable): string
     {
@@ -2844,6 +2838,7 @@ if (!function_exists('sl_fetch_postable_service_accounts')) {
         return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
     }
 }
+
 if (!function_exists('sl_find_accounting_rule')) {
     function sl_find_accounting_rule(PDO $pdo, int $operationTypeId, int $serviceId): ?array
     {
@@ -2972,6 +2967,7 @@ if (!function_exists('sl_resolve_accounting_operation_from_rule')) {
         ];
     }
 }
+
 if (!function_exists('slPreviewSessionKey')) {
     function slPreviewSessionKey(string $scope): string
     {
@@ -3009,6 +3005,7 @@ if (!function_exists('slClearPreviewPayload')) {
         unset($_SESSION[slPreviewSessionKey($scope)]);
     }
 }
+
 if (!function_exists('slRenderPreviewCard')) {
     function slRenderPreviewCard(string $title, array $rows = [], string $emptyMessage = 'Aucun aperçu disponible.'): string
     {
@@ -3315,6 +3312,7 @@ if (!function_exists('sl_run_monthly_client_operations')) {
         return $report;
     }
 }
+
 if (!function_exists('sl_monthly_payment_parse_csv')) {
     function sl_monthly_payment_parse_csv(string $filePath, string $delimiter = ';'): array
     {
@@ -3335,7 +3333,7 @@ if (!function_exists('sl_monthly_payment_parse_csv')) {
         }
 
         $header = array_map(static function ($value) {
-            $value = trim((string) $value);
+            $value = trim((string)$value);
             $value = mb_strtolower($value);
             $value = str_replace(['é', 'è', 'ê', 'à', 'â', 'î', 'ï', 'ô', 'ù', 'û', 'ç'], ['e', 'e', 'e', 'a', 'a', 'i', 'i', 'o', 'u', 'u', 'c'], $value);
             return $value;
@@ -3344,13 +3342,13 @@ if (!function_exists('sl_monthly_payment_parse_csv')) {
         $lineNumber = 1;
         while (($data = fgetcsv($handle, 0, $delimiter)) !== false) {
             $lineNumber++;
-            if (count(array_filter($data, static fn($v) => trim((string) $v) !== '')) === 0) {
+            if (count(array_filter($data, static fn($v) => trim((string)$v) !== '')) === 0) {
                 continue;
             }
 
             $assoc = [];
             foreach ($header as $index => $key) {
-                $assoc[$key] = trim((string) ($data[$index] ?? ''));
+                $assoc[$key] = trim((string)($data[$index] ?? ''));
             }
 
             $rows[] = [
@@ -3408,10 +3406,10 @@ if (!function_exists('sl_monthly_payment_validate_row')) {
     {
         $errors = [];
 
-        $clientCode = trim((string) ($row['client_code'] ?? ''));
-        $amount = (float) str_replace(',', '.', (string) ($row['monthly_amount'] ?? '0'));
-        $treasuryCode = trim((string) ($row['treasury_account_code'] ?? ''));
-        $monthlyDay = (int) ($row['monthly_day'] ?? 26);
+        $clientCode = trim((string)($row['client_code'] ?? ''));
+        $amount = (float)str_replace(',', '.', (string)($row['monthly_amount'] ?? '0'));
+        $treasuryCode = trim((string)($row['treasury_account_code'] ?? ''));
+        $monthlyDay = (int)($row['monthly_day'] ?? 26);
 
         $client = null;
         $treasury = null;
@@ -3473,7 +3471,7 @@ if (!function_exists('sl_monthly_payment_operation_exists')) {
         ");
         $stmt->execute([$clientId, $operationDate, $amount, $reference]);
 
-        return ((int) $stmt->fetchColumn()) > 0;
+        return ((int)$stmt->fetchColumn()) > 0;
     }
 }
 
@@ -3488,11 +3486,11 @@ if (!function_exists('sl_monthly_payment_create_operation')) {
         ?int $userId = null,
         string $label = ''
     ): int {
-        $clientId = (int) ($client['id'] ?? 0);
-        $clientAccount = (string) ($client['generated_client_account'] ?? '');
-        $clientCurrency = (string) ($client['currency'] ?? 'EUR');
-        $treasuryCode = (string) ($treasury['account_code'] ?? '');
-        $clientCode = (string) ($client['client_code'] ?? '');
+        $clientId = (int)($client['id'] ?? 0);
+        $clientAccount = (string)($client['generated_client_account'] ?? '');
+        $clientCurrency = (string)($client['currency'] ?? 'EUR');
+        $treasuryCode = (string)($treasury['account_code'] ?? '');
+        $clientCode = (string)($client['client_code'] ?? '');
 
         if ($clientId <= 0 || $clientAccount === '' || $treasuryCode === '') {
             throw new RuntimeException('Données insuffisantes pour créer l’opération mensuelle.');
@@ -3592,7 +3590,7 @@ if (!function_exists('sl_monthly_payment_create_operation')) {
             ':created_by' => $userId,
         ]);
 
-        $operationId = (int) $pdo->lastInsertId();
+        $operationId = (int)$pdo->lastInsertId();
 
         $stmt = $pdo->prepare("
             UPDATE clients
@@ -3620,6 +3618,7 @@ if (!function_exists('sl_monthly_payment_create_operation')) {
         return $operationId;
     }
 }
+
 if (!function_exists('sl_monthly_payment_create_run_item')) {
     function sl_monthly_payment_create_run_item(PDO $pdo, array $data): int
     {
@@ -3764,6 +3763,7 @@ if (!function_exists('sl_monthly_payment_get_run_totals')) {
         ];
     }
 }
+
 if (!function_exists('sl_monthly_payment_cancel_run')) {
     function sl_monthly_payment_cancel_run(PDO $pdo, int $runId, ?int $userId = null): array
     {
@@ -3807,12 +3807,14 @@ if (!function_exists('sl_monthly_payment_cancel_run')) {
                 $skipped++;
             }
 
-            $stmtUpdate = $pdo->prepare("
-                UPDATE monthly_payment_run_items
-                SET is_cancelled = 1, updated_at = NOW()
-                WHERE id = ?
-            ");
-            $stmtUpdate->execute([$item['id']]);
+            if (columnExists($pdo, 'monthly_payment_run_items', 'is_cancelled')) {
+                $stmtUpdate = $pdo->prepare("
+                    UPDATE monthly_payment_run_items
+                    SET is_cancelled = 1, updated_at = NOW()
+                    WHERE id = ?
+                ");
+                $stmtUpdate->execute([$item['id']]);
+            }
         }
 
         $stmtRun = $pdo->prepare("

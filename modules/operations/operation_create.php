@@ -13,8 +13,9 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'operations_create');
 }
 
-$pageTitle = 'Créer une opération';
-$pageSubtitle = 'Création sécurisée avec prévisualisation comptable avant validation';
+if (!tableExists($pdo, 'operations')) {
+    exit('Table operations introuvable.');
+}
 
 $operationTypes = tableExists($pdo, 'ref_operation_types')
     ? $pdo->query("
@@ -79,21 +80,12 @@ $serviceAccounts = function_exists('sl_fetch_postable_service_accounts')
         ")->fetchAll(PDO::FETCH_ASSOC)
         : []);
 
-$bankAccounts = tableExists($pdo, 'bank_accounts')
-    ? $pdo->query("
-        SELECT id, account_name, account_number
-        FROM bank_accounts
-        WHERE COALESCE(is_active,1)=1
-        ORDER BY account_name ASC, account_number ASC
-    ")->fetchAll(PDO::FETCH_ASSOC)
-    : [];
-
 $currencies = function_exists('sl_get_currency_options')
     ? sl_get_currency_options($pdo)
     : [['code' => 'EUR', 'label' => 'Euro']];
 
-if (!function_exists('sl_find_by_id')) {
-    function sl_find_by_id(array $rows, int $id): ?array
+if (!function_exists('sl_create_find_by_id')) {
+    function sl_create_find_by_id(array $rows, int $id): ?array
     {
         foreach ($rows as $row) {
             if ((int)($row['id'] ?? 0) === $id) {
@@ -174,8 +166,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Service obligatoire.');
         }
 
-        $selectedType = sl_find_by_id($operationTypes, $operationTypeId);
-        $selectedService = sl_find_by_id($services, $serviceId);
+        $selectedType = sl_create_find_by_id($operationTypes, $operationTypeId);
+        $selectedService = sl_create_find_by_id($services, $serviceId);
 
         if (!$selectedType) {
             throw new RuntimeException('Type d’opération introuvable.');
@@ -197,14 +189,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Service incompatible avec le type d’opération.');
         }
 
-        $manualCases = [
-            'VIREMENT::INTERNE',
-            'CA_DIVERS::CA_DIVERS',
-            'CA_DEBOURDS_ASSURANCE::CA_DEBOURDS_ASSURANCE',
-            'FRAIS_DEBOURDS_MICROFINANCE::FRAIS_DEBOURDS_MICROFINANCE',
-            'CA_COURTAGE_PRET::CA_COURTAGE_PRET',
-            'CA_LOGEMENT::CA_LOGEMENT',
-        ];
+        $manualCases = function_exists('sl_manual_accounting_cases')
+            ? sl_manual_accounting_cases()
+            : [
+                'VIREMENT::INTERNE',
+                'CA_DIVERS::CA_DIVERS',
+                'CA_DEBOURDS_ASSURANCE::CA_DEBOURDS_ASSURANCE',
+                'FRAIS_DEBOURDS_MICROFINANCE::FRAIS_DEBOURDS_MICROFINANCE',
+                'CA_COURTAGE_PRET::CA_COURTAGE_PRET',
+                'CA_LOGEMENT::CA_LOGEMENT',
+            ];
 
         $manualKey = $typeCode . '::' . $serviceCode;
         $isInternalTransfer = ($manualKey === 'VIREMENT::INTERNE');
@@ -230,7 +224,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'operation_type_code' => $typeCode,
             'linked_bank_account_id' => $linkedBankAccountId,
             'reference' => $reference !== '' ? $reference : null,
-            'label' => $label !== '' ? $label : trim((string)($selectedType['label'] ?? '') . ' - ' . (string)($selectedService['label'] ?? '')),
+            'label' => $label !== ''
+                ? $label
+                : trim((string)($selectedType['label'] ?? '') . ' - ' . (string)($selectedService['label'] ?? '')),
             'notes' => $notes !== '' ? $notes : null,
             'source_type' => 'manual',
             'operation_kind' => 'manual',
@@ -243,9 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $preview = resolveAccountingOperationV2($pdo, $payload);
 
         if ($actionMode === 'save') {
-            $pdo->beginTransaction();
-
-            $newId = createOperationWithAccountingV2($pdo, $payload);
+            $createdId = createOperationWithAccountingV2($pdo, $payload);
 
             if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
                 logUserAction(
@@ -254,8 +248,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'create_operation',
                     'operations',
                     'operation',
-                    $newId,
-                    'Création d’une opération'
+                    $createdId,
+                    'Création manuelle d’une opération'
                 );
             }
 
@@ -265,39 +259,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'operation_create',
                     'Nouvelle opération créée : ' . ($payload['label'] ?? 'Opération'),
                     'success',
-                    APP_URL . 'modules/operations/operation_view.php?id=' . $newId,
+                    APP_URL . 'modules/operations/operation_view.php?id=' . $createdId,
                     'operation',
-                    $newId,
+                    $createdId,
                     (int)$_SESSION['user_id']
                 );
             }
 
-            $pdo->commit();
-
-            $successMessage = 'Opération créée avec succès.';
-            $formData = [
-                'operation_date' => date('Y-m-d'),
-                'amount' => '',
-                'currency_code' => 'EUR',
-                'client_id' => '',
-                'operation_type_id' => '',
-                'service_id' => '',
-                'linked_bank_account_id' => '',
-                'reference' => '',
-                'label' => '',
-                'notes' => '',
-                'source_account_code' => '',
-                'destination_account_code' => '',
-            ];
-            $preview = null;
+            header('Location: ' . APP_URL . 'modules/operations/operation_view.php?id=' . $createdId);
+            exit;
         }
     } catch (Throwable $e) {
-        if ($pdo->inTransaction()) {
-            $pdo->rollBack();
-        }
         $errorMessage = $e->getMessage();
     }
 }
+
+$displayPreview = $preview ?: [
+    'debit_account_code' => '',
+    'credit_account_code' => '',
+    'is_manual_accounting' => 0,
+    'operation_hash' => '',
+];
+
+$pageTitle = 'Créer une opération';
+$pageSubtitle = 'Création sécurisée avec prévisualisation avant validation';
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -308,13 +293,18 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
-        <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
+        <?php if ($successMessage !== ''): ?>
+            <div class="success"><?= e($successMessage) ?></div>
+        <?php endif; ?>
+
+        <?php if ($errorMessage !== ''): ?>
+            <div class="error"><?= e($errorMessage) ?></div>
+        <?php endif; ?>
 
         <div class="dashboard-grid-2">
             <div class="form-card">
-                <h3>Paramétrage de l’opération</h3>
-                <p class="muted">Renseigne les champs puis lance une prévisualisation avant validation.</p>
+                <h3>Création de l’opération</h3>
+                <p class="muted">Prévisualise le résultat comptable avant de valider l’enregistrement.</p>
 
                 <form method="POST">
                     <?= csrf_input() ?>
@@ -395,12 +385,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         </div>
 
                         <div id="linked-bank-account-wrapper">
-                            <label>Compte bancaire lié</label>
+                            <label>Compte Bancaire 512</label>
                             <select name="linked_bank_account_id" id="linked_bank_account_id">
                                 <option value="">Choisir</option>
-                                <?php foreach ($bankAccounts as $acc): ?>
+                                <?php foreach ($treasuryAccounts as $acc): ?>
                                     <option value="<?= (int)$acc['id'] ?>" <?= $formData['linked_bank_account_id'] == $acc['id'] ? 'selected' : '' ?>>
-                                        <?= e(($acc['account_name'] ?? 'Compte') . ' - ' . ($acc['account_number'] ?? '')) ?>
+                                        <?= e(($acc['account_code'] ?? '') . ' - ' . ($acc['account_label'] ?? '')) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -467,39 +457,37 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="card">
                 <h3>Prévisualisation avant validation</h3>
 
-                <?php if ($preview): ?>
-                    <div class="sl-data-list">
-                        <div class="sl-data-list__row"><span>Date</span><strong><?= e($formData['operation_date']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Montant</span><strong><?= e(number_format((float)$formData['amount'], 2, ',', ' ')) ?> <?= e($formData['currency_code']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Compte débité</span><strong><?= e($preview['debit_account_code'] ?? '') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Compte crédité</span><strong><?= e($preview['credit_account_code'] ?? '') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Mode manuel</span><strong><?= !empty($preview['is_manual_accounting']) ? 'Oui' : 'Non' ?></strong></div>
-                        <div class="sl-data-list__row"><span>Hash anti-doublon</span><strong style="word-break:break-all;"><?= e($preview['operation_hash'] ?? '') ?></strong></div>
-                    </div>
+                <div class="sl-data-list">
+                    <div class="sl-data-list__row"><span>Date</span><strong><?= e($formData['operation_date']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Montant</span><strong><?= e(number_format((float)$formData['amount'], 2, ',', ' ')) ?> <?= e($formData['currency_code']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Compte débité</span><strong><?= e($displayPreview['debit_account_code'] ?? '') ?></strong></div>
+                    <div class="sl-data-list__row"><span>Compte crédité</span><strong><?= e($displayPreview['credit_account_code'] ?? '') ?></strong></div>
+                    <div class="sl-data-list__row"><span>Mode manuel</span><strong><?= !empty($displayPreview['is_manual_accounting']) ? 'Oui' : 'Non' ?></strong></div>
+                    <div class="sl-data-list__row"><span>Hash anti-doublon</span><strong style="word-break:break-all;"><?= e($displayPreview['operation_hash'] ?? '') ?></strong></div>
+                </div>
 
-                    <?php if (!empty($preview['preview_lines']) && is_array($preview['preview_lines'])): ?>
-                        <div class="sl-table-wrap" style="margin-top:18px;">
-                            <table class="sl-table">
-                                <thead>
+                <?php if ($preview && !empty($preview['preview_lines']) && is_array($preview['preview_lines'])): ?>
+                    <div class="sl-table-wrap" style="margin-top:18px;">
+                        <table class="sl-table">
+                            <thead>
+                                <tr>
+                                    <th>Sens</th>
+                                    <th>Compte</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($preview['preview_lines'] as $line): ?>
                                     <tr>
-                                        <th>Sens</th>
-                                        <th>Compte</th>
+                                        <td><?= e((string)($line['side'] ?? '')) ?></td>
+                                        <td><?= e((string)($line['account'] ?? '')) ?></td>
                                     </tr>
-                                </thead>
-                                <tbody>
-                                    <?php foreach ($preview['preview_lines'] as $line): ?>
-                                        <tr>
-                                            <td><?= e((string)($line['side'] ?? '')) ?></td>
-                                            <td><?= e((string)($line['account'] ?? '')) ?></td>
-                                        </tr>
-                                    <?php endforeach; ?>
-                                </tbody>
-                            </table>
-                        </div>
-                    <?php endif; ?>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
                 <?php else: ?>
-                    <div class="dashboard-note">
-                        Remplis le formulaire puis clique sur <strong>Prévisualiser</strong>.
+                    <div class="dashboard-note" style="margin-top:18px;">
+                        Prévisualise la création pour vérifier les comptes avant validation.
                     </div>
                 <?php endif; ?>
             </div>

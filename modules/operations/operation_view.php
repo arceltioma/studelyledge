@@ -25,6 +25,7 @@ $selectParts = ['o.*'];
 $joinClients = '';
 $joinServices = '';
 $joinTypes = '';
+$joinLinkedTreasury = '';
 $joinLinkedBank = '';
 $joinMainBank = '';
 $joinMonthlyRun = '';
@@ -35,6 +36,7 @@ if (tableExists($pdo, 'clients') && columnExists($pdo, 'operations', 'client_id'
     $selectParts[] = columnExists($pdo, 'clients', 'full_name') ? 'c.full_name AS client_full_name' : "NULL AS client_full_name";
     $selectParts[] = columnExists($pdo, 'clients', 'country_commercial') ? 'c.country_commercial' : "NULL AS country_commercial";
     $selectParts[] = columnExists($pdo, 'clients', 'country_destination') ? 'c.country_destination' : "NULL AS country_destination";
+    $selectParts[] = columnExists($pdo, 'clients', 'generated_client_account') ? 'c.generated_client_account' : "NULL AS client_generated_account";
 }
 
 if (tableExists($pdo, 'ref_services') && columnExists($pdo, 'operations', 'service_id')) {
@@ -49,6 +51,25 @@ if (tableExists($pdo, 'ref_operation_types') && columnExists($pdo, 'operations',
     $selectParts[] = columnExists($pdo, 'ref_operation_types', 'label') ? 'rot.label AS operation_type_label' : "NULL AS operation_type_label";
 }
 
+/*
+|--------------------------------------------------------------------------
+| Compte Bancaire 512 sélectionné
+|--------------------------------------------------------------------------
+| linked_bank_account_id est désormais utilisé par le flux opération
+| pour stocker l'id du compte 512 choisi dans treasury_accounts.
+*/
+if (tableExists($pdo, 'treasury_accounts') && columnExists($pdo, 'operations', 'linked_bank_account_id')) {
+    $joinLinkedTreasury = 'LEFT JOIN treasury_accounts lta ON lta.id = o.linked_bank_account_id';
+    $selectParts[] = 'lta.id AS linked_treasury_account_id';
+    $selectParts[] = 'lta.account_code AS linked_treasury_account_code';
+    $selectParts[] = 'lta.account_label AS linked_treasury_account_label';
+}
+
+/*
+|--------------------------------------------------------------------------
+| Compatibilité héritée éventuelle
+|--------------------------------------------------------------------------
+*/
 if (tableExists($pdo, 'bank_accounts') && columnExists($pdo, 'operations', 'linked_bank_account_id')) {
     $joinLinkedBank = 'LEFT JOIN bank_accounts lba ON lba.id = o.linked_bank_account_id';
     $selectParts[] = 'lba.account_name AS linked_bank_account_name';
@@ -76,6 +97,7 @@ $sql = "
     {$joinClients}
     {$joinServices}
     {$joinTypes}
+    {$joinLinkedTreasury}
     {$joinLinkedBank}
     {$joinMainBank}
     {$joinMonthlyRun}
@@ -105,6 +127,11 @@ $clientDisplay = trim((string)(
 $operationTypeDisplay = trim((string)($operation['operation_type_label'] ?? $operation['operation_type_code_ref'] ?? $operation['operation_type_code'] ?? ''));
 $serviceDisplay = trim((string)($operation['service_label'] ?? $operation['service_code_ref'] ?? $operation['service_code'] ?? ''));
 
+$linkedTreasuryDisplay = trim((string)(
+    (($operation['linked_treasury_account_code'] ?? '') !== '' ? ($operation['linked_treasury_account_code'] . ' - ') : '') .
+    ($operation['linked_treasury_account_label'] ?? '')
+));
+
 $linkedBankDisplay = trim((string)(
     (($operation['linked_bank_account_number'] ?? '') !== '' ? ($operation['linked_bank_account_number'] . ' - ') : '') .
     ($operation['linked_bank_account_name'] ?? '')
@@ -118,11 +145,9 @@ $mainBankDisplay = trim((string)(
 $monthlyRunDisplay = '';
 if (!empty($operation['monthly_run_id'])) {
     $monthlyRunDisplay = 'Run #' . (int)$operation['monthly_run_id'];
-
     if (!empty($operation['monthly_run_date'])) {
         $monthlyRunDisplay .= ' - ' . $operation['monthly_run_date'];
     }
-
     if (!empty($operation['monthly_run_status'])) {
         $monthlyRunDisplay .= ' - ' . $operation['monthly_run_status'];
     }
@@ -168,6 +193,10 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <div class="stat-row"><span class="metric-label">Type opération</span><span class="metric-value"><?= e($operationTypeDisplay !== '' ? $operationTypeDisplay : '—') ?></span></div>
                 <div class="stat-row"><span class="metric-label">Service</span><span class="metric-value"><?= e($serviceDisplay !== '' ? $serviceDisplay : '—') ?></span></div>
                 <div class="stat-row"><span class="metric-label">Client</span><span class="metric-value"><?= e($clientDisplay !== '' ? $clientDisplay : 'N/A') ?></span></div>
+
+                <?php if (!empty($operation['client_generated_account'])): ?>
+                    <div class="stat-row"><span class="metric-label">Compte 411 client</span><span class="metric-value"><?= e((string)$operation['client_generated_account']) ?></span></div>
+                <?php endif; ?>
 
                 <?php if (!empty($operation['country_commercial'])): ?>
                     <div class="stat-row"><span class="metric-label">Pays commercial</span><span class="metric-value"><?= e((string)$operation['country_commercial']) ?></span></div>
@@ -216,13 +245,16 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </div>
 
             <div class="card">
-                <h3>Métadonnées</h3>
+                <h3>Comptes liés & métadonnées</h3>
+
+                <div class="stat-row"><span class="metric-label">Compte Bancaire 512</span><span class="metric-value"><?= e($linkedTreasuryDisplay !== '' ? $linkedTreasuryDisplay : '—') ?></span></div>
+
+                <div class="stat-row"><span class="metric-label">Compte bancaire lié (legacy)</span><span class="metric-value"><?= e($linkedBankDisplay !== '' ? $linkedBankDisplay : '—') ?></span></div>
+                <div class="stat-row"><span class="metric-label">Compte bancaire interne</span><span class="metric-value"><?= e($mainBankDisplay !== '' ? $mainBankDisplay : '—') ?></span></div>
 
                 <div class="stat-row"><span class="metric-label">Créé par</span><span class="metric-value"><?= e((string)($operation['created_by'] ?? '')) ?></span></div>
                 <div class="stat-row"><span class="metric-label">Créé le</span><span class="metric-value"><?= e((string)($operation['created_at'] ?? '')) ?></span></div>
                 <div class="stat-row"><span class="metric-label">Mis à jour le</span><span class="metric-value"><?= e((string)($operation['updated_at'] ?? '')) ?></span></div>
-                <div class="stat-row"><span class="metric-label">Compte bancaire lié</span><span class="metric-value"><?= e($linkedBankDisplay !== '' ? $linkedBankDisplay : ((string)($operation['linked_bank_account_id'] ?? '—'))) ?></span></div>
-                <div class="stat-row"><span class="metric-label">Compte bancaire interne</span><span class="metric-value"><?= e($mainBankDisplay !== '' ? $mainBankDisplay : ((string)($operation['bank_account_id'] ?? '—'))) ?></span></div>
 
                 <?php if (columnExists($pdo, 'operations', 'monthly_run_id')): ?>
                     <div class="stat-row">

@@ -12,18 +12,100 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'imports_preview');
 }
 
-$importId = (int)($_GET['import_id'] ?? 0);
-if ($importId <= 0) {
-    exit('Import invalide.');
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
 }
 
-$stmtImport = $pdo->prepare("SELECT * FROM monthly_payment_imports WHERE id = ? LIMIT 1");
+if (!function_exists('sl_monthly_preview_redirect')) {
+    function sl_monthly_preview_redirect(string $message): void
+    {
+        $_SESSION['flash_message'] = $message;
+        $_SESSION['flash_type'] = 'error';
+        header('Location: ' . APP_URL . 'modules/monthly_payments/import_monthly_payments.php');
+        exit;
+    }
+}
+
+if (!function_exists('sl_monthly_preview_pick_import_id')) {
+    function sl_monthly_preview_pick_import_id(PDO $pdo): int
+    {
+        $candidates = [
+            (int)($_GET['import_id'] ?? 0),
+            (int)($_POST['import_id'] ?? 0),
+            (int)($_SESSION['monthly_payment_current_import_id'] ?? 0),
+        ];
+
+        foreach ($candidates as $candidate) {
+            if ($candidate > 0) {
+                return $candidate;
+            }
+        }
+
+        if (!tableExists($pdo, 'monthly_payment_imports')) {
+            return 0;
+        }
+
+        $stmt = $pdo->query("
+            SELECT id
+            FROM monthly_payment_imports
+            ORDER BY id DESC
+            LIMIT 1
+        ");
+
+        return (int)($stmt->fetchColumn() ?: 0);
+    }
+}
+
+if (!function_exists('sl_monthly_preview_row_amount')) {
+    function sl_monthly_preview_row_amount(array $row): float
+    {
+        $keys = ['monthly_amount', 'mensualite_amount', 'amount', 'montant'];
+
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $row) && trim((string)$row[$key]) !== '') {
+                return (float)str_replace(',', '.', (string)$row[$key]);
+            }
+        }
+
+        return 0.0;
+    }
+}
+
+if (!function_exists('sl_monthly_preview_row_day')) {
+    function sl_monthly_preview_row_day(array $row): int
+    {
+        $keys = ['monthly_day', 'mensualite_day', 'jour'];
+
+        foreach ($keys as $key) {
+            if (array_key_exists($key, $row) && trim((string)$row[$key]) !== '') {
+                return (int)$row[$key];
+            }
+        }
+
+        return 26;
+    }
+}
+
+$importId = sl_monthly_preview_pick_import_id($pdo);
+if ($importId <= 0) {
+    sl_monthly_preview_redirect('Aucun import de mensualités à prévisualiser.');
+}
+
+$stmtImport = $pdo->prepare("
+    SELECT *
+    FROM monthly_payment_imports
+    WHERE id = ?
+    LIMIT 1
+");
 $stmtImport->execute([$importId]);
 $import = $stmtImport->fetch(PDO::FETCH_ASSOC);
 
 if (!$import) {
-    exit('Import introuvable.');
+    unset($_SESSION['monthly_payment_current_import_id']);
+    sl_monthly_preview_redirect('Import introuvable.');
 }
+
+$_SESSION['monthly_payment_current_import_id'] = $importId;
 
 $stmtRows = $pdo->prepare("
     SELECT r.*
@@ -39,15 +121,15 @@ $totals = [
     'rows' => 0,
     'valid' => 0,
     'invalid' => 0,
-    'amount' => 0,
+    'amount' => 0.0,
 ];
 
 foreach ($rows as $row) {
     $totals['rows']++;
 
     $clientCode = trim((string)($row['client_code'] ?? ''));
-    $amount = (float)($row['monthly_amount'] ?? 0);
-    $day = (int)($row['monthly_day'] ?? 26);
+    $amount = sl_monthly_preview_row_amount($row);
+    $day = sl_monthly_preview_row_day($row);
     $treasuryCode = trim((string)($row['treasury_account_code'] ?? ''));
 
     $message = [];
@@ -59,9 +141,14 @@ foreach ($rows as $row) {
         $rowStatus = 'error';
         $message[] = 'Code client absent';
     } else {
-        $stmt = $pdo->prepare("SELECT * FROM clients WHERE client_code = ? LIMIT 1");
-        $stmt->execute([$clientCode]);
-        $client = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        $stmtClient = $pdo->prepare("
+            SELECT *
+            FROM clients
+            WHERE client_code = ?
+            LIMIT 1
+        ");
+        $stmtClient->execute([$clientCode]);
+        $client = $stmtClient->fetch(PDO::FETCH_ASSOC) ?: null;
 
         if (!$client) {
             $rowStatus = 'error';
@@ -83,9 +170,14 @@ foreach ($rows as $row) {
         $rowStatus = 'error';
         $message[] = 'Compte 512 absent';
     } else {
-        $stmt = $pdo->prepare("SELECT * FROM treasury_accounts WHERE account_code = ? LIMIT 1");
-        $stmt->execute([$treasuryCode]);
-        $treasury = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+        $stmtTreasury = $pdo->prepare("
+            SELECT *
+            FROM treasury_accounts
+            WHERE account_code = ?
+            LIMIT 1
+        ");
+        $stmtTreasury->execute([$treasuryCode]);
+        $treasury = $stmtTreasury->fetch(PDO::FETCH_ASSOC) ?: null;
 
         if (!$treasury) {
             $rowStatus = 'error';
@@ -106,6 +198,8 @@ foreach ($rows as $row) {
         'treasury' => $treasury,
         'status' => $rowStatus,
         'message' => implode(' | ', $message),
+        'amount' => $amount,
+        'day' => $day,
     ];
 }
 
@@ -151,7 +245,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
         <div class="card">
             <div class="btn-group" style="margin-bottom:16px;">
-                <a href="<?= e(APP_URL) ?>modules/monthly_payments/monthly_import_validate.php?import_id=<?= (int)$importId ?>" class="btn btn-success">
+                <a href="<?= e(APP_URL) ?>modules/monthly_payments/monthly_payments_validate.php?import_id=<?= (int)$importId ?>" class="btn btn-success">
                     Valider cet import
                 </a>
                 <a href="<?= e(APP_URL) ?>modules/monthly_payments/import_monthly_payments.php" class="btn btn-outline">
@@ -177,8 +271,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <?php foreach ($validatedRows as $item): ?>
                             <tr>
                                 <td><?= e((string)($item['raw']['client_code'] ?? '')) ?></td>
-                                <td><?= e(number_format((float)($item['raw']['monthly_amount'] ?? 0), 2, ',', ' ')) ?></td>
-                                <td><?= (int)($item['raw']['monthly_day'] ?? 26) ?></td>
+                                <td><?= e(number_format((float)$item['amount'], 2, ',', ' ')) ?></td>
+                                <td><?= (int)$item['day'] ?></td>
                                 <td><?= e((string)($item['raw']['treasury_account_code'] ?? '')) ?></td>
                                 <td>
                                     <span class="sl-pill <?= $item['status'] === 'ready' ? 'audit-badge-success' : 'audit-badge-danger' ?>">

@@ -309,12 +309,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Le compte 411 doit commencer par 411.');
         }
 
-        if ($formData['passport_issue_date'] !== '' && $formData['passport_expiry_date'] !== '' && $formData['passport_expiry_date'] < $formData['passport_issue_date']) {
+        if (
+            $formData['passport_issue_date'] !== ''
+            && $formData['passport_expiry_date'] !== ''
+            && $formData['passport_expiry_date'] < $formData['passport_issue_date']
+        ) {
             throw new RuntimeException('La date d’expiration du passport doit être postérieure à sa date de délivrance.');
         }
 
         $initialBalance = (float) str_replace(',', '.', $formData['initial_balance']);
-        $balance = (float) str_replace(',', '.', $formData['balance']);
+
+        // Solde courant toujours initialisé au solde initial
+        $balance = $initialBalance;
+        $formData['balance'] = (string) $initialBalance;
+
         $monthlyAmount = (float) str_replace(',', '.', $formData['monthly_amount']);
         $monthlyDay = (int) $formData['monthly_day'];
 
@@ -326,13 +334,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Le jour de mensualité doit être compris entre 1 et 31.');
         }
 
-        if ((int) $formData['monthly_enabled'] === 1) {
-            if ($monthlyAmount <= 0) {
-                throw new RuntimeException('La mensualité doit être supérieure à 0 pour être activée.');
-            }
-            if ($formData['monthly_treasury_account_id'] === '') {
-                throw new RuntimeException('Le compte 512 de mensualité est obligatoire si la mensualité est activée.');
-            }
+        // Mensualité active autorisée même sans compte 512 mensualité
+        if ((int) $formData['monthly_enabled'] === 1 && $monthlyAmount <= 0) {
+            throw new RuntimeException('La mensualité doit être supérieure à 0 pour être activée.');
         }
 
         $stmtCheckCode = $pdo->prepare("SELECT COUNT(*) FROM clients WHERE client_code = ?");
@@ -561,7 +565,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                         <div>
                             <label>Solde courant du 411</label>
-                            <input type="number" step="0.01" name="balance" value="<?= e($formData['balance']) ?>">
+                            <input type="number" step="0.01" name="balance" value="<?= e($formData['balance']) ?>" readonly>
                         </div>
 
                         <div style="grid-column: 1 / -1;">
@@ -724,22 +728,31 @@ require_once __DIR__ . '/../../includes/document_start.php';
         document.addEventListener('DOMContentLoaded', function () {
             const clientCodeInput = document.getElementById('client_code');
             const account411Input = document.getElementById('generated_client_account');
+            const initialBalanceInput = document.querySelector('input[name="initial_balance"]');
+            const balanceInput = document.querySelector('input[name="balance"]');
 
-            if (!clientCodeInput || !account411Input) {
-                return;
+            if (clientCodeInput && account411Input) {
+                let accountTouched = false;
+
+                account411Input.addEventListener('input', function () {
+                    accountTouched = true;
+                });
+
+                clientCodeInput.addEventListener('input', function () {
+                    if (!accountTouched) {
+                        account411Input.value = '411' + clientCodeInput.value.trim();
+                    }
+                });
             }
 
-            let accountTouched = false;
+            if (initialBalanceInput && balanceInput) {
+                const syncBalance = function () {
+                    balanceInput.value = initialBalanceInput.value;
+                };
 
-            account411Input.addEventListener('input', function () {
-                accountTouched = true;
-            });
-
-            clientCodeInput.addEventListener('input', function () {
-                if (!accountTouched) {
-                    account411Input.value = '411' + clientCodeInput.value.trim();
-                }
-            });
+                initialBalanceInput.addEventListener('input', syncBalance);
+                syncBalance();
+            }
         });
         </script>
 

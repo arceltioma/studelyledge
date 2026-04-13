@@ -93,15 +93,6 @@ $serviceAccounts = function_exists('sl_fetch_postable_service_accounts')
         ")->fetchAll(PDO::FETCH_ASSOC)
         : []);
 
-$bankAccounts = tableExists($pdo, 'bank_accounts')
-    ? $pdo->query("
-        SELECT id, account_name, account_number
-        FROM bank_accounts
-        WHERE COALESCE(is_active,1)=1
-        ORDER BY account_name ASC, account_number ASC
-    ")->fetchAll(PDO::FETCH_ASSOC)
-    : [];
-
 $currencies = function_exists('sl_get_currency_options')
     ? sl_get_currency_options($pdo)
     : [['code' => 'EUR', 'label' => 'Euro']];
@@ -211,14 +202,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Service incompatible avec le type d’opération.');
         }
 
-        $manualCases = [
-            'VIREMENT::INTERNE',
-            'CA_DIVERS::CA_DIVERS',
-            'CA_DEBOURDS_ASSURANCE::CA_DEBOURDS_ASSURANCE',
-            'FRAIS_DEBOURDS_MICROFINANCE::FRAIS_DEBOURDS_MICROFINANCE',
-            'CA_COURTAGE_PRET::CA_COURTAGE_PRET',
-            'CA_LOGEMENT::CA_LOGEMENT',
-        ];
+        $manualCases = function_exists('sl_manual_accounting_cases')
+            ? sl_manual_accounting_cases()
+            : [
+                'VIREMENT::INTERNE',
+                'CA_DIVERS::CA_DIVERS',
+                'CA_DEBOURDS_ASSURANCE::CA_DEBOURDS_ASSURANCE',
+                'FRAIS_DEBOURDS_MICROFINANCE::FRAIS_DEBOURDS_MICROFINANCE',
+                'CA_COURTAGE_PRET::CA_COURTAGE_PRET',
+                'CA_LOGEMENT::CA_LOGEMENT',
+            ];
 
         $manualKey = $typeCode . '::' . $serviceCode;
         $isInternalTransfer = ($manualKey === 'VIREMENT::INTERNE');
@@ -244,7 +237,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'operation_type_code' => $typeCode,
             'linked_bank_account_id' => $linkedBankAccountId,
             'reference' => $reference !== '' ? $reference : null,
-            'label' => $label !== '' ? $label : trim((string)($selectedType['label'] ?? '') . ' - ' . (string)($selectedService['label'] ?? '')),
+            'label' => $label !== ''
+                ? $label
+                : trim((string)($selectedType['label'] ?? '') . ' - ' . (string)($selectedService['label'] ?? '')),
             'notes' => $notes !== '' ? $notes : null,
             'source_type' => 'manual',
             'operation_kind' => (string)($operation['operation_kind'] ?? 'manual'),
@@ -257,9 +252,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $preview = resolveAccountingOperationV2($pdo, $payload);
 
         if ($actionMode === 'save') {
-            $pdo->beginTransaction();
-
-            createOperationWithAccountingV2($pdo, $payload, $operationId);
+            $resultId = createOperationWithAccountingV2($pdo, $payload, $operationId);
 
             if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
                 logUserAction(
@@ -268,7 +261,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'edit_operation',
                     'operations',
                     'operation',
-                    $operationId,
+                    $resultId,
                     'Modification d’une opération'
                 );
             }
@@ -279,25 +272,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'operation_update',
                     'Opération modifiée : ' . ($payload['label'] ?? 'Opération'),
                     'info',
-                    APP_URL . 'modules/operations/operation_view.php?id=' . $operationId,
+                    APP_URL . 'modules/operations/operation_view.php?id=' . $resultId,
                     'operation',
-                    $operationId,
+                    $resultId,
                     (int)$_SESSION['user_id']
                 );
             }
 
-            $pdo->commit();
-
             $stmt = $pdo->prepare("SELECT * FROM operations WHERE id = ? LIMIT 1");
-            $stmt->execute([$operationId]);
+            $stmt->execute([$resultId]);
             $operation = $stmt->fetch(PDO::FETCH_ASSOC) ?: $operation;
+            $operationId = (int)($operation['id'] ?? $operationId);
 
             $successMessage = 'Opération mise à jour avec succès.';
         }
     } catch (Throwable $e) {
-        if ($pdo->inTransaction()) {
-            $pdo->rollBack();
-        }
         $errorMessage = $e->getMessage();
     }
 }
@@ -321,8 +310,13 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
-        <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
+        <?php if ($successMessage !== ''): ?>
+            <div class="success"><?= e($successMessage) ?></div>
+        <?php endif; ?>
+
+        <?php if ($errorMessage !== ''): ?>
+            <div class="error"><?= e($errorMessage) ?></div>
+        <?php endif; ?>
 
         <div class="dashboard-grid-2">
             <div class="form-card">
@@ -409,12 +403,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         </div>
 
                         <div id="linked-bank-account-wrapper">
-                            <label>Compte bancaire lié</label>
+                            <label>Compte Bancaire 512</label>
                             <select name="linked_bank_account_id" id="linked_bank_account_id">
                                 <option value="">Choisir</option>
-                                <?php foreach ($bankAccounts as $acc): ?>
+                                <?php foreach ($treasuryAccounts as $acc): ?>
                                     <option value="<?= (int)$acc['id'] ?>" <?= $formData['linked_bank_account_id'] == $acc['id'] ? 'selected' : '' ?>>
-                                        <?= e(($acc['account_name'] ?? 'Compte') . ' - ' . ($acc['account_number'] ?? '')) ?>
+                                        <?= e(($acc['account_code'] ?? '') . ' - ' . ($acc['account_label'] ?? '')) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
