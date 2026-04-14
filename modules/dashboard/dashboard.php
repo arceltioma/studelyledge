@@ -322,7 +322,9 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <label>au</label>
                         <input type="date" name="date_to" value="<?= e($periodTo) ?>">
                     </div>
+                    
                 </div>
+                
 
                 <div class="sl-toggle-grid">
                     <label class="sl-toggle-card">
