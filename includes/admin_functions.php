@@ -3844,3 +3844,4141 @@ if (!function_exists('sl_monthly_payment_cancel_run')) {
         ];
     }
 }
+
+if (!function_exists('sl_dashboard_safe_date')) {
+    function sl_dashboard_safe_date(?string $value, string $default): string
+    {
+        $value = trim((string)$value);
+        if ($value !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+            return $value;
+        }
+        return $default;
+    }
+}
+
+if (!function_exists('sl_dashboard_get_overview_kpis')) {
+    function sl_dashboard_get_overview_kpis(PDO $pdo, array $filters = []): array
+    {
+        $global = function_exists('sl_dashboard_get_global_kpis')
+            ? sl_dashboard_get_global_kpis($pdo, $filters)
+            : [];
+
+        return [
+            'global_411_balance' => (float)($global['balances']['accounts_411'] ?? 0),
+            'global_512_balance' => (float)($global['balances']['accounts_512'] ?? 0),
+            'global_706_balance' => (float)($global['balances']['accounts_706'] ?? 0),
+            'students_active' => (int)($global['students']['active'] ?? 0),
+            'students_inactive' => (int)($global['students']['inactive'] ?? 0),
+            'monthly_remaining_current_month' => (float)($global['monthly']['remaining_current_month'] ?? 0),
+            'monthly_done_current_month' => (float)($global['monthly']['done_current_month'] ?? 0),
+        ];
+    }
+}
+
+if (!function_exists('sl_dashboard_get_operations_summary')) {
+    function sl_dashboard_get_operations_summary(PDO $pdo, array $filters = []): array
+    {
+        $monthStart = date('Y-m-01');
+        $monthEnd = date('Y-m-t');
+
+        $periodStart = sl_dashboard_safe_date($filters['period_start'] ?? '', $monthStart);
+        $periodEnd = sl_dashboard_safe_date($filters['period_end'] ?? '', $monthEnd);
+
+        $data = [
+            'operations_count' => 0,
+            'operations_amount' => 0,
+        ];
+
+        if (!tableExists($pdo, 'operations')) {
+            return $data;
+        }
+
+        if (!columnExists($pdo, 'operations', 'operation_date') || !columnExists($pdo, 'operations', 'amount')) {
+            return $data;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT
+                COUNT(*) AS total_count,
+                COALESCE(SUM(amount), 0) AS total_amount
+            FROM operations
+            WHERE operation_date BETWEEN ? AND ?
+        ");
+        $stmt->execute([$periodStart, $periodEnd]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $data['operations_count'] = (int)($row['total_count'] ?? 0);
+        $data['operations_amount'] = (float)($row['total_amount'] ?? 0);
+
+        return $data;
+    }
+}
+
+if (!function_exists('sl_dashboard_get_low_balance_clients')) {
+    function sl_dashboard_get_low_balance_clients(PDO $pdo, float $threshold = 1000, int $limit = 10): array
+    {
+        if (!tableExists($pdo, 'clients')) {
+            return [];
+        }
+
+        $limit = max(1, min($limit, 50));
+
+        if (tableExists($pdo, 'client_bank_accounts') && tableExists($pdo, 'bank_accounts')) {
+            $stmt = $pdo->prepare("
+                SELECT
+                    c.id,
+                    c.client_code,
+                    c.full_name,
+                    c.generated_client_account,
+                    ba.balance
+                FROM clients c
+                INNER JOIN client_bank_accounts cba ON cba.client_id = c.id
+                INNER JOIN bank_accounts ba ON ba.id = cba.bank_account_id
+                WHERE COALESCE(c.is_active,1)=1
+                  AND ba.account_number LIKE '411%'
+                  AND COALESCE(ba.balance,0) < ?
+                ORDER BY ba.balance ASC, c.client_code ASC
+                LIMIT {$limit}
+            ");
+            $stmt->execute([$threshold]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+
+        if (tableExists($pdo, 'bank_accounts')) {
+            $stmt = $pdo->prepare("
+                SELECT
+                    c.id,
+                    c.client_code,
+                    c.full_name,
+                    c.generated_client_account,
+                    ba.balance
+                FROM clients c
+                INNER JOIN bank_accounts ba ON ba.account_number = c.generated_client_account
+                WHERE COALESCE(c.is_active,1)=1
+                  AND COALESCE(ba.balance,0) < ?
+                ORDER BY ba.balance ASC, c.client_code ASC
+                LIMIT {$limit}
+            ");
+            $stmt->execute([$threshold]);
+            return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+
+        return [];
+    }
+}
+
+if (!function_exists('sl_dashboard_get_operation_types_breakdown')) {
+    function sl_dashboard_get_operation_types_breakdown(PDO $pdo, array $filters = []): array
+    {
+        if (!tableExists($pdo, 'operations') || !columnExists($pdo, 'operations', 'amount')) {
+            return [];
+        }
+
+        $monthStart = date('Y-m-01');
+        $monthEnd = date('Y-m-t');
+
+        $periodStart = sl_dashboard_safe_date($filters['period_start'] ?? '', $monthStart);
+        $periodEnd = sl_dashboard_safe_date($filters['period_end'] ?? '', $monthEnd);
+
+        $typeExpr = columnExists($pdo, 'operations', 'operation_type_code')
+            ? 'COALESCE(operation_type_code, "N/A")'
+            : '"N/A"';
+
+        $sql = "
+            SELECT
+                {$typeExpr} AS operation_type,
+                COUNT(*) AS total_count,
+                COALESCE(SUM(amount), 0) AS total_amount
+            FROM operations
+        ";
+
+        $where = [];
+        $params = [];
+
+        if (columnExists($pdo, 'operations', 'operation_date')) {
+            $where[] = "operation_date BETWEEN ? AND ?";
+            $params[] = $periodStart;
+            $params[] = $periodEnd;
+        }
+
+        if ($where) {
+            $sql .= " WHERE " . implode(' AND ', $where);
+        }
+
+        $sql .= " GROUP BY {$typeExpr} ORDER BY total_amount DESC, total_count DESC";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+
+if (!function_exists('sl_dashboard_get_services_breakdown')) {
+    function sl_dashboard_get_services_breakdown(PDO $pdo, array $filters = []): array
+    {
+        if (!tableExists($pdo, 'operations') || !columnExists($pdo, 'operations', 'amount')) {
+            return [];
+        }
+
+        $monthStart = date('Y-m-01');
+        $monthEnd = date('Y-m-t');
+
+        $periodStart = sl_dashboard_safe_date($filters['period_start'] ?? '', $monthStart);
+        $periodEnd = sl_dashboard_safe_date($filters['period_end'] ?? '', $monthEnd);
+
+        $serviceLabelExpr = "COALESCE(rs.label, rs.code, 'N/A')";
+        $serviceCodeExpr = "COALESCE(rs.code, 'N/A')";
+
+        if (columnExists($pdo, 'operations', 'service_code')) {
+            $serviceLabelExpr = "COALESCE(rs.label, o.service_code, rs.code, 'N/A')";
+            $serviceCodeExpr = "COALESCE(o.service_code, rs.code, 'N/A')";
+        }
+
+        $sql = "
+            SELECT
+                {$serviceLabelExpr} AS service_label,
+                {$serviceCodeExpr} AS service_code,
+                COUNT(*) AS total_count,
+                COALESCE(SUM(o.amount), 0) AS total_amount
+            FROM operations o
+            LEFT JOIN ref_services rs ON rs.id = o.service_id
+        ";
+
+        $where = [];
+        $params = [];
+
+        if (columnExists($pdo, 'operations', 'operation_date')) {
+            $where[] = "o.operation_date BETWEEN ? AND ?";
+            $params[] = $periodStart;
+            $params[] = $periodEnd;
+        }
+
+        if ($where) {
+            $sql .= " WHERE " . implode(' AND ', $where);
+        }
+
+        $sql .= "
+            GROUP BY {$serviceLabelExpr}, {$serviceCodeExpr}
+            ORDER BY total_amount DESC, total_count DESC
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+
+
+if (!function_exists('sl_dashboard_get_commercial_countries_breakdown')) {
+    function sl_dashboard_get_commercial_countries_breakdown(PDO $pdo, array $filters = []): array
+    {
+        if (!tableExists($pdo, 'clients')) {
+            return [];
+        }
+
+        $sql = "
+            SELECT
+                COALESCE(country_commercial, 'N/A') AS country_commercial,
+                COUNT(*) AS clients_count,
+                COALESCE(SUM(monthly_amount), 0) AS monthly_amount_total,
+                0 AS balance_total
+            FROM clients
+            GROUP BY COALESCE(country_commercial, 'N/A')
+            ORDER BY clients_count DESC, monthly_amount_total DESC
+        ";
+
+        $rows = $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        if (tableExists($pdo, 'bank_accounts')) {
+            foreach ($rows as &$row) {
+                $stmt = $pdo->prepare("
+                    SELECT COALESCE(SUM(ba.balance), 0)
+                    FROM clients c
+                    LEFT JOIN bank_accounts ba ON ba.account_number = c.generated_client_account
+                    WHERE COALESCE(c.country_commercial, 'N/A') = ?
+                ");
+                $stmt->execute([(string)$row['country_commercial']]);
+                $row['balance_total'] = (float)$stmt->fetchColumn();
+            }
+            unset($row);
+        }
+
+        return $rows;
+    }
+}
+
+if (!function_exists('sl_dashboard_get_accounting_indicators')) {
+    function sl_dashboard_get_accounting_indicators(PDO $pdo, array $filters = []): array
+    {
+        $monthStart = date('Y-m-01');
+        $monthEnd = date('Y-m-t');
+
+        $periodStart = sl_dashboard_safe_date($filters['period_start'] ?? '', $monthStart);
+        $periodEnd = sl_dashboard_safe_date($filters['period_end'] ?? '', $monthEnd);
+
+        $data = [
+            'Mouvements débit 411' => 0,
+            'Mouvements crédit 411' => 0,
+            'Mouvements débit 512' => 0,
+            'Mouvements crédit 512' => 0,
+            'Mouvements crédit 706' => 0,
+        ];
+
+        if (!tableExists($pdo, 'operations') || !columnExists($pdo, 'operations', 'amount')) {
+            return $data;
+        }
+
+        $hasDate = columnExists($pdo, 'operations', 'operation_date');
+        $params = [];
+        $dateSql = '';
+
+        if ($hasDate) {
+            $dateSql = " AND operation_date BETWEEN ? AND ? ";
+            $params = [$periodStart, $periodEnd];
+        }
+
+        if (columnExists($pdo, 'operations', 'debit_account_code')) {
+            $stmt = $pdo->prepare("
+                SELECT COALESCE(SUM(amount), 0)
+                FROM operations
+                WHERE debit_account_code LIKE '411%'
+                {$dateSql}
+            ");
+            $stmt->execute($params);
+            $data['Mouvements débit 411'] = (float)$stmt->fetchColumn();
+
+            $stmt = $pdo->prepare("
+                SELECT COALESCE(SUM(amount), 0)
+                FROM operations
+                WHERE debit_account_code LIKE '512%'
+                {$dateSql}
+            ");
+            $stmt->execute($params);
+            $data['Mouvements débit 512'] = (float)$stmt->fetchColumn();
+        }
+
+        if (columnExists($pdo, 'operations', 'credit_account_code')) {
+            $stmt = $pdo->prepare("
+                SELECT COALESCE(SUM(amount), 0)
+                FROM operations
+                WHERE credit_account_code LIKE '411%'
+                {$dateSql}
+            ");
+            $stmt->execute($params);
+            $data['Mouvements crédit 411'] = (float)$stmt->fetchColumn();
+
+            $stmt = $pdo->prepare("
+                SELECT COALESCE(SUM(amount), 0)
+                FROM operations
+                WHERE credit_account_code LIKE '512%'
+                {$dateSql}
+            ");
+            $stmt->execute($params);
+            $data['Mouvements crédit 512'] = (float)$stmt->fetchColumn();
+
+            $stmt = $pdo->prepare("
+                SELECT COALESCE(SUM(amount), 0)
+                FROM operations
+                WHERE credit_account_code LIKE '706%'
+                {$dateSql}
+            ");
+            $stmt->execute($params);
+            $data['Mouvements crédit 706'] = (float)$stmt->fetchColumn();
+        }
+
+        return $data;
+    }
+}
+
+if (!function_exists('sl_parse_common_list_filters')) {
+    function sl_parse_common_list_filters(array $input): array
+    {
+        return [
+            'q' => trim((string)($input['q'] ?? '')),
+
+            'status' => trim((string)($input['status'] ?? '')),
+            'client_type' => trim((string)($input['client_type'] ?? '')),
+            'country_commercial' => trim((string)($input['country_commercial'] ?? '')),
+
+            'date_from' => trim((string)($input['date_from'] ?? '')),
+            'date_to' => trim((string)($input['date_to'] ?? '')),
+            'operation_type_code' => trim((string)($input['operation_type_code'] ?? '')),
+            'service_id' => trim((string)($input['service_id'] ?? '')),
+
+            'page' => max(1, (int)($input['page'] ?? 1)),
+            'per_page' => max(1, min(200, (int)($input['per_page'] ?? 20))),
+        ];
+    }
+}
+
+if (!function_exists('sl_clients_list_get_kpis')) {
+    function sl_clients_list_get_kpis(PDO $pdo, array $filters = []): array
+    {
+        $filters = array_merge([
+            'q' => '',
+            'status' => '',
+            'client_type' => '',
+            'country_commercial' => '',
+        ], $filters);
+
+        $where = [];
+        $params = [];
+
+        if ($filters['q'] !== '') {
+            $where[] = "(
+                COALESCE(c.client_code, '') LIKE ?
+                OR COALESCE(c.full_name, '') LIKE ?
+                OR COALESCE(c.email, '') LIKE ?
+                OR COALESCE(c.generated_client_account, '') LIKE ?
+            )";
+            $like = '%' . $filters['q'] . '%';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        if ($filters['status'] === 'active') {
+            $where[] = "COALESCE(c.is_active, 1) = 1";
+        } elseif ($filters['status'] === 'inactive') {
+            $where[] = "COALESCE(c.is_active, 1) = 0";
+        }
+
+        if ($filters['client_type'] !== '' && columnExists($pdo, 'clients', 'client_type')) {
+            $where[] = "COALESCE(c.client_type, '') = ?";
+            $params[] = $filters['client_type'];
+        }
+
+        if ($filters['country_commercial'] !== '' && columnExists($pdo, 'clients', 'country_commercial')) {
+            $where[] = "COALESCE(c.country_commercial, '') = ?";
+            $params[] = $filters['country_commercial'];
+        }
+
+        $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+        $joinBankAccounts = '';
+        $selectCurrentBalance = '0 AS current_balance_411';
+        $selectInitialBalance = '0 AS initial_balance_411';
+
+        if (tableExists($pdo, 'bank_accounts')) {
+            $joinBankAccounts = "
+                LEFT JOIN bank_accounts ba
+                    ON ba.account_number = c.generated_client_account
+            ";
+            $selectCurrentBalance = 'COALESCE(ba.balance, 0) AS current_balance_411';
+            $selectInitialBalance = 'COALESCE(ba.initial_balance, 0) AS initial_balance_411';
+        }
+
+        $joinMonthly = '';
+        $selectMonthly = '0 AS monthly_amount';
+
+        if (tableExists($pdo, 'monthly_payments')) {
+            $joinMonthly = "
+                LEFT JOIN (
+                    SELECT
+                        mp.client_id,
+                        SUM(CASE WHEN COALESCE(mp.is_active, 1) = 1 THEN COALESCE(mp.monthly_amount, 0) ELSE 0 END) AS monthly_amount
+                    FROM monthly_payments mp
+                    GROUP BY mp.client_id
+                ) mp ON mp.client_id = c.id
+            ";
+            $selectMonthly = 'COALESCE(mp.monthly_amount, 0) AS monthly_amount';
+        }
+
+        $sql = "
+            SELECT
+                COUNT(DISTINCT c.id) AS total_clients,
+                SUM(CASE WHEN COALESCE(c.is_active, 1) = 1 THEN 1 ELSE 0 END) AS active_clients,
+                SUM(CASE WHEN COALESCE(c.is_active, 1) = 0 THEN 1 ELSE 0 END) AS inactive_clients,
+                COALESCE(SUM(src.initial_balance_411), 0) AS initial_balance_total,
+                COALESCE(SUM(src.current_balance_411), 0) AS current_balance_total,
+                COALESCE(SUM(src.monthly_amount), 0) AS monthly_amount_total
+            FROM (
+                SELECT
+                    c.id,
+                    COALESCE(c.is_active, 1) AS is_active,
+                    {$selectInitialBalance},
+                    {$selectCurrentBalance},
+                    {$selectMonthly}
+                FROM clients c
+                {$joinBankAccounts}
+                {$joinMonthly}
+                {$whereSql}
+            ) src
+            RIGHT JOIN clients c ON c.id = src.id
+        ";
+
+        // Simpler and safer alternative for compatibility
+        $sql = "
+            SELECT
+                COUNT(*) AS total_clients,
+                SUM(CASE WHEN COALESCE(x.is_active, 1) = 1 THEN 1 ELSE 0 END) AS active_clients,
+                SUM(CASE WHEN COALESCE(x.is_active, 1) = 0 THEN 1 ELSE 0 END) AS inactive_clients,
+                COALESCE(SUM(x.initial_balance_411), 0) AS initial_balance_total,
+                COALESCE(SUM(x.current_balance_411), 0) AS current_balance_total,
+                COALESCE(SUM(x.monthly_amount), 0) AS monthly_amount_total
+            FROM (
+                SELECT
+                    c.id,
+                    COALESCE(c.is_active, 1) AS is_active,
+                    {$selectInitialBalance},
+                    {$selectCurrentBalance},
+                    {$selectMonthly}
+                FROM clients c
+                {$joinBankAccounts}
+                {$joinMonthly}
+                {$whereSql}
+            ) x
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'total_clients' => (int)($row['total_clients'] ?? 0),
+            'active_clients' => (int)($row['active_clients'] ?? 0),
+            'inactive_clients' => (int)($row['inactive_clients'] ?? 0),
+            'initial_balance_total' => (float)($row['initial_balance_total'] ?? 0),
+            'current_balance_total' => (float)($row['current_balance_total'] ?? 0),
+            'monthly_amount_total' => (float)($row['monthly_amount_total'] ?? 0),
+        ];
+    }
+}
+
+if (!function_exists('sl_clients_list_get_rows')) {
+    function sl_clients_list_get_rows(PDO $pdo, array $filters = []): array
+    {
+        $filters = array_merge([
+            'q' => '',
+            'status' => '',
+            'client_type' => '',
+            'country_commercial' => '',
+            'page' => 1,
+            'per_page' => 20,
+        ], $filters);
+
+        $page = max(1, (int)$filters['page']);
+        $perPage = (int)$filters['per_page'];
+
+        if ($perPage <= 0) {
+            $perPage = 20;
+        }
+
+        $allowedPerPage = [10, 20, 50, 100, 200];
+        if (!in_array($perPage, $allowedPerPage, true)) {
+            $perPage = 20;
+        }
+
+        $where = [];
+        $params = [];
+
+        if ($filters['q'] !== '') {
+            $where[] = "(
+                COALESCE(c.client_code, '') LIKE ?
+                OR COALESCE(c.full_name, '') LIKE ?
+                OR COALESCE(c.email, '') LIKE ?
+                OR COALESCE(c.generated_client_account, '') LIKE ?
+            )";
+            $like = '%' . $filters['q'] . '%';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        if ($filters['status'] === 'active') {
+            $where[] = "COALESCE(c.is_active, 1) = 1";
+        } elseif ($filters['status'] === 'inactive') {
+            $where[] = "COALESCE(c.is_active, 1) = 0";
+        }
+
+        if ($filters['client_type'] !== '' && columnExists($pdo, 'clients', 'client_type')) {
+            $where[] = "COALESCE(c.client_type, '') = ?";
+            $params[] = $filters['client_type'];
+        }
+
+        if ($filters['country_commercial'] !== '' && columnExists($pdo, 'clients', 'country_commercial')) {
+            $where[] = "COALESCE(c.country_commercial, '') = ?";
+            $params[] = $filters['country_commercial'];
+        }
+
+        $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+        $joinBankAccounts = '';
+        $selectCurrentBalance = '0 AS current_balance_411';
+        $selectInitialBalance = '0 AS initial_balance_411';
+
+        if (tableExists($pdo, 'bank_accounts')) {
+            $joinBankAccounts = "
+                LEFT JOIN bank_accounts ba
+                    ON ba.account_number = c.generated_client_account
+            ";
+            $selectCurrentBalance = 'COALESCE(ba.balance, 0) AS current_balance_411';
+            $selectInitialBalance = 'COALESCE(ba.initial_balance, 0) AS initial_balance_411';
+        }
+
+        $joinTreasury = '';
+        $selectTreasuryCode = "'' AS treasury_account_code";
+        $selectTreasuryLabel = "'' AS treasury_account_label";
+
+        if (tableExists($pdo, 'treasury_accounts') && columnExists($pdo, 'clients', 'primary_treasury_account_id')) {
+            $joinTreasury = "
+                LEFT JOIN treasury_accounts ta
+                    ON ta.id = c.primary_treasury_account_id
+            ";
+            $selectTreasuryCode = 'COALESCE(ta.account_code, "") AS treasury_account_code';
+            $selectTreasuryLabel = 'COALESCE(ta.account_label, "") AS treasury_account_label';
+        }
+
+        $joinMonthly = '';
+        $selectMonthly = '0 AS monthly_amount';
+
+        if (tableExists($pdo, 'monthly_payments')) {
+            $joinMonthly = "
+                LEFT JOIN (
+                    SELECT
+                        mp.client_id,
+                        SUM(CASE WHEN COALESCE(mp.is_active, 1) = 1 THEN COALESCE(mp.monthly_amount, 0) ELSE 0 END) AS monthly_amount
+                    FROM monthly_payments mp
+                    GROUP BY mp.client_id
+                ) mp ON mp.client_id = c.id
+            ";
+            $selectMonthly = 'COALESCE(mp.monthly_amount, 0) AS monthly_amount';
+        }
+
+        $countSql = "
+            SELECT COUNT(*) AS total
+            FROM clients c
+            {$whereSql}
+        ";
+        $countStmt = $pdo->prepare($countSql);
+        $countStmt->execute($params);
+        $total = (int)($countStmt->fetchColumn() ?: 0);
+
+        $pages = max(1, (int)ceil($total / $perPage));
+        if ($page > $pages) {
+            $page = $pages;
+        }
+
+        $offset = ($page - 1) * $perPage;
+
+        $sql = "
+            SELECT
+                c.*,
+                {$selectInitialBalance},
+                {$selectCurrentBalance},
+                {$selectTreasuryCode},
+                {$selectTreasuryLabel},
+                {$selectMonthly}
+            FROM clients c
+            {$joinBankAccounts}
+            {$joinTreasury}
+            {$joinMonthly}
+            {$whereSql}
+            ORDER BY COALESCE(c.is_active, 1) DESC, c.client_code ASC, c.full_name ASC
+            LIMIT {$perPage} OFFSET {$offset}
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'rows' => $rows,
+            'total' => $total,
+            'page' => $page,
+            'pages' => $pages,
+            'per_page' => $perPage,
+        ];
+    }
+}
+
+
+if (!function_exists('sl_operations_list_get_kpis')) {
+    function sl_operations_list_get_kpis(PDO $pdo, array $filters = []): array
+    {
+        $kpis = [
+            'total_operations' => 0,
+            'total_amount' => 0.0,
+            'month_operations' => 0,
+            'month_amount' => 0.0,
+            'manual_count' => 0,
+            'types_count' => 0,
+        ];
+
+        if (!tableExists($pdo, 'operations')) {
+            return $kpis;
+        }
+
+        $currentMonth = date('Y-m');
+
+        $stmt = $pdo->prepare("
+            SELECT
+                COUNT(*) AS total_operations,
+                COALESCE(SUM(amount),0) AS total_amount,
+                COALESCE(SUM(CASE WHEN DATE_FORMAT(operation_date, '%Y-%m') = ? THEN 1 ELSE 0 END),0) AS month_operations,
+                COALESCE(SUM(CASE WHEN DATE_FORMAT(operation_date, '%Y-%m') = ? THEN amount ELSE 0 END),0) AS month_amount,
+                COALESCE(SUM(CASE WHEN COALESCE(is_manual_accounting,0)=1 THEN 1 ELSE 0 END),0) AS manual_count,
+                COUNT(DISTINCT COALESCE(operation_type_code,'')) AS types_count
+            FROM operations
+        ");
+        $stmt->execute([$currentMonth, $currentMonth]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $kpis['total_operations'] = (int)($row['total_operations'] ?? 0);
+        $kpis['total_amount'] = (float)($row['total_amount'] ?? 0);
+        $kpis['month_operations'] = (int)($row['month_operations'] ?? 0);
+        $kpis['month_amount'] = (float)($row['month_amount'] ?? 0);
+        $kpis['manual_count'] = (int)($row['manual_count'] ?? 0);
+        $kpis['types_count'] = (int)($row['types_count'] ?? 0);
+
+        return $kpis;
+    }
+}
+
+if (!function_exists('sl_operations_list_get_rows')) {
+    function sl_operations_list_get_rows(PDO $pdo, array $filters = []): array
+    {
+        $f = sl_parse_common_list_filters($filters);
+
+        if (!tableExists($pdo, 'operations')) {
+            return [
+                'rows' => [],
+                'total' => 0,
+                'page' => $f['page'],
+                'per_page' => $f['per_page'],
+                'pages' => 1,
+            ];
+        }
+
+        $where = ['1=1'];
+        $params = [];
+
+        if ($f['q'] !== '') {
+            $where[] = "(
+                o.label LIKE ?
+                OR o.reference LIKE ?
+                OR o.operation_type_code LIKE ?
+                OR c.client_code LIKE ?
+                OR c.full_name LIKE ?
+            )";
+            $like = '%' . $f['q'] . '%';
+            array_push($params, $like, $like, $like, $like, $like);
+        }
+
+        if ($f['date_from'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $f['date_from'])) {
+            $where[] = "o.operation_date >= ?";
+            $params[] = $f['date_from'];
+        }
+
+        if ($f['date_to'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $f['date_to'])) {
+            $where[] = "o.operation_date <= ?";
+            $params[] = $f['date_to'];
+        }
+
+        if ($f['operation_type_code'] !== '') {
+            $where[] = "o.operation_type_code = ?";
+            $params[] = $f['operation_type_code'];
+        }
+
+        if ($f['service_id'] !== '') {
+            $where[] = "o.service_id = ?";
+            $params[] = (int)$f['service_id'];
+        }
+
+        $countSql = "
+            SELECT COUNT(*)
+            FROM operations o
+            LEFT JOIN clients c ON c.id = o.client_id
+            WHERE " . implode(' AND ', $where);
+        $stmtCount = $pdo->prepare($countSql);
+        $stmtCount->execute($params);
+        $total = (int)$stmtCount->fetchColumn();
+
+        $offset = ($f['page'] - 1) * $f['per_page'];
+        $pages = max(1, (int)ceil($total / $f['per_page']));
+
+        $sql = "
+            SELECT
+                o.*,
+                c.client_code,
+                c.full_name AS client_full_name,
+                rs.label AS service_label,
+                lta.account_code AS linked_treasury_account_code,
+                lta.account_label AS linked_treasury_account_label
+            FROM operations o
+            LEFT JOIN clients c ON c.id = o.client_id
+            LEFT JOIN ref_services rs ON rs.id = o.service_id
+            LEFT JOIN treasury_accounts lta ON lta.id = o.linked_bank_account_id
+            WHERE " . implode(' AND ', $where) . "
+            ORDER BY o.operation_date DESC, o.id DESC
+            LIMIT {$f['per_page']} OFFSET {$offset}
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'rows' => $rows,
+            'total' => $total,
+            'page' => $f['page'],
+            'per_page' => $f['per_page'],
+            'pages' => $pages,
+        ];
+    }
+}
+
+if (!function_exists('sl_client_accounts_get_kpis')) {
+    function sl_client_accounts_get_kpis(PDO $pdo, array $filters = []): array
+    {
+        $kpis = [
+            'accounts_count' => 0,
+            'initial_balance_total' => 0.0,
+            'current_balance_total' => 0.0,
+            'negative_accounts_count' => 0,
+        ];
+
+        if (!tableExists($pdo, 'bank_accounts')) {
+            return $kpis;
+        }
+
+        $stmt = $pdo->query("
+            SELECT
+                COUNT(*) AS accounts_count,
+                COALESCE(SUM(CASE WHEN account_number LIKE '411%' THEN COALESCE(initial_balance,0) ELSE 0 END),0) AS initial_balance_total,
+                COALESCE(SUM(CASE WHEN account_number LIKE '411%' THEN COALESCE(balance,0) ELSE 0 END),0) AS current_balance_total,
+                COALESCE(SUM(CASE WHEN account_number LIKE '411%' AND COALESCE(balance,0) < 0 THEN 1 ELSE 0 END),0) AS negative_accounts_count
+            FROM bank_accounts
+            WHERE account_number LIKE '411%'
+        ");
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $kpis['accounts_count'] = (int)($row['accounts_count'] ?? 0);
+        $kpis['initial_balance_total'] = (float)($row['initial_balance_total'] ?? 0);
+        $kpis['current_balance_total'] = (float)($row['current_balance_total'] ?? 0);
+        $kpis['negative_accounts_count'] = (int)($row['negative_accounts_count'] ?? 0);
+
+        return $kpis;
+    }
+}
+
+if (!function_exists('sl_client_accounts_get_rows')) {
+    function sl_client_accounts_get_rows(PDO $pdo, array $filters = []): array
+    {
+        if (!tableExists($pdo, 'bank_accounts')) {
+            return [
+                'rows' => [],
+                'page' => 1,
+                'pages' => 1,
+                'per_page' => 20,
+                'total' => 0,
+                'from' => 0,
+                'to' => 0,
+            ];
+        }
+
+        $page = max(1, (int)($filters['page'] ?? 1));
+        $perPage = max(1, (int)($filters['per_page'] ?? 20));
+
+        $where = ['1=1'];
+        $params = [];
+
+        $hasClients = tableExists($pdo, 'clients');
+
+        if (!empty($filters['q'])) {
+            $q = '%' . trim((string)$filters['q']) . '%';
+
+            if ($hasClients) {
+                $where[] = "(
+                    COALESCE(ba.account_number,'') LIKE ?
+                    OR COALESCE(ba.account_name,'') LIKE ?
+                    OR COALESCE(c.client_code,'') LIKE ?
+                    OR COALESCE(c.full_name,'') LIKE ?
+                )";
+                array_push($params, $q, $q, $q, $q);
+            } else {
+                $where[] = "(
+                    COALESCE(ba.account_number,'') LIKE ?
+                    OR COALESCE(ba.account_name,'') LIKE ?
+                )";
+                array_push($params, $q, $q);
+            }
+        }
+
+        if ($hasClients && !empty($filters['client_status'])) {
+            if ($filters['client_status'] === 'active') {
+                $where[] = 'COALESCE(c.is_active,1) = 1';
+            } elseif ($filters['client_status'] === 'archived') {
+                $where[] = 'COALESCE(c.is_active,1) = 0';
+            }
+        }
+
+        if (!empty($filters['balance_filter'])) {
+            switch ($filters['balance_filter']) {
+                case 'positive':
+                    $where[] = 'COALESCE(ba.balance,0) > 0';
+                    break;
+                case 'negative':
+                    $where[] = 'COALESCE(ba.balance,0) < 0';
+                    break;
+                case 'zero':
+                    $where[] = 'COALESCE(ba.balance,0) = 0';
+                    break;
+                case 'non_zero':
+                    $where[] = 'COALESCE(ba.balance,0) <> 0';
+                    break;
+            }
+        }
+
+        if (array_key_exists('balance_min', $filters) && $filters['balance_min'] !== null) {
+            $where[] = 'COALESCE(ba.balance,0) >= ?';
+            $params[] = (float)$filters['balance_min'];
+        }
+
+        if (array_key_exists('balance_max', $filters) && $filters['balance_max'] !== null) {
+            $where[] = 'COALESCE(ba.balance,0) <= ?';
+            $params[] = (float)$filters['balance_max'];
+        }
+
+        $whereSql = implode(' AND ', $where);
+
+        $countSql = "
+            SELECT COUNT(*)
+            FROM bank_accounts ba
+            " . ($hasClients ? "LEFT JOIN clients c ON c.generated_client_account = ba.account_number" : "") . "
+            WHERE {$whereSql}
+        ";
+
+        $countStmt = $pdo->prepare($countSql);
+        $countStmt->execute($params);
+        $total = (int)($countStmt->fetchColumn() ?: 0);
+
+        $pages = max(1, (int)ceil($total / $perPage));
+        if ($page > $pages) {
+            $page = $pages;
+        }
+
+        $offset = ($page - 1) * $perPage;
+
+        $sortMap = [
+            'account_number_asc' => 'ba.account_number ASC',
+            'account_number_desc' => 'ba.account_number DESC',
+            'client_name_asc' => 'c.full_name ASC, ba.account_number ASC',
+            'client_name_desc' => 'c.full_name DESC, ba.account_number ASC',
+            'balance_asc' => 'COALESCE(ba.balance,0) ASC, ba.account_number ASC',
+            'balance_desc' => 'COALESCE(ba.balance,0) DESC, ba.account_number ASC',
+            'initial_balance_desc' => 'COALESCE(ba.initial_balance,0) DESC, ba.account_number ASC',
+        ];
+
+        $sort = (string)($filters['sort'] ?? 'account_number_asc');
+        $orderBy = $sortMap[$sort] ?? $sortMap['account_number_asc'];
+
+        $sql = "
+            SELECT
+                ba.account_number,
+                ba.account_name,
+                ba.initial_balance,
+                ba.balance,
+                " . ($hasClients ? "
+                c.id AS client_id,
+                c.client_code,
+                c.full_name,
+                c.is_active AS client_is_active
+                " : "
+                NULL AS client_id,
+                NULL AS client_code,
+                NULL AS full_name,
+                1 AS client_is_active
+                ") . "
+            FROM bank_accounts ba
+            " . ($hasClients ? "LEFT JOIN clients c ON c.generated_client_account = ba.account_number" : "") . "
+            WHERE {$whereSql}
+            ORDER BY {$orderBy}
+            LIMIT {$perPage} OFFSET {$offset}
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $from = $total > 0 ? ($offset + 1) : 0;
+        $to = min($offset + $perPage, $total);
+
+        return [
+            'rows' => $rows,
+            'page' => $page,
+            'pages' => $pages,
+            'per_page' => $perPage,
+            'total' => $total,
+            'from' => $from,
+            'to' => $to,
+        ];
+    }
+}
+if (!function_exists('sl_dashboard_get_monthly_payments_done_amount')) {
+    function sl_dashboard_get_monthly_payments_done_amount(PDO $pdo, ?string $month = null): float
+    {
+        if (!tableExists($pdo, 'clients')) {
+            return 0.0;
+        }
+
+        $month = $month ?: date('Y-m');
+
+        if (!columnExists($pdo, 'clients', 'monthly_amount')) {
+            return 0.0;
+        }
+
+        if (!columnExists($pdo, 'clients', 'monthly_last_generated_at')) {
+            return 0.0;
+        }
+
+        $where = [
+            "COALESCE(is_active,1) = 1",
+            "COALESCE(monthly_amount,0) > 0",
+            "monthly_last_generated_at IS NOT NULL",
+            "DATE_FORMAT(monthly_last_generated_at, '%Y-%m') = ?",
+        ];
+
+        if (columnExists($pdo, 'clients', 'monthly_enabled')) {
+            $where[] = "COALESCE(monthly_enabled,0) = 1";
+        }
+
+        $sql = "
+            SELECT COALESCE(SUM(monthly_amount), 0) AS total_done
+            FROM clients
+            WHERE " . implode(' AND ', $where);
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$month]);
+
+        return (float)($stmt->fetchColumn() ?: 0);
+    }
+}
+
+if (!function_exists('sl_dashboard_get_monthly_payments_remaining_amount')) {
+    function sl_dashboard_get_monthly_payments_remaining_amount(PDO $pdo, ?string $month = null): float
+    {
+        if (!tableExists($pdo, 'clients')) {
+            return 0.0;
+        }
+
+        $month = $month ?: date('Y-m');
+
+        if (!columnExists($pdo, 'clients', 'monthly_amount')) {
+            return 0.0;
+        }
+
+        if (!columnExists($pdo, 'clients', 'monthly_last_generated_at')) {
+            return 0.0;
+        }
+
+        $where = [
+            "COALESCE(is_active,1) = 1",
+            "COALESCE(monthly_amount,0) > 0",
+            "(
+                monthly_last_generated_at IS NULL
+                OR DATE_FORMAT(monthly_last_generated_at, '%Y-%m') <> ?
+            )",
+        ];
+
+        if (columnExists($pdo, 'clients', 'monthly_enabled')) {
+            $where[] = "COALESCE(monthly_enabled,0) = 1";
+        }
+
+        $sql = "
+            SELECT COALESCE(SUM(monthly_amount), 0) AS total_remaining
+            FROM clients
+            WHERE " . implode(' AND ', $where);
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$month]);
+
+        return (float)($stmt->fetchColumn() ?: 0);
+    }
+}
+
+if (!function_exists('sl_dashboard_get_pending_debits_summary')) {
+    function sl_dashboard_get_pending_debits_summary(PDO $pdo): array
+    {
+        $result = [
+            'count' => 0,
+            'total_amount' => 0.0,
+        ];
+
+        if (!tableExists($pdo, 'pending_client_debits')) {
+            return $result;
+        }
+
+        $remainingColumn = null;
+
+        if (columnExists($pdo, 'pending_client_debits', 'remaining_amount')) {
+            $remainingColumn = 'remaining_amount';
+        } elseif (columnExists($pdo, 'pending_client_debits', 'amount_due')) {
+            $remainingColumn = 'amount_due';
+        }
+
+        if ($remainingColumn === null) {
+            return $result;
+        }
+
+        $where = [
+            "COALESCE({$remainingColumn}, 0) > 0"
+        ];
+
+        if (columnExists($pdo, 'pending_client_debits', 'status')) {
+            $where[] = "LOWER(COALESCE(status, 'pending')) NOT IN ('settled', 'resolved', 'closed', 'cancelled')";
+        }
+
+        $sql = "
+            SELECT
+                COUNT(*) AS total_count,
+                COALESCE(SUM({$remainingColumn}), 0) AS total_amount
+            FROM pending_client_debits
+            WHERE " . implode(' AND ', $where);
+
+        $row = $pdo->query($sql)->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $result['count'] = (int)($row['total_count'] ?? 0);
+        $result['total_amount'] = (float)($row['total_amount'] ?? 0);
+
+        return $result;
+    }
+}
+
+if (!function_exists('sl_dashboard_get_pending_debits_rows')) {
+    function sl_dashboard_get_pending_debits_rows(PDO $pdo, int $limit = 10): array
+    {
+        if (!tableExists($pdo, 'pending_client_debits')) {
+            return [];
+        }
+
+        $limit = max(1, min($limit, 100));
+
+        $remainingColumn = null;
+        if (columnExists($pdo, 'pending_client_debits', 'remaining_amount')) {
+            $remainingColumn = 'remaining_amount';
+        } elseif (columnExists($pdo, 'pending_client_debits', 'amount_due')) {
+            $remainingColumn = 'amount_due';
+        }
+
+        if ($remainingColumn === null) {
+            return [];
+        }
+
+        $joins = '';
+        $selectClientCode = "NULL AS client_code";
+        $selectFullName = "NULL AS full_name";
+
+        if (tableExists($pdo, 'clients') && columnExists($pdo, 'pending_client_debits', 'client_id')) {
+            $joins = "LEFT JOIN clients c ON c.id = pd.client_id";
+
+            if (columnExists($pdo, 'clients', 'client_code')) {
+                $selectClientCode = "c.client_code";
+            }
+
+            if (columnExists($pdo, 'clients', 'full_name')) {
+                $selectFullName = "c.full_name";
+            }
+        }
+
+        $labelSelect = columnExists($pdo, 'pending_client_debits', 'label')
+            ? "pd.label"
+            : "'Débit dû' AS label";
+
+        $where = [
+            "COALESCE(pd.{$remainingColumn}, 0) > 0"
+        ];
+
+        if (columnExists($pdo, 'pending_client_debits', 'status')) {
+            $where[] = "LOWER(COALESCE(pd.status, 'pending')) NOT IN ('settled', 'resolved', 'closed', 'cancelled')";
+        }
+
+        $sql = "
+            SELECT
+                pd.id,
+                " . (columnExists($pdo, 'pending_client_debits', 'client_id') ? "pd.client_id" : "NULL AS client_id") . ",
+                {$selectClientCode},
+                {$selectFullName},
+                {$labelSelect},
+                pd.{$remainingColumn} AS remaining_amount,
+                " . (columnExists($pdo, 'pending_client_debits', 'status') ? "pd.status" : "'pending' AS status") . "
+            FROM pending_client_debits pd
+            {$joins}
+            WHERE " . implode(' AND ', $where) . "
+            ORDER BY pd.{$remainingColumn} DESC, pd.id DESC
+            LIMIT {$limit}
+        ";
+
+        $stmt = $pdo->query($sql);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+
+if (!function_exists('sl_dashboard_get_global_kpis')) {
+    function sl_dashboard_get_global_kpis(PDO $pdo, array $filters = []): array
+    {
+        $periodStart = trim((string)($filters['period_start'] ?? ''));
+        $periodEnd = trim((string)($filters['period_end'] ?? ''));
+        $currentMonth = date('Y-m');
+
+        $kpis = [
+            'balances' => [
+                'accounts_411' => 0.0,
+                'accounts_512' => 0.0,
+                'accounts_706' => 0.0,
+                'global_total' => 0.0,
+            ],
+            'students' => [
+                'active' => 0,
+                'inactive' => 0,
+            ],
+            'monthly' => [
+                'remaining_current_month' => 0.0,
+                'done_current_month' => 0.0,
+            ],
+            'operations' => [
+                'count' => 0,
+                'amount' => 0.0,
+            ],
+            'low_balance_clients' => [
+                'count' => 0,
+                'threshold' => 1000.0,
+            ],
+            'pending_debits' => [
+                'count' => 0,
+                'amount' => 0.0,
+                'rows' => [],
+            ],
+            'pending_debits_history_rows' => [],
+            'types_rows' => [],
+            'services_rows' => [],
+            'commercial_countries_rows' => [],
+            'accounting_indicators_rows' => [],
+        ];
+
+        if (tableExists($pdo, 'bank_accounts')) {
+            $stmt = $pdo->query("
+                SELECT
+                    COALESCE(SUM(CASE WHEN account_number LIKE '411%' THEN COALESCE(balance,0) ELSE 0 END), 0) AS total_411
+                FROM bank_accounts
+            ");
+            $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+            $kpis['balances']['accounts_411'] = (float)($row['total_411'] ?? 0);
+        }
+
+        if (tableExists($pdo, 'treasury_accounts')) {
+            $balanceColumn = columnExists($pdo, 'treasury_accounts', 'current_balance')
+                ? 'current_balance'
+                : (columnExists($pdo, 'treasury_accounts', 'opening_balance') ? 'opening_balance' : null);
+
+            if ($balanceColumn !== null) {
+                $stmt = $pdo->query("
+                    SELECT COALESCE(SUM(COALESCE({$balanceColumn},0)), 0) AS total_512
+                    FROM treasury_accounts
+                    WHERE COALESCE(is_active,1) = 1
+                ");
+                $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+                $kpis['balances']['accounts_512'] = (float)($row['total_512'] ?? 0);
+            }
+        }
+
+        if (tableExists($pdo, 'service_accounts')) {
+            $balanceColumn = columnExists($pdo, 'service_accounts', 'current_balance')
+                ? 'current_balance'
+                : null;
+
+            if ($balanceColumn !== null) {
+                $stmt = $pdo->query("
+                    SELECT COALESCE(SUM(COALESCE({$balanceColumn},0)), 0) AS total_706
+                    FROM service_accounts
+                    WHERE COALESCE(is_active,1) = 1
+                ");
+                $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+                $kpis['balances']['accounts_706'] = (float)($row['total_706'] ?? 0);
+            }
+        }
+
+        $kpis['balances']['global_total'] =
+            (float)$kpis['balances']['accounts_411'] +
+            (float)$kpis['balances']['accounts_512'] +
+            (float)$kpis['balances']['accounts_706'];
+
+        if (tableExists($pdo, 'clients')) {
+            $typeStudentCondition = "LOWER(COALESCE(client_type,'')) IN ('etudiant', 'étudiant')";
+
+            $stmt = $pdo->query("
+                SELECT
+                    COALESCE(SUM(CASE WHEN {$typeStudentCondition} AND COALESCE(is_active,1)=1 THEN 1 ELSE 0 END), 0) AS active_students,
+                    COALESCE(SUM(CASE WHEN {$typeStudentCondition} AND COALESCE(is_active,1)=0 THEN 1 ELSE 0 END), 0) AS inactive_students
+                FROM clients
+            ");
+            $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+            $kpis['students']['active'] = (int)($row['active_students'] ?? 0);
+            $kpis['students']['inactive'] = (int)($row['inactive_students'] ?? 0);
+        }
+
+        $kpis['monthly']['done_current_month'] = function_exists('sl_dashboard_get_monthly_payments_done_amount')
+            ? sl_dashboard_get_monthly_payments_done_amount($pdo, $currentMonth)
+            : 0.0;
+
+        $kpis['monthly']['remaining_current_month'] = function_exists('sl_dashboard_get_monthly_payments_remaining_amount')
+            ? sl_dashboard_get_monthly_payments_remaining_amount($pdo, $currentMonth)
+            : 0.0;
+
+        if (tableExists($pdo, 'operations')) {
+            $where = ["1=1"];
+            $params = [];
+
+            if ($periodStart !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $periodStart)) {
+                $where[] = "operation_date >= ?";
+                $params[] = $periodStart;
+            }
+
+            if ($periodEnd !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $periodEnd)) {
+                $where[] = "operation_date <= ?";
+                $params[] = $periodEnd;
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT
+                    COUNT(*) AS total_count,
+                    COALESCE(SUM(COALESCE(amount,0)), 0) AS total_amount
+                FROM operations
+                WHERE " . implode(' AND ', $where)
+            );
+            $stmt->execute($params);
+            $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+            $kpis['operations']['count'] = (int)($row['total_count'] ?? 0);
+            $kpis['operations']['amount'] = (float)($row['total_amount'] ?? 0);
+        }
+
+        if (tableExists($pdo, 'bank_accounts')) {
+            $stmt = $pdo->query("
+                SELECT COUNT(*) AS total_low
+                FROM bank_accounts
+                WHERE account_number LIKE '411%'
+                  AND COALESCE(balance,0) < 1000
+            ");
+            $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+            $kpis['low_balance_clients']['count'] = (int)($row['total_low'] ?? 0);
+        }
+
+        if (function_exists('sl_dashboard_get_pending_debits_summary')) {
+            $pendingSummary = sl_dashboard_get_pending_debits_summary($pdo);
+            $kpis['pending_debits']['count'] = (int)($pendingSummary['count'] ?? 0);
+            $kpis['pending_debits']['amount'] = (float)($pendingSummary['total_amount'] ?? 0);
+        }
+
+        if (function_exists('sl_dashboard_get_pending_debits_rows')) {
+            $kpis['pending_debits']['rows'] = sl_dashboard_get_pending_debits_rows($pdo, 10);
+        }
+
+        if (function_exists('sl_dashboard_get_pending_debits_history_rows')) {
+            $kpis['pending_debits_history_rows'] = sl_dashboard_get_pending_debits_history_rows($pdo, 25);
+        }
+
+        if (tableExists($pdo, 'operations') && columnExists($pdo, 'operations', 'operation_type_code')) {
+            $where = ["1=1"];
+            $params = [];
+
+            if ($periodStart !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $periodStart)) {
+                $where[] = "operation_date >= ?";
+                $params[] = $periodStart;
+            }
+
+            if ($periodEnd !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $periodEnd)) {
+                $where[] = "operation_date <= ?";
+                $params[] = $periodEnd;
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT
+                    operation_type_code,
+                    COUNT(*) AS total_count,
+                    COALESCE(SUM(amount),0) AS total_amount
+                FROM operations
+                WHERE " . implode(' AND ', $where) . "
+                GROUP BY operation_type_code
+                ORDER BY total_amount DESC, total_count DESC
+            ");
+            $stmt->execute($params);
+            $kpis['types_rows'] = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+
+        if (tableExists($pdo, 'operations') && columnExists($pdo, 'operations', 'service_id') && tableExists($pdo, 'ref_services')) {
+            $where = ["1=1"];
+            $params = [];
+
+            if ($periodStart !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $periodStart)) {
+                $where[] = "o.operation_date >= ?";
+                $params[] = $periodStart;
+            }
+
+            if ($periodEnd !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $periodEnd)) {
+                $where[] = "o.operation_date <= ?";
+                $params[] = $periodEnd;
+            }
+
+            $stmt = $pdo->prepare("
+                SELECT
+                    COALESCE(rs.label, rs.code, CONCAT('Service #', o.service_id)) AS service_label,
+                    COUNT(*) AS total_count,
+                    COALESCE(SUM(o.amount),0) AS total_amount
+                FROM operations o
+                LEFT JOIN ref_services rs ON rs.id = o.service_id
+                WHERE " . implode(' AND ', $where) . "
+                GROUP BY o.service_id, rs.label, rs.code
+                ORDER BY total_amount DESC, total_count DESC
+            ");
+            $stmt->execute($params);
+            $kpis['services_rows'] = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+
+        if (tableExists($pdo, 'clients') && columnExists($pdo, 'clients', 'country_commercial')) {
+            $stmt = $pdo->query("
+                SELECT
+                    COALESCE(NULLIF(country_commercial, ''), 'Non renseigné') AS country_commercial,
+                    COUNT(*) AS total_clients,
+                    COALESCE(SUM(COALESCE(monthly_amount,0)),0) AS total_monthly_amount
+                FROM clients
+                GROUP BY COALESCE(NULLIF(country_commercial, ''), 'Non renseigné')
+                ORDER BY total_clients DESC, total_monthly_amount DESC
+            ");
+            $kpis['commercial_countries_rows'] = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+
+        $kpis['accounting_indicators_rows'] = [
+            [
+                'label' => 'Total comptes 411',
+                'amount' => (float)$kpis['balances']['accounts_411'],
+            ],
+            [
+                'label' => 'Total comptes 512',
+                'amount' => (float)$kpis['balances']['accounts_512'],
+            ],
+            [
+                'label' => 'Total comptes 706',
+                'amount' => (float)$kpis['balances']['accounts_706'],
+            ],
+            [
+                'label' => 'Mensualités déjà effectuées',
+                'amount' => (float)$kpis['monthly']['done_current_month'],
+            ],
+            [
+                'label' => 'Mensualités restantes',
+                'amount' => (float)$kpis['monthly']['remaining_current_month'],
+            ],
+            [
+                'label' => 'Débits dus non réglés',
+                'amount' => (float)$kpis['pending_debits']['amount'],
+            ],
+        ];
+
+        return $kpis;
+    }
+}
+if (!function_exists('sl_dashboard_get_extra_counters')) {
+    function sl_dashboard_get_extra_counters(PDO $pdo): array
+    {
+        $data = [
+            'monthly_active_count' => 0,
+            'monthly_pending_count' => 0,
+            'manual_operations_count' => 0,
+        ];
+
+        if (tableExists($pdo, 'clients')) {
+            $monthlyWhere = [
+                "COALESCE(is_active,1)=1",
+            ];
+
+            if (columnExists($pdo, 'clients', 'monthly_enabled')) {
+                $monthlyWhere[] = "COALESCE(monthly_enabled,0)=1";
+            }
+
+            if (columnExists($pdo, 'clients', 'monthly_amount')) {
+                $monthlyWhere[] = "COALESCE(monthly_amount,0) > 0";
+            }
+
+            $sqlMonthlyActive = "
+                SELECT COUNT(*)
+                FROM clients
+                WHERE " . implode(' AND ', $monthlyWhere);
+
+            $data['monthly_active_count'] = (int)$pdo->query($sqlMonthlyActive)->fetchColumn();
+
+            if (columnExists($pdo, 'clients', 'monthly_last_generated_at')) {
+                $sqlMonthlyPending = "
+                    SELECT COUNT(*)
+                    FROM clients
+                    WHERE COALESCE(is_active,1)=1
+                      AND COALESCE(monthly_enabled,0)=1
+                      AND COALESCE(monthly_amount,0) > 0
+                      AND (
+                            monthly_last_generated_at IS NULL
+                            OR DATE_FORMAT(monthly_last_generated_at, '%Y-%m') <> ?
+                          )
+                ";
+                $stmtMonthlyPending = $pdo->prepare($sqlMonthlyPending);
+                $stmtMonthlyPending->execute([date('Y-m')]);
+                $data['monthly_pending_count'] = (int)$stmtMonthlyPending->fetchColumn();
+            }
+        }
+
+        if (tableExists($pdo, 'operations') && columnExists($pdo, 'operations', 'is_manual_accounting')) {
+            $data['manual_operations_count'] = (int)$pdo->query("
+                SELECT COUNT(*)
+                FROM operations
+                WHERE COALESCE(is_manual_accounting,0)=1
+            ")->fetchColumn();
+        }
+
+        return $data;
+    }
+}
+if (!function_exists('sl_pending_debit_badge_class')) {
+    function sl_pending_debit_badge_class(string $status): string
+    {
+        $status = strtolower(trim($status));
+
+        return match ($status) {
+            'ready' => 'success',
+            'partial' => 'warning',
+            'pending' => 'info',
+            'resolved', 'settled' => 'success',
+            'cancelled', 'canceled' => 'danger',
+            default => 'secondary',
+        };
+    }
+}
+
+if (!function_exists('sl_pending_debits_list_parse_filters')) {
+    function sl_pending_debits_list_parse_filters(array $input = []): array
+    {
+        return [
+            'q' => trim((string)($input['q'] ?? '')),
+            'status' => trim((string)($input['status'] ?? '')),
+            'client' => trim((string)($input['client'] ?? '')),
+            'page' => max(1, (int)($input['page'] ?? 1)),
+            'per_page' => max(1, min(100, (int)($input['per_page'] ?? 25))),
+        ];
+    }
+}
+
+if (!function_exists('sl_pending_debits_list_get_kpis')) {
+    function sl_pending_debits_list_get_kpis(PDO $pdo, array $filters = []): array
+    {
+        $kpis = [
+            'total_count' => 0,
+            'pending_count' => 0,
+            'ready_count' => 0,
+            'partial_count' => 0,
+            'resolved_count' => 0,
+            'cancelled_count' => 0,
+            'initial_amount_total' => 0.0,
+            'executed_amount_total' => 0.0,
+            'remaining_amount_total' => 0.0,
+        ];
+
+        if (!tableExists($pdo, 'pending_client_debits')) {
+            return $kpis;
+        }
+
+        $remainingExpr = columnExists($pdo, 'pending_client_debits', 'remaining_amount')
+            ? 'COALESCE(remaining_amount,0)'
+            : (columnExists($pdo, 'pending_client_debits', 'amount_due') ? 'COALESCE(amount_due,0)' : '0');
+
+        $initialExpr = columnExists($pdo, 'pending_client_debits', 'initial_amount')
+            ? 'COALESCE(initial_amount,0)'
+            : (columnExists($pdo, 'pending_client_debits', 'amount_due') ? 'COALESCE(amount_due,0)' : '0');
+
+        $executedExpr = columnExists($pdo, 'pending_client_debits', 'executed_amount')
+            ? 'COALESCE(executed_amount,0)'
+            : '0';
+
+        $stmt = $pdo->query("
+            SELECT
+                COUNT(*) AS total_count,
+                COALESCE(SUM(CASE WHEN LOWER(COALESCE(status,'')) = 'pending' THEN 1 ELSE 0 END),0) AS pending_count,
+                COALESCE(SUM(CASE WHEN LOWER(COALESCE(status,'')) = 'ready' THEN 1 ELSE 0 END),0) AS ready_count,
+                COALESCE(SUM(CASE WHEN LOWER(COALESCE(status,'')) = 'partial' THEN 1 ELSE 0 END),0) AS partial_count,
+                COALESCE(SUM(CASE WHEN LOWER(COALESCE(status,'')) IN ('resolved','settled') THEN 1 ELSE 0 END),0) AS resolved_count,
+                COALESCE(SUM(CASE WHEN LOWER(COALESCE(status,'')) IN ('cancelled','canceled') THEN 1 ELSE 0 END),0) AS cancelled_count,
+                COALESCE(SUM({$initialExpr}),0) AS initial_amount_total,
+                COALESCE(SUM({$executedExpr}),0) AS executed_amount_total,
+                COALESCE(SUM({$remainingExpr}),0) AS remaining_amount_total
+            FROM pending_client_debits
+        ");
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $kpis['total_count'] = (int)($row['total_count'] ?? 0);
+        $kpis['pending_count'] = (int)($row['pending_count'] ?? 0);
+        $kpis['ready_count'] = (int)($row['ready_count'] ?? 0);
+        $kpis['partial_count'] = (int)($row['partial_count'] ?? 0);
+        $kpis['resolved_count'] = (int)($row['resolved_count'] ?? 0);
+        $kpis['cancelled_count'] = (int)($row['cancelled_count'] ?? 0);
+        $kpis['initial_amount_total'] = (float)($row['initial_amount_total'] ?? 0);
+        $kpis['executed_amount_total'] = (float)($row['executed_amount_total'] ?? 0);
+        $kpis['remaining_amount_total'] = (float)($row['remaining_amount_total'] ?? 0);
+
+        return $kpis;
+    }
+}
+
+if (!function_exists('sl_pending_debits_list_get_clients')) {
+    function sl_pending_debits_list_get_clients(PDO $pdo): array
+    {
+        if (!tableExists($pdo, 'clients')) {
+            return [];
+        }
+
+        $stmt = $pdo->query("
+            SELECT id, client_code, full_name
+            FROM clients
+            WHERE COALESCE(is_active, 1) = 1
+            ORDER BY client_code ASC, full_name ASC
+        ");
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+
+if (!function_exists('sl_pending_debits_list_get_rows')) {
+    function sl_pending_debits_list_get_rows(PDO $pdo, array $filters = []): array
+    {
+        $f = sl_pending_debits_list_parse_filters($filters);
+
+        if (!tableExists($pdo, 'pending_client_debits')) {
+            return [
+                'rows' => [],
+                'total' => 0,
+                'page' => $f['page'],
+                'per_page' => $f['per_page'],
+                'pages' => 1,
+            ];
+        }
+
+        $where = ['1=1'];
+        $params = [];
+
+        $joinClient = '';
+        if (tableExists($pdo, 'clients') && columnExists($pdo, 'pending_client_debits', 'client_id')) {
+            $joinClient = 'LEFT JOIN clients c ON c.id = pd.client_id';
+        }
+
+        if ($f['status'] !== '') {
+            $where[] = 'pd.status = ?';
+            $params[] = $f['status'];
+        }
+
+        if ($f['client'] !== '' && ctype_digit($f['client'])) {
+            $where[] = 'pd.client_id = ?';
+            $params[] = (int)$f['client'];
+        }
+
+        if ($f['q'] !== '') {
+            $like = '%' . $f['q'] . '%';
+
+            $searchParts = [
+                "COALESCE(pd.label,'') LIKE ?",
+                "COALESCE(pd.trigger_type,'') LIKE ?",
+                "COALESCE(pd.notes,'') LIKE ?",
+            ];
+            $searchParams = [$like, $like, $like];
+
+            if ($joinClient !== '') {
+                $searchParts[] = "COALESCE(c.client_code,'') LIKE ?";
+                $searchParts[] = "COALESCE(c.full_name,'') LIKE ?";
+                $searchParts[] = "COALESCE(c.generated_client_account,'') LIKE ?";
+                $searchParams[] = $like;
+                $searchParams[] = $like;
+                $searchParams[] = $like;
+            }
+
+            $where[] = '(' . implode(' OR ', $searchParts) . ')';
+            $params = array_merge($params, $searchParams);
+        }
+
+        $countSql = "
+            SELECT COUNT(*)
+            FROM pending_client_debits pd
+            {$joinClient}
+            WHERE " . implode(' AND ', $where);
+
+        $stmtCount = $pdo->prepare($countSql);
+        $stmtCount->execute($params);
+        $total = (int)$stmtCount->fetchColumn();
+
+        $offset = ($f['page'] - 1) * $f['per_page'];
+        $pages = max(1, (int)ceil($total / $f['per_page']));
+
+        $selectParts = ['pd.*'];
+
+        if ($joinClient !== '') {
+            $selectParts[] = 'c.client_code';
+            $selectParts[] = 'c.full_name';
+            $selectParts[] = 'c.generated_client_account';
+        } else {
+            $selectParts[] = "NULL AS client_code";
+            $selectParts[] = "NULL AS full_name";
+            $selectParts[] = "NULL AS generated_client_account";
+        }
+
+        $sql = "
+            SELECT " . implode(', ', $selectParts) . "
+            FROM pending_client_debits pd
+            {$joinClient}
+            WHERE " . implode(' AND ', $where) . "
+            ORDER BY
+                CASE LOWER(COALESCE(pd.status,'')) 
+                    WHEN 'ready' THEN 1
+                    WHEN 'partial' THEN 2
+                    WHEN 'pending' THEN 3
+                    WHEN 'resolved' THEN 4
+                    WHEN 'settled' THEN 4
+                    WHEN 'cancelled' THEN 5
+                    WHEN 'canceled' THEN 5
+                    ELSE 6
+                END,
+                pd.id DESC
+            LIMIT {$f['per_page']} OFFSET {$offset}
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'rows' => $rows,
+            'total' => $total,
+            'page' => $f['page'],
+            'per_page' => $f['per_page'],
+            'pages' => $pages,
+        ];
+    }
+}
+if (!function_exists('sl_treasury_list_parse_filters')) {
+    function sl_treasury_list_parse_filters(array $input = []): array
+    {
+        return [
+            'search' => trim((string)($input['search'] ?? '')),
+            'status' => trim((string)($input['status'] ?? '')),
+            'type_view' => trim((string)($input['type_view'] ?? '')),
+            'page' => max(1, (int)($input['page'] ?? 1)),
+            'per_page' => max(1, min(100, (int)($input['per_page'] ?? 25))),
+        ];
+    }
+}
+
+if (!function_exists('sl_treasury_list_get_kpis')) {
+    function sl_treasury_list_get_kpis(PDO $pdo, array $filters = []): array
+    {
+        $kpis = [
+            'total_accounts' => 0,
+            'active_accounts' => 0,
+            'archived_accounts' => 0,
+            'postable_accounts' => 0,
+            'structure_accounts' => 0,
+            'opening_balance_total' => 0.0,
+            'current_balance_total' => 0.0,
+        ];
+
+        if (!tableExists($pdo, 'treasury_accounts')) {
+            return $kpis;
+        }
+
+        $openingColumn = columnExists($pdo, 'treasury_accounts', 'opening_balance') ? 'opening_balance' : null;
+        $currentColumn = columnExists($pdo, 'treasury_accounts', 'current_balance') ? 'current_balance' : null;
+        $hasActive = columnExists($pdo, 'treasury_accounts', 'is_active');
+        $hasPostable = columnExists($pdo, 'treasury_accounts', 'is_postable');
+
+        $selects = [
+            'COUNT(*) AS total_accounts',
+            $hasActive
+                ? "COALESCE(SUM(CASE WHEN COALESCE(is_active,1)=1 THEN 1 ELSE 0 END),0) AS active_accounts"
+                : "COUNT(*) AS active_accounts",
+            $hasActive
+                ? "COALESCE(SUM(CASE WHEN COALESCE(is_active,1)=0 THEN 1 ELSE 0 END),0) AS archived_accounts"
+                : "0 AS archived_accounts",
+            $hasPostable
+                ? "COALESCE(SUM(CASE WHEN COALESCE(is_postable,0)=1 THEN 1 ELSE 0 END),0) AS postable_accounts"
+                : "0 AS postable_accounts",
+            $hasPostable
+                ? "COALESCE(SUM(CASE WHEN COALESCE(is_postable,0)=0 THEN 1 ELSE 0 END),0) AS structure_accounts"
+                : "0 AS structure_accounts",
+            $openingColumn !== null
+                ? "COALESCE(SUM(COALESCE({$openingColumn},0)),0) AS opening_balance_total"
+                : "0 AS opening_balance_total",
+            $currentColumn !== null
+                ? "COALESCE(SUM(COALESCE({$currentColumn},0)),0) AS current_balance_total"
+                : "0 AS current_balance_total",
+        ];
+
+        $stmt = $pdo->query("
+            SELECT " . implode(",\n", $selects) . "
+            FROM treasury_accounts
+        ");
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $kpis['total_accounts'] = (int)($row['total_accounts'] ?? 0);
+        $kpis['active_accounts'] = (int)($row['active_accounts'] ?? 0);
+        $kpis['archived_accounts'] = (int)($row['archived_accounts'] ?? 0);
+        $kpis['postable_accounts'] = (int)($row['postable_accounts'] ?? 0);
+        $kpis['structure_accounts'] = (int)($row['structure_accounts'] ?? 0);
+        $kpis['opening_balance_total'] = (float)($row['opening_balance_total'] ?? 0);
+        $kpis['current_balance_total'] = (float)($row['current_balance_total'] ?? 0);
+
+        return $kpis;
+    }
+}
+
+if (!function_exists('sl_treasury_list_get_rows')) {
+    function sl_treasury_list_get_rows(PDO $pdo, array $filters = []): array
+    {
+        $f = sl_treasury_list_parse_filters($filters);
+
+        if (!tableExists($pdo, 'treasury_accounts')) {
+            return [
+                'rows' => [],
+                'total' => 0,
+                'page' => $f['page'],
+                'per_page' => $f['per_page'],
+                'pages' => 1,
+            ];
+        }
+
+        $where = ['1=1'];
+        $params = [];
+
+        if ($f['search'] !== '') {
+            $where[] = "(
+                COALESCE(account_code,'') LIKE ?
+                OR COALESCE(account_label,'') LIKE ?
+            )";
+            $like = '%' . $f['search'] . '%';
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        if ($f['status'] === 'active' && columnExists($pdo, 'treasury_accounts', 'is_active')) {
+            $where[] = "COALESCE(is_active,1) = 1";
+        } elseif ($f['status'] === 'archived' && columnExists($pdo, 'treasury_accounts', 'is_active')) {
+            $where[] = "COALESCE(is_active,1) = 0";
+        }
+
+        if ($f['type_view'] === 'postable' && columnExists($pdo, 'treasury_accounts', 'is_postable')) {
+            $where[] = "COALESCE(is_postable,0) = 1";
+        } elseif ($f['type_view'] === 'structure' && columnExists($pdo, 'treasury_accounts', 'is_postable')) {
+            $where[] = "COALESCE(is_postable,0) = 0";
+        }
+
+        $countSql = "
+            SELECT COUNT(*)
+            FROM treasury_accounts
+            WHERE " . implode(' AND ', $where);
+
+        $stmtCount = $pdo->prepare($countSql);
+        $stmtCount->execute($params);
+        $total = (int)$stmtCount->fetchColumn();
+
+        $offset = ($f['page'] - 1) * $f['per_page'];
+        $pages = max(1, (int)ceil($total / $f['per_page']));
+
+        $orderParts = [];
+        if (columnExists($pdo, 'treasury_accounts', 'is_active')) {
+            $orderParts[] = 'COALESCE(is_active,1) DESC';
+        }
+        if (columnExists($pdo, 'treasury_accounts', 'account_code')) {
+            $orderParts[] = 'account_code ASC';
+        } else {
+            $orderParts[] = 'id DESC';
+        }
+
+        $sql = "
+            SELECT *
+            FROM treasury_accounts
+            WHERE " . implode(' AND ', $where) . "
+            ORDER BY " . implode(', ', $orderParts) . "
+            LIMIT {$f['per_page']} OFFSET {$offset}
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'rows' => $rows,
+            'total' => $total,
+            'page' => $f['page'],
+            'per_page' => $f['per_page'],
+            'pages' => $pages,
+        ];
+    }
+}
+if (!function_exists('sl_imports_journal_parse_filters')) {
+    function sl_imports_journal_parse_filters(array $input = []): array
+    {
+        return [
+            'search' => trim((string)($input['search'] ?? '')),
+            'module' => trim((string)($input['module'] ?? '')),
+            'action' => trim((string)($input['action'] ?? '')),
+            'from' => trim((string)($input['from'] ?? '')),
+            'to' => trim((string)($input['to'] ?? '')),
+            'page' => max(1, (int)($input['page'] ?? 1)),
+            'per_page' => max(1, min(500, (int)($input['per_page'] ?? 50))),
+        ];
+    }
+}
+
+if (!function_exists('sl_imports_journal_get_kpis')) {
+    function sl_imports_journal_get_kpis(PDO $pdo, array $filters = []): array
+    {
+        $kpis = [
+            'total_logs' => 0,
+            'imports_count' => 0,
+            'distinct_modules' => 0,
+            'distinct_actions' => 0,
+            'today_logs' => 0,
+        ];
+
+        if (!tableExists($pdo, 'user_logs')) {
+            return $kpis;
+        }
+
+        $hasModule = columnExists($pdo, 'user_logs', 'module');
+        $hasAction = columnExists($pdo, 'user_logs', 'action');
+        $hasCreatedAt = columnExists($pdo, 'user_logs', 'created_at');
+
+        $selects = [
+            'COUNT(*) AS total_logs',
+            $hasModule ? "COUNT(DISTINCT COALESCE(module,'')) AS distinct_modules" : "0 AS distinct_modules",
+            $hasAction ? "COUNT(DISTINCT COALESCE(action,'')) AS distinct_actions" : "0 AS distinct_actions",
+            $hasCreatedAt ? "COALESCE(SUM(CASE WHEN DATE(created_at)=CURDATE() THEN 1 ELSE 0 END),0) AS today_logs" : "0 AS today_logs",
+            $hasModule ? "COALESCE(SUM(CASE WHEN module='imports' THEN 1 ELSE 0 END),0) AS imports_count" : "0 AS imports_count",
+        ];
+
+        $stmt = $pdo->query("
+            SELECT " . implode(",\n", $selects) . "
+            FROM user_logs
+        ");
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $kpis['total_logs'] = (int)($row['total_logs'] ?? 0);
+        $kpis['imports_count'] = (int)($row['imports_count'] ?? 0);
+        $kpis['distinct_modules'] = (int)($row['distinct_modules'] ?? 0);
+        $kpis['distinct_actions'] = (int)($row['distinct_actions'] ?? 0);
+        $kpis['today_logs'] = (int)($row['today_logs'] ?? 0);
+
+        return $kpis;
+    }
+}
+
+if (!function_exists('sl_imports_journal_get_rows')) {
+    function sl_imports_journal_get_rows(PDO $pdo, array $filters = []): array
+    {
+        $f = sl_imports_journal_parse_filters($filters);
+
+        if (!tableExists($pdo, 'user_logs')) {
+            return [
+                'rows' => [],
+                'total' => 0,
+                'page' => $f['page'],
+                'per_page' => $f['per_page'],
+                'pages' => 1,
+                'can_use_logs' => false,
+            ];
+        }
+
+        $where = ['1=1'];
+        $params = [];
+
+        if ($f['search'] !== '') {
+            $where[] = "(
+                COALESCE(l.action,'') LIKE ?
+                OR COALESCE(l.module,'') LIKE ?
+                OR COALESCE(l.entity_type,'') LIKE ?
+                OR COALESCE(l.details,'') LIKE ?
+            )";
+            $like = '%' . $f['search'] . '%';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        if ($f['module'] !== '' && columnExists($pdo, 'user_logs', 'module')) {
+            $where[] = 'l.module = ?';
+            $params[] = $f['module'];
+        }
+
+        if ($f['action'] !== '' && columnExists($pdo, 'user_logs', 'action')) {
+            $where[] = 'l.action = ?';
+            $params[] = $f['action'];
+        }
+
+        if ($f['from'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $f['from']) && columnExists($pdo, 'user_logs', 'created_at')) {
+            $where[] = 'DATE(l.created_at) >= ?';
+            $params[] = $f['from'];
+        }
+
+        if ($f['to'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $f['to']) && columnExists($pdo, 'user_logs', 'created_at')) {
+            $where[] = 'DATE(l.created_at) <= ?';
+            $params[] = $f['to'];
+        }
+
+        $countSql = "
+            SELECT COUNT(*)
+            FROM user_logs l
+            WHERE " . implode(' AND ', $where);
+
+        $stmtCount = $pdo->prepare($countSql);
+        $stmtCount->execute($params);
+        $total = (int)$stmtCount->fetchColumn();
+
+        $offset = ($f['page'] - 1) * $f['per_page'];
+        $pages = max(1, (int)ceil($total / $f['per_page']));
+
+        $userJoin = '';
+        $selectUser = 'NULL AS username';
+        if (tableExists($pdo, 'users') && columnExists($pdo, 'user_logs', 'user_id')) {
+            $userJoin = 'LEFT JOIN users u ON u.id = l.user_id';
+            $selectUser = columnExists($pdo, 'users', 'username') ? 'u.username AS username' : 'NULL AS username';
+        }
+
+        $orderBy = columnExists($pdo, 'user_logs', 'created_at') ? 'l.created_at DESC' : 'l.id DESC';
+
+        $sql = "
+            SELECT
+                l.*,
+                {$selectUser}
+            FROM user_logs l
+            {$userJoin}
+            WHERE " . implode(' AND ', $where) . "
+            ORDER BY {$orderBy}
+            LIMIT {$f['per_page']} OFFSET {$offset}
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'rows' => $rows,
+            'total' => $total,
+            'page' => $f['page'],
+            'per_page' => $f['per_page'],
+            'pages' => $pages,
+            'can_use_logs' => true,
+        ];
+    }
+}
+
+if (!function_exists('sl_imports_journal_get_filter_options')) {
+    function sl_imports_journal_get_filter_options(PDO $pdo): array
+    {
+        $result = [
+            'modules' => [],
+            'actions' => [],
+        ];
+
+        if (!tableExists($pdo, 'user_logs')) {
+            return $result;
+        }
+
+        if (columnExists($pdo, 'user_logs', 'module')) {
+            $result['modules'] = $pdo->query("
+                SELECT DISTINCT module
+                FROM user_logs
+                WHERE COALESCE(module,'') <> ''
+                ORDER BY module ASC
+            ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        }
+
+        if (columnExists($pdo, 'user_logs', 'action')) {
+            $result['actions'] = $pdo->query("
+                SELECT DISTINCT action
+                FROM user_logs
+                WHERE COALESCE(action,'') <> ''
+                ORDER BY action ASC
+            ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        }
+
+        return $result;
+    }
+}
+if (!function_exists('sl_admin_functional_dashboard_money')) {
+    function sl_admin_functional_dashboard_money(float $value): string
+    {
+        return number_format($value, 2, ',', ' ') . ' €';
+    }
+}
+
+if (!function_exists('sl_admin_functional_fetch_one')) {
+    function sl_admin_functional_fetch_one(PDO $pdo, string $sql, array $params = []): array
+    {
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+
+if (!function_exists('sl_admin_functional_fetch_all')) {
+    function sl_admin_functional_fetch_all(PDO $pdo, string $sql, array $params = []): array
+    {
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+
+if (!function_exists('sl_admin_functional_dashboard_get_stats')) {
+    function sl_admin_functional_dashboard_get_stats(PDO $pdo): array
+    {
+        $stats = [
+            'clients_total' => 0,
+            'clients_active' => 0,
+            'accounts_411_total' => 0,
+            'accounts_411_balance_total' => 0.0,
+            'accounts_512_total' => 0,
+            'accounts_512_balance_total' => 0.0,
+            'accounts_706_total' => 0,
+            'accounts_706_balance_total' => 0.0,
+            'operation_types_total' => 0,
+            'services_total' => 0,
+            'rules_total' => 0,
+            'rules_active' => 0,
+            'rules_missing' => 0,
+        ];
+
+        if (tableExists($pdo, 'clients')) {
+            $row = sl_admin_functional_fetch_one($pdo, "
+                SELECT
+                    COUNT(*) AS clients_total,
+                    COALESCE(SUM(CASE WHEN COALESCE(is_active,1)=1 THEN 1 ELSE 0 END), 0) AS clients_active
+                FROM clients
+            ");
+            $stats['clients_total'] = (int)($row['clients_total'] ?? 0);
+            $stats['clients_active'] = (int)($row['clients_active'] ?? 0);
+        }
+
+        if (tableExists($pdo, 'clients') && tableExists($pdo, 'bank_accounts')) {
+            $joinMode = null;
+
+            if (columnExists($pdo, 'clients', 'generated_client_account') && columnExists($pdo, 'bank_accounts', 'account_number')) {
+                $joinMode = 'account_number';
+            } elseif (tableExists($pdo, 'client_bank_accounts') && columnExists($pdo, 'client_bank_accounts', 'client_id') && columnExists($pdo, 'client_bank_accounts', 'bank_account_id')) {
+                $joinMode = 'pivot';
+            }
+
+            if ($joinMode === 'account_number') {
+                $row = sl_admin_functional_fetch_one($pdo, "
+                    SELECT
+                        COUNT(*) AS accounts_411_total,
+                        COALESCE(SUM(COALESCE(ba.balance, 0)), 0) AS accounts_411_balance_total
+                    FROM clients c
+                    LEFT JOIN bank_accounts ba
+                        ON ba.account_number = c.generated_client_account
+                    WHERE COALESCE(c.is_active,1)=1
+                ");
+                $stats['accounts_411_total'] = (int)($row['accounts_411_total'] ?? 0);
+                $stats['accounts_411_balance_total'] = (float)($row['accounts_411_balance_total'] ?? 0);
+            } elseif ($joinMode === 'pivot') {
+                $row = sl_admin_functional_fetch_one($pdo, "
+                    SELECT
+                        COUNT(DISTINCT c.id) AS accounts_411_total,
+                        COALESCE(SUM(COALESCE(ba.balance, 0)), 0) AS accounts_411_balance_total
+                    FROM clients c
+                    LEFT JOIN client_bank_accounts cba ON cba.client_id = c.id
+                    LEFT JOIN bank_accounts ba ON ba.id = cba.bank_account_id
+                    WHERE COALESCE(c.is_active,1)=1
+                      AND COALESCE(ba.account_number, '') LIKE '411%'
+                ");
+                $stats['accounts_411_total'] = (int)($row['accounts_411_total'] ?? 0);
+                $stats['accounts_411_balance_total'] = (float)($row['accounts_411_balance_total'] ?? 0);
+            }
+        }
+
+        if (tableExists($pdo, 'treasury_accounts')) {
+            $balanceColumn = columnExists($pdo, 'treasury_accounts', 'current_balance')
+                ? 'current_balance'
+                : (columnExists($pdo, 'treasury_accounts', 'opening_balance') ? 'opening_balance' : null);
+
+            if ($balanceColumn !== null) {
+                $row = sl_admin_functional_fetch_one($pdo, "
+                    SELECT
+                        COUNT(*) AS accounts_512_total,
+                        COALESCE(SUM(COALESCE({$balanceColumn},0)), 0) AS accounts_512_balance_total
+                    FROM treasury_accounts
+                    WHERE COALESCE(is_active,1)=1
+                ");
+                $stats['accounts_512_total'] = (int)($row['accounts_512_total'] ?? 0);
+                $stats['accounts_512_balance_total'] = (float)($row['accounts_512_balance_total'] ?? 0);
+            }
+        }
+
+        if (tableExists($pdo, 'service_accounts')) {
+            $balanceColumn = columnExists($pdo, 'service_accounts', 'current_balance') ? 'current_balance' : null;
+
+            if ($balanceColumn !== null) {
+                $where = ["COALESCE(is_active,1)=1"];
+                if (columnExists($pdo, 'service_accounts', 'is_postable')) {
+                    $where[] = "COALESCE(is_postable,0)=1";
+                }
+
+                $row = sl_admin_functional_fetch_one($pdo, "
+                    SELECT
+                        COUNT(*) AS accounts_706_total,
+                        COALESCE(SUM(COALESCE({$balanceColumn},0)), 0) AS accounts_706_balance_total
+                    FROM service_accounts
+                    WHERE " . implode(' AND ', $where)
+                );
+                $stats['accounts_706_total'] = (int)($row['accounts_706_total'] ?? 0);
+                $stats['accounts_706_balance_total'] = (float)($row['accounts_706_balance_total'] ?? 0);
+            }
+        }
+
+        if (tableExists($pdo, 'ref_operation_types')) {
+            $row = sl_admin_functional_fetch_one($pdo, "SELECT COUNT(*) AS total FROM ref_operation_types");
+            $stats['operation_types_total'] = (int)($row['total'] ?? 0);
+        } elseif (tableExists($pdo, 'operation_types')) {
+            $row = sl_admin_functional_fetch_one($pdo, "SELECT COUNT(*) AS total FROM operation_types");
+            $stats['operation_types_total'] = (int)($row['total'] ?? 0);
+        }
+
+        if (tableExists($pdo, 'ref_services')) {
+            $row = sl_admin_functional_fetch_one($pdo, "SELECT COUNT(*) AS total FROM ref_services");
+            $stats['services_total'] = (int)($row['total'] ?? 0);
+        } elseif (tableExists($pdo, 'services')) {
+            $row = sl_admin_functional_fetch_one($pdo, "SELECT COUNT(*) AS total FROM services");
+            $stats['services_total'] = (int)($row['total'] ?? 0);
+        }
+
+        if (tableExists($pdo, 'accounting_rules')) {
+            $row = sl_admin_functional_fetch_one($pdo, "
+                SELECT
+                    COUNT(*) AS rules_total,
+                    COALESCE(SUM(CASE WHEN COALESCE(is_active,1)=1 THEN 1 ELSE 0 END), 0) AS rules_active
+                FROM accounting_rules
+            ");
+            $stats['rules_total'] = (int)($row['rules_total'] ?? 0);
+            $stats['rules_active'] = (int)($row['rules_active'] ?? 0);
+        }
+
+        $stats['rules_missing'] = count(sl_admin_functional_dashboard_get_services_without_rule($pdo, 999999));
+
+        return $stats;
+    }
+}
+
+if (!function_exists('sl_admin_functional_dashboard_get_services_without_rule')) {
+    function sl_admin_functional_dashboard_get_services_without_rule(PDO $pdo, int $limit = 8): array
+    {
+        if (!tableExists($pdo, 'ref_services') || !tableExists($pdo, 'accounting_rules')) {
+            return [];
+        }
+
+        $limit = max(1, min($limit, 1000));
+
+        return sl_admin_functional_fetch_all($pdo, "
+            SELECT
+                rs.id,
+                rs.code,
+                rs.label,
+                rs.operation_type_id,
+                rot.code AS operation_type_code,
+                rot.label AS operation_type_label
+            FROM ref_services rs
+            LEFT JOIN ref_operation_types rot ON rot.id = rs.operation_type_id
+            LEFT JOIN accounting_rules ar
+                ON ar.service_id = rs.id
+               AND ar.operation_type_id = rs.operation_type_id
+               AND COALESCE(ar.is_active,1)=1
+            WHERE ar.id IS NULL
+            ORDER BY rot.label ASC, rs.label ASC
+            LIMIT {$limit}
+        ");
+    }
+}
+
+if (!function_exists('sl_admin_functional_dashboard_get_top_411')) {
+    function sl_admin_functional_dashboard_get_top_411(PDO $pdo, int $limit = 8): array
+    {
+        if (!tableExists($pdo, 'clients') || !tableExists($pdo, 'bank_accounts')) {
+            return [];
+        }
+
+        $limit = max(1, min($limit, 100));
+
+        if (columnExists($pdo, 'clients', 'generated_client_account') && columnExists($pdo, 'bank_accounts', 'account_number')) {
+            return sl_admin_functional_fetch_all($pdo, "
+                SELECT
+                    c.id,
+                    c.client_code,
+                    c.full_name,
+                    c.generated_client_account,
+                    COALESCE(ba.balance, 0) AS balance,
+                    COALESCE(ba.initial_balance, 0) AS initial_balance,
+                    c.country_commercial
+                FROM clients c
+                LEFT JOIN bank_accounts ba
+                    ON ba.account_number = c.generated_client_account
+                WHERE COALESCE(c.is_active,1)=1
+                ORDER BY COALESCE(ba.balance, 0) DESC, c.full_name ASC
+                LIMIT {$limit}
+            ");
+        }
+
+        if (tableExists($pdo, 'client_bank_accounts')) {
+            return sl_admin_functional_fetch_all($pdo, "
+                SELECT
+                    c.id,
+                    c.client_code,
+                    c.full_name,
+                    ba.account_number AS generated_client_account,
+                    COALESCE(ba.balance, 0) AS balance,
+                    COALESCE(ba.initial_balance, 0) AS initial_balance,
+                    c.country_commercial
+                FROM clients c
+                INNER JOIN client_bank_accounts cba ON cba.client_id = c.id
+                INNER JOIN bank_accounts ba ON ba.id = cba.bank_account_id
+                WHERE COALESCE(c.is_active,1)=1
+                  AND COALESCE(ba.account_number, '') LIKE '411%'
+                ORDER BY COALESCE(ba.balance, 0) DESC, c.full_name ASC
+                LIMIT {$limit}
+            ");
+        }
+
+        return [];
+    }
+}
+
+if (!function_exists('sl_admin_functional_dashboard_get_top_706')) {
+    function sl_admin_functional_dashboard_get_top_706(PDO $pdo, int $limit = 8): array
+    {
+        if (!tableExists($pdo, 'service_accounts')) {
+            return [];
+        }
+
+        $limit = max(1, min($limit, 100));
+
+        $where = ["COALESCE(is_active,1)=1"];
+        if (columnExists($pdo, 'service_accounts', 'is_postable')) {
+            $where[] = "COALESCE(is_postable,0)=1";
+        }
+
+        return sl_admin_functional_fetch_all($pdo, "
+            SELECT
+                id,
+                account_code,
+                account_label,
+                current_balance,
+                commercial_country_label,
+                destination_country_label
+            FROM service_accounts
+            WHERE " . implode(' AND ', $where) . "
+            ORDER BY COALESCE(current_balance,0) DESC, account_code ASC
+            LIMIT {$limit}
+        ");
+    }
+}
+
+if (!function_exists('sl_admin_functional_dashboard_get_recent_rules')) {
+    function sl_admin_functional_dashboard_get_recent_rules(PDO $pdo, int $limit = 8): array
+    {
+        if (!tableExists($pdo, 'accounting_rules')) {
+            return [];
+        }
+
+        $limit = max(1, min($limit, 100));
+
+        return sl_admin_functional_fetch_all($pdo, "
+            SELECT
+                ar.id,
+                ar.rule_code,
+                ar.debit_mode,
+                ar.credit_mode,
+                ar.is_active,
+                rot.label AS operation_type_label,
+                rs.label AS service_label
+            FROM accounting_rules ar
+            LEFT JOIN ref_operation_types rot ON rot.id = ar.operation_type_id
+            LEFT JOIN ref_services rs ON rs.id = ar.service_id
+            ORDER BY COALESCE(ar.updated_at, ar.created_at) DESC, ar.id DESC
+            LIMIT {$limit}
+        ");
+    }
+}
+
+if (!function_exists('sl_admin_functional_dashboard_get_data')) {
+    function sl_admin_functional_dashboard_get_data(PDO $pdo): array
+    {
+        $data = [
+            'stats' => [
+                'clients_total' => 0,
+                'clients_active' => 0,
+                'accounts_411_total' => 0,
+                'accounts_411_balance_total' => 0.0,
+                'accounts_512_total' => 0,
+                'accounts_512_balance_total' => 0.0,
+                'accounts_706_total' => 0,
+                'accounts_706_balance_total' => 0.0,
+                'operation_types_total' => 0,
+                'services_total' => 0,
+                'rules_total' => 0,
+                'rules_active' => 0,
+                'rules_missing' => 0,
+            ],
+            'top411' => [],
+            'top512' => [],
+            'top706' => [],
+            'recentRules' => [],
+            'servicesWithoutRule' => [],
+        ];
+
+        if (!function_exists('af_dashboard_fetch_one')) {
+            function af_dashboard_fetch_one(PDO $pdo, string $sql, array $params = []): array
+            {
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
+                return $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+            }
+        }
+
+        if (!function_exists('af_dashboard_fetch_all')) {
+            function af_dashboard_fetch_all(PDO $pdo, string $sql, array $params = []): array
+            {
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
+                return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            }
+        }
+
+        if (tableExists($pdo, 'clients')) {
+            $row = af_dashboard_fetch_one($pdo, "
+                SELECT
+                    COUNT(*) AS clients_total,
+                    SUM(CASE WHEN COALESCE(is_active,1)=1 THEN 1 ELSE 0 END) AS clients_active
+                FROM clients
+            ");
+            $data['stats']['clients_total'] = (int)($row['clients_total'] ?? 0);
+            $data['stats']['clients_active'] = (int)($row['clients_active'] ?? 0);
+        }
+
+        if (tableExists($pdo, 'clients') && tableExists($pdo, 'bank_accounts')) {
+            $row = af_dashboard_fetch_one($pdo, "
+                SELECT
+                    COUNT(*) AS accounts_411_total,
+                    COALESCE(SUM(COALESCE(ba.balance, 0)), 0) AS accounts_411_balance_total
+                FROM clients c
+                LEFT JOIN bank_accounts ba
+                    ON ba.account_number = c.generated_client_account
+                WHERE COALESCE(c.is_active,1)=1
+                  AND COALESCE(c.generated_client_account,'') LIKE '411%'
+            ");
+            $data['stats']['accounts_411_total'] = (int)($row['accounts_411_total'] ?? 0);
+            $data['stats']['accounts_411_balance_total'] = (float)($row['accounts_411_balance_total'] ?? 0);
+        }
+
+        if (tableExists($pdo, 'treasury_accounts')) {
+            $balanceColumn512 = columnExists($pdo, 'treasury_accounts', 'current_balance')
+                ? 'current_balance'
+                : (columnExists($pdo, 'treasury_accounts', 'opening_balance') ? 'opening_balance' : '0');
+
+            $row = af_dashboard_fetch_one($pdo, "
+                SELECT
+                    COUNT(*) AS accounts_512_total,
+                    COALESCE(SUM(COALESCE({$balanceColumn512},0)), 0) AS accounts_512_balance_total
+                FROM treasury_accounts
+                WHERE COALESCE(is_active,1)=1
+            ");
+            $data['stats']['accounts_512_total'] = (int)($row['accounts_512_total'] ?? 0);
+            $data['stats']['accounts_512_balance_total'] = (float)($row['accounts_512_balance_total'] ?? 0);
+        }
+
+        if (tableExists($pdo, 'service_accounts')) {
+            $balanceColumn706 = columnExists($pdo, 'service_accounts', 'current_balance')
+                ? 'current_balance'
+                : '0';
+
+            $row = af_dashboard_fetch_one($pdo, "
+                SELECT
+                    COUNT(*) AS accounts_706_total,
+                    COALESCE(SUM(COALESCE({$balanceColumn706},0)), 0) AS accounts_706_balance_total
+                FROM service_accounts
+                WHERE COALESCE(is_active,1)=1
+                  AND (
+                        COALESCE(is_postable,0)=1
+                        OR account_code LIKE '706%'
+                      )
+            ");
+            $data['stats']['accounts_706_total'] = (int)($row['accounts_706_total'] ?? 0);
+            $data['stats']['accounts_706_balance_total'] = (float)($row['accounts_706_balance_total'] ?? 0);
+        }
+
+        if (tableExists($pdo, 'ref_operation_types')) {
+            $row = af_dashboard_fetch_one($pdo, "
+                SELECT COUNT(*) AS total
+                FROM ref_operation_types
+            ");
+            $data['stats']['operation_types_total'] = (int)($row['total'] ?? 0);
+        } elseif (tableExists($pdo, 'operation_types')) {
+            $row = af_dashboard_fetch_one($pdo, "
+                SELECT COUNT(*) AS total
+                FROM operation_types
+            ");
+            $data['stats']['operation_types_total'] = (int)($row['total'] ?? 0);
+        }
+
+        if (tableExists($pdo, 'ref_services')) {
+            $row = af_dashboard_fetch_one($pdo, "
+                SELECT COUNT(*) AS total
+                FROM ref_services
+            ");
+            $data['stats']['services_total'] = (int)($row['total'] ?? 0);
+        } elseif (tableExists($pdo, 'services')) {
+            $row = af_dashboard_fetch_one($pdo, "
+                SELECT COUNT(*) AS total
+                FROM services
+            ");
+            $data['stats']['services_total'] = (int)($row['total'] ?? 0);
+        }
+
+        if (tableExists($pdo, 'accounting_rules')) {
+            $row = af_dashboard_fetch_one($pdo, "
+                SELECT
+                    COUNT(*) AS rules_total,
+                    SUM(CASE WHEN COALESCE(is_active,1)=1 THEN 1 ELSE 0 END) AS rules_active
+                FROM accounting_rules
+            ");
+            $data['stats']['rules_total'] = (int)($row['rules_total'] ?? 0);
+            $data['stats']['rules_active'] = (int)($row['rules_active'] ?? 0);
+        }
+
+        if (
+            tableExists($pdo, 'ref_services')
+            && tableExists($pdo, 'accounting_rules')
+            && tableExists($pdo, 'ref_operation_types')
+        ) {
+            $data['servicesWithoutRule'] = af_dashboard_fetch_all($pdo, "
+                SELECT
+                    rs.id,
+                    rs.operation_type_id,
+                    rs.code,
+                    rs.label,
+                    rot.code AS operation_type_code,
+                    rot.label AS operation_type_label
+                FROM ref_services rs
+                LEFT JOIN ref_operation_types rot ON rot.id = rs.operation_type_id
+                LEFT JOIN accounting_rules ar
+                    ON ar.service_id = rs.id
+                   AND ar.operation_type_id = rs.operation_type_id
+                   AND COALESCE(ar.is_active,1)=1
+                WHERE ar.id IS NULL
+                ORDER BY rot.label ASC, rs.label ASC
+                LIMIT 8
+            ");
+            $data['stats']['rules_missing'] = count($data['servicesWithoutRule']);
+        }
+
+        /**
+         * TOP 411 ROBUSTE
+         * 1. priorite au lien client_bank_accounts
+         * 2. fallback sur generated_client_account = account_number
+         */
+        if (tableExists($pdo, 'clients') && tableExists($pdo, 'bank_accounts')) {
+            if (tableExists($pdo, 'client_bank_accounts')) {
+                $rows = af_dashboard_fetch_all($pdo, "
+                    SELECT
+                        c.id,
+                        c.client_code,
+                        c.full_name,
+                        c.generated_client_account,
+                        c.country_commercial,
+                        COALESCE(ba.balance, 0) AS balance,
+                        COALESCE(ba.initial_balance, 0) AS initial_balance
+                    FROM clients c
+                    LEFT JOIN client_bank_accounts cba ON cba.client_id = c.id
+                    LEFT JOIN bank_accounts ba ON ba.id = cba.bank_account_id
+                    WHERE COALESCE(c.is_active,1)=1
+                      AND (
+                            COALESCE(ba.account_number,'') LIKE '411%'
+                            OR COALESCE(c.generated_client_account,'') LIKE '411%'
+                          )
+                    GROUP BY
+                        c.id,
+                        c.client_code,
+                        c.full_name,
+                        c.generated_client_account,
+                        c.country_commercial,
+                        ba.balance,
+                        ba.initial_balance
+                    ORDER BY COALESCE(ba.balance, 0) DESC, c.full_name ASC
+                    LIMIT 8
+                ");
+                $data['top411'] = $rows;
+            }
+
+            if (!$data['top411']) {
+                $data['top411'] = af_dashboard_fetch_all($pdo, "
+                    SELECT
+                        c.id,
+                        c.client_code,
+                        c.full_name,
+                        c.generated_client_account,
+                        c.country_commercial,
+                        COALESCE(ba.balance, 0) AS balance,
+                        COALESCE(ba.initial_balance, 0) AS initial_balance
+                    FROM clients c
+                    LEFT JOIN bank_accounts ba
+                        ON ba.account_number = c.generated_client_account
+                    WHERE COALESCE(c.is_active,1)=1
+                      AND COALESCE(c.generated_client_account,'') LIKE '411%'
+                    ORDER BY COALESCE(ba.balance, 0) DESC, c.full_name ASC
+                    LIMIT 8
+                ");
+            }
+        }
+
+        /**
+         * TOP 512
+         */
+        if (tableExists($pdo, 'treasury_accounts')) {
+            $balanceColumn512 = columnExists($pdo, 'treasury_accounts', 'current_balance')
+                ? 'current_balance'
+                : (columnExists($pdo, 'treasury_accounts', 'opening_balance') ? 'opening_balance' : '0');
+
+            $data['top512'] = af_dashboard_fetch_all($pdo, "
+                SELECT
+                    id,
+                    account_code,
+                    account_label,
+                    COALESCE({$balanceColumn512}, 0) AS current_balance,
+                    " . (columnExists($pdo, 'treasury_accounts', 'currency_code') ? "COALESCE(currency_code, 'EUR')" : "'EUR'") . " AS currency_code,
+                    " . (columnExists($pdo, 'treasury_accounts', 'country_label') ? "COALESCE(country_label, '')" : "''") . " AS country_label
+                FROM treasury_accounts
+                WHERE COALESCE(is_active,1)=1
+                ORDER BY COALESCE({$balanceColumn512}, 0) DESC, account_code ASC
+                LIMIT 8
+            ");
+        }
+
+        /**
+         * TOP 706
+         */
+        if (tableExists($pdo, 'service_accounts')) {
+            $balanceColumn706 = columnExists($pdo, 'service_accounts', 'current_balance')
+                ? 'current_balance'
+                : '0';
+
+            $data['top706'] = af_dashboard_fetch_all($pdo, "
+                SELECT
+                    id,
+                    account_code,
+                    account_label,
+                    COALESCE({$balanceColumn706}, 0) AS current_balance,
+                    " . (columnExists($pdo, 'service_accounts', 'commercial_country_label') ? "COALESCE(commercial_country_label, '')" : "''") . " AS commercial_country_label,
+                    " . (columnExists($pdo, 'service_accounts', 'destination_country_label') ? "COALESCE(destination_country_label, '')" : "''") . " AS destination_country_label
+                FROM service_accounts
+                WHERE COALESCE(is_active,1)=1
+                  AND (
+                        COALESCE(is_postable,0)=1
+                        OR COALESCE(account_code,'') LIKE '706%'
+                      )
+                ORDER BY COALESCE({$balanceColumn706}, 0) DESC, account_code ASC
+                LIMIT 8
+            ");
+        }
+
+        if (
+            tableExists($pdo, 'accounting_rules')
+            && tableExists($pdo, 'ref_operation_types')
+            && tableExists($pdo, 'ref_services')
+        ) {
+            $recentOrder = columnExists($pdo, 'accounting_rules', 'updated_at')
+                ? 'COALESCE(ar.updated_at, ar.created_at) DESC, ar.id DESC'
+                : 'ar.id DESC';
+
+            $data['recentRules'] = af_dashboard_fetch_all($pdo, "
+                SELECT
+                    ar.id,
+                    ar.rule_code,
+                    ar.debit_mode,
+                    ar.credit_mode,
+                    ar.is_active,
+                    rot.label AS operation_type_label,
+                    rs.label AS service_label
+                FROM accounting_rules ar
+                LEFT JOIN ref_operation_types rot ON rot.id = ar.operation_type_id
+                LEFT JOIN ref_services rs ON rs.id = ar.service_id
+                ORDER BY {$recentOrder}
+                LIMIT 8
+            ");
+        }
+
+        return $data;
+    }
+}
+if (!function_exists('sl_notifications_parse_filters')) {
+    function sl_notifications_parse_filters(array $input = []): array
+    {
+        return [
+            'q' => trim((string)($input['q'] ?? '')),
+            'type' => trim((string)($input['type'] ?? '')),
+            'level' => trim((string)($input['level'] ?? '')),
+            'entity_type' => trim((string)($input['entity_type'] ?? '')),
+            'client_id' => trim((string)($input['client_id'] ?? '')),
+            'operation_type_code' => trim((string)($input['operation_type_code'] ?? '')),
+            'service_id' => trim((string)($input['service_id'] ?? '')),
+            'status' => trim((string)($input['status'] ?? '')),
+            'date_from' => trim((string)($input['date_from'] ?? '')),
+            'date_to' => trim((string)($input['date_to'] ?? '')),
+            'page' => max(1, (int)($input['page'] ?? 1)),
+            'per_page' => max(10, min(200, (int)($input['per_page'] ?? 25))),
+        ];
+    }
+}
+
+if (!function_exists('sl_notifications_get_filter_options')) {
+    function sl_notifications_get_filter_options(PDO $pdo): array
+    {
+        $options = [
+            'types' => [],
+            'levels' => [],
+            'entity_types' => [],
+            'clients' => [],
+            'operation_types' => [],
+            'services' => [],
+            'statuses' => [
+                ['value' => 'unread', 'label' => 'Non lues'],
+                ['value' => 'read', 'label' => 'Lues'],
+            ],
+        ];
+
+        if (tableExists($pdo, 'notifications')) {
+            if (columnExists($pdo, 'notifications', 'type')) {
+                $options['types'] = $pdo->query("
+                    SELECT DISTINCT type
+                    FROM notifications
+                    WHERE COALESCE(type, '') <> ''
+                    ORDER BY type ASC
+                ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            }
+
+            if (columnExists($pdo, 'notifications', 'level')) {
+                $options['levels'] = $pdo->query("
+                    SELECT DISTINCT level
+                    FROM notifications
+                    WHERE COALESCE(level, '') <> ''
+                    ORDER BY level ASC
+                ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            }
+
+            if (columnExists($pdo, 'notifications', 'entity_type')) {
+                $options['entity_types'] = $pdo->query("
+                    SELECT DISTINCT entity_type
+                    FROM notifications
+                    WHERE COALESCE(entity_type, '') <> ''
+                    ORDER BY entity_type ASC
+                ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            }
+        }
+
+        if (tableExists($pdo, 'clients')) {
+            $options['clients'] = $pdo->query("
+                SELECT id, client_code, full_name
+                FROM clients
+                ORDER BY client_code ASC, full_name ASC
+            ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+
+        if (tableExists($pdo, 'operations') && columnExists($pdo, 'operations', 'operation_type_code')) {
+            $options['operation_types'] = $pdo->query("
+                SELECT DISTINCT operation_type_code
+                FROM operations
+                WHERE COALESCE(operation_type_code, '') <> ''
+                ORDER BY operation_type_code ASC
+            ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        }
+
+        if (tableExists($pdo, 'ref_services')) {
+            $options['services'] = $pdo->query("
+                SELECT id, code, label
+                FROM ref_services
+                ORDER BY label ASC
+            ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+
+        return $options;
+    }
+}
+
+if (!function_exists('sl_notifications_get_kpis')) {
+    function sl_notifications_get_kpis(PDO $pdo): array
+    {
+        $kpis = [
+            'total' => 0,
+            'unread' => 0,
+            'warning' => 0,
+            'danger' => 0,
+            'success' => 0,
+        ];
+
+        if (!tableExists($pdo, 'notifications')) {
+            return $kpis;
+        }
+
+        $stmt = $pdo->query("
+            SELECT
+                COUNT(*) AS total_count,
+                COALESCE(SUM(CASE WHEN COALESCE(is_read,0)=0 THEN 1 ELSE 0 END),0) AS unread_count,
+                COALESCE(SUM(CASE WHEN LOWER(COALESCE(level,''))='warning' THEN 1 ELSE 0 END),0) AS warning_count,
+                COALESCE(SUM(CASE WHEN LOWER(COALESCE(level,''))='danger' THEN 1 ELSE 0 END),0) AS danger_count,
+                COALESCE(SUM(CASE WHEN LOWER(COALESCE(level,''))='success' THEN 1 ELSE 0 END),0) AS success_count
+            FROM notifications
+        ");
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $kpis['total'] = (int)($row['total_count'] ?? 0);
+        $kpis['unread'] = (int)($row['unread_count'] ?? 0);
+        $kpis['warning'] = (int)($row['warning_count'] ?? 0);
+        $kpis['danger'] = (int)($row['danger_count'] ?? 0);
+        $kpis['success'] = (int)($row['success_count'] ?? 0);
+
+        return $kpis;
+    }
+}
+
+if (!function_exists('sl_notifications_get_rows')) {
+    function sl_notifications_get_rows(PDO $pdo, array $filters = []): array
+    {
+        $f = sl_notifications_parse_filters($filters);
+
+        $result = [
+            'rows' => [],
+            'total' => 0,
+            'page' => $f['page'],
+            'per_page' => $f['per_page'],
+            'pages' => 1,
+        ];
+
+        if (!tableExists($pdo, 'notifications')) {
+            return $result;
+        }
+
+        $joins = [];
+        $selects = ['n.*'];
+        $where = ['1=1'];
+        $params = [];
+
+        if (tableExists($pdo, 'clients')) {
+            $joins[] = "LEFT JOIN clients c ON n.entity_type = 'client' AND n.entity_id = c.id";
+            $selects[] = "c.client_code";
+            $selects[] = "c.full_name";
+            $selects[] = "c.generated_client_account";
+        } else {
+            $selects[] = "NULL AS client_code";
+            $selects[] = "NULL AS full_name";
+            $selects[] = "NULL AS generated_client_account";
+        }
+
+        if (tableExists($pdo, 'operations')) {
+            $joins[] = "LEFT JOIN operations o ON n.entity_type = 'operation' AND n.entity_id = o.id";
+            $selects[] = columnExists($pdo, 'operations', 'operation_type_code') ? "o.operation_type_code" : "NULL AS operation_type_code";
+            $selects[] = columnExists($pdo, 'operations', 'service_id') ? "o.service_id AS operation_service_id" : "NULL AS operation_service_id";
+        } else {
+            $selects[] = "NULL AS operation_type_code";
+            $selects[] = "NULL AS operation_service_id";
+        }
+
+        if (tableExists($pdo, 'ref_services') && tableExists($pdo, 'operations')) {
+            $joins[] = "LEFT JOIN ref_services rs ON rs.id = o.service_id";
+            $selects[] = "rs.label AS service_label";
+        } else {
+            $selects[] = "NULL AS service_label";
+        }
+
+        if ($f['q'] !== '') {
+            $like = '%' . $f['q'] . '%';
+            $where[] = "(
+                COALESCE(n.message,'') LIKE ?
+                OR COALESCE(n.type,'') LIKE ?
+                OR COALESCE(n.level,'') LIKE ?
+                OR COALESCE(n.entity_type,'') LIKE ?
+                OR COALESCE(c.client_code,'') LIKE ?
+                OR COALESCE(c.full_name,'') LIKE ?
+                OR COALESCE(o.operation_type_code,'') LIKE ?
+                OR COALESCE(rs.label,'') LIKE ?
+            )";
+            array_push($params, $like, $like, $like, $like, $like, $like, $like, $like);
+        }
+
+        if ($f['type'] !== '') {
+            $where[] = "n.type = ?";
+            $params[] = $f['type'];
+        }
+
+        if ($f['level'] !== '') {
+            $where[] = "LOWER(COALESCE(n.level,'')) = LOWER(?)";
+            $params[] = $f['level'];
+        }
+
+        if ($f['entity_type'] !== '') {
+            $where[] = "n.entity_type = ?";
+            $params[] = $f['entity_type'];
+        }
+
+        if ($f['client_id'] !== '' && ctype_digit($f['client_id'])) {
+            $where[] = "c.id = ?";
+            $params[] = (int)$f['client_id'];
+        }
+
+        if ($f['operation_type_code'] !== '') {
+            $where[] = "o.operation_type_code = ?";
+            $params[] = $f['operation_type_code'];
+        }
+
+        if ($f['service_id'] !== '' && ctype_digit($f['service_id'])) {
+            $where[] = "rs.id = ?";
+            $params[] = (int)$f['service_id'];
+        }
+
+        if ($f['status'] === 'read' && columnExists($pdo, 'notifications', 'is_read')) {
+            $where[] = "COALESCE(n.is_read,0) = 1";
+        } elseif ($f['status'] === 'unread' && columnExists($pdo, 'notifications', 'is_read')) {
+            $where[] = "COALESCE(n.is_read,0) = 0";
+        }
+
+        if ($f['date_from'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $f['date_from']) && columnExists($pdo, 'notifications', 'created_at')) {
+            $where[] = "DATE(n.created_at) >= ?";
+            $params[] = $f['date_from'];
+        }
+
+        if ($f['date_to'] !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $f['date_to']) && columnExists($pdo, 'notifications', 'created_at')) {
+            $where[] = "DATE(n.created_at) <= ?";
+            $params[] = $f['date_to'];
+        }
+
+        $countSql = "
+            SELECT COUNT(*)
+            FROM notifications n
+            " . implode("\n", $joins) . "
+            WHERE " . implode(' AND ', $where);
+
+        $stmtCount = $pdo->prepare($countSql);
+        $stmtCount->execute($params);
+        $total = (int)$stmtCount->fetchColumn();
+
+        $pages = max(1, (int)ceil($total / $f['per_page']));
+        $page = min($f['page'], $pages);
+        $offset = ($page - 1) * $f['per_page'];
+
+        $sql = "
+            SELECT " . implode(",\n", $selects) . "
+            FROM notifications n
+            " . implode("\n", $joins) . "
+            WHERE " . implode(' AND ', $where) . "
+            ORDER BY COALESCE(n.created_at, NOW()) DESC, n.id DESC
+            LIMIT {$f['per_page']} OFFSET {$offset}
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $result['rows'] = $rows;
+        $result['total'] = $total;
+        $result['page'] = $page;
+        $result['per_page'] = $f['per_page'];
+        $result['pages'] = $pages;
+
+        return $result;
+    }
+}
+if (!function_exists('sl_dashboard_get_pending_debits_history_rows')) {
+    function sl_dashboard_get_pending_debits_history_rows(PDO $pdo, int $limit = 25): array
+    {
+        $limit = max(1, min($limit, 200));
+
+        if (!tableExists($pdo, 'pending_client_debits')) {
+            return [];
+        }
+
+        if (!columnExists($pdo, 'pending_client_debits', 'client_id')) {
+            return [];
+        }
+
+        $amountColumn = null;
+        if (columnExists($pdo, 'pending_client_debits', 'initial_amount')) {
+            $amountColumn = 'initial_amount';
+        } elseif (columnExists($pdo, 'pending_client_debits', 'amount_due')) {
+            $amountColumn = 'amount_due';
+        } elseif (columnExists($pdo, 'pending_client_debits', 'remaining_amount')) {
+            $amountColumn = 'remaining_amount';
+        }
+
+        if ($amountColumn === null) {
+            return [];
+        }
+
+        $createdAtExpr = columnExists($pdo, 'pending_client_debits', 'created_at') ? 'pd.created_at' : 'NULL';
+        $resolvedAtExpr = 'NULL';
+
+        if (columnExists($pdo, 'pending_client_debits', 'resolved_at')) {
+            $resolvedAtExpr = 'pd.resolved_at';
+        } elseif (columnExists($pdo, 'pending_client_debits', 'settled_at')) {
+            $resolvedAtExpr = 'pd.settled_at';
+        } elseif (columnExists($pdo, 'pending_client_debits', 'updated_at') && columnExists($pdo, 'pending_client_debits', 'status')) {
+            $resolvedAtExpr = "CASE
+                WHEN LOWER(COALESCE(pd.status,'')) IN ('settled', 'resolved', 'closed')
+                THEN pd.updated_at
+                ELSE NULL
+            END";
+        }
+
+        $sql = "
+            SELECT
+                pd.client_id,
+                c.client_code,
+                c.full_name,
+                c.generated_client_account,
+                COUNT(*) AS total_pending_debits,
+                COALESCE(SUM(COALESCE(pd.{$amountColumn},0)),0) AS total_pending_amount,
+                COALESCE(SUM(CASE
+                    WHEN LOWER(COALESCE(pd.status,'')) IN ('settled', 'resolved', 'closed')
+                    THEN 1 ELSE 0
+                END),0) AS resolved_count,
+                COALESCE(AVG(CASE
+                    WHEN {$createdAtExpr} IS NOT NULL AND {$resolvedAtExpr} IS NOT NULL
+                    THEN TIMESTAMPDIFF(HOUR, {$createdAtExpr}, {$resolvedAtExpr})
+                    ELSE NULL
+                END),0) AS avg_resolution_hours,
+                MAX(pd.created_at) AS last_pending_created_at
+            FROM pending_client_debits pd
+            LEFT JOIN clients c ON c.id = pd.client_id
+            WHERE pd.client_id IS NOT NULL
+            GROUP BY
+                pd.client_id,
+                c.client_code,
+                c.full_name,
+                c.generated_client_account
+            ORDER BY total_pending_amount DESC, total_pending_debits DESC, c.full_name ASC
+            LIMIT {$limit}
+        ";
+
+        $stmt = $pdo->query($sql);
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+if (!function_exists('sl_client_accounts_get_kpis')) {
+    function sl_client_accounts_get_kpis(PDO $pdo, array $filters = []): array
+    {
+        if (!tableExists($pdo, 'bank_accounts')) {
+            return [
+                'accounts_count' => 0,
+                'initial_balance_total' => 0,
+                'current_balance_total' => 0,
+                'negative_accounts_count' => 0,
+            ];
+        }
+
+        $where = ['1=1'];
+        $params = [];
+
+        $hasClients = tableExists($pdo, 'clients');
+
+        if (!empty($filters['q'])) {
+            $q = '%' . trim((string)$filters['q']) . '%';
+
+            if ($hasClients) {
+                $where[] = "(
+                    COALESCE(ba.account_number,'') LIKE ?
+                    OR COALESCE(ba.account_name,'') LIKE ?
+                    OR COALESCE(c.client_code,'') LIKE ?
+                    OR COALESCE(c.full_name,'') LIKE ?
+                )";
+                array_push($params, $q, $q, $q, $q);
+            } else {
+                $where[] = "(
+                    COALESCE(ba.account_number,'') LIKE ?
+                    OR COALESCE(ba.account_name,'') LIKE ?
+                )";
+                array_push($params, $q, $q);
+            }
+        }
+
+        if ($hasClients && !empty($filters['client_status'])) {
+            if ($filters['client_status'] === 'active') {
+                $where[] = 'COALESCE(c.is_active,1) = 1';
+            } elseif ($filters['client_status'] === 'archived') {
+                $where[] = 'COALESCE(c.is_active,1) = 0';
+            }
+        }
+
+        if (!empty($filters['balance_filter'])) {
+            switch ($filters['balance_filter']) {
+                case 'positive':
+                    $where[] = 'COALESCE(ba.balance,0) > 0';
+                    break;
+                case 'negative':
+                    $where[] = 'COALESCE(ba.balance,0) < 0';
+                    break;
+                case 'zero':
+                    $where[] = 'COALESCE(ba.balance,0) = 0';
+                    break;
+                case 'non_zero':
+                    $where[] = 'COALESCE(ba.balance,0) <> 0';
+                    break;
+            }
+        }
+
+        if (array_key_exists('balance_min', $filters) && $filters['balance_min'] !== null) {
+            $where[] = 'COALESCE(ba.balance,0) >= ?';
+            $params[] = (float)$filters['balance_min'];
+        }
+
+        if (array_key_exists('balance_max', $filters) && $filters['balance_max'] !== null) {
+            $where[] = 'COALESCE(ba.balance,0) <= ?';
+            $params[] = (float)$filters['balance_max'];
+        }
+
+        $sql = "
+            SELECT
+                COUNT(*) AS accounts_count,
+                COALESCE(SUM(COALESCE(ba.initial_balance, 0)), 0) AS initial_balance_total,
+                COALESCE(SUM(COALESCE(ba.balance, 0)), 0) AS current_balance_total,
+                COALESCE(SUM(CASE WHEN COALESCE(ba.balance, 0) < 0 THEN 1 ELSE 0 END), 0) AS negative_accounts_count
+            FROM bank_accounts ba
+            " . ($hasClients ? "LEFT JOIN clients c ON c.generated_client_account = ba.account_number" : "") . "
+            WHERE " . implode(' AND ', $where);
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'accounts_count' => (int)($row['accounts_count'] ?? 0),
+            'initial_balance_total' => (float)($row['initial_balance_total'] ?? 0),
+            'current_balance_total' => (float)($row['current_balance_total'] ?? 0),
+            'negative_accounts_count' => (int)($row['negative_accounts_count'] ?? 0),
+        ];
+    }
+}
+if (!function_exists('sl_operations_list_get_rows')) {
+    function sl_operations_list_get_rows(PDO $pdo, array $filters = []): array
+    {
+        $filters = array_merge([
+            'q' => '',
+            'date_from' => '',
+            'date_to' => '',
+            'operation_type_code' => '',
+            'service_id' => '',
+            'page' => 1,
+            'per_page' => 20,
+        ], $filters);
+
+        $where = ['1=1'];
+        $params = [];
+
+        if ($filters['q'] !== '') {
+            $where[] = "(
+                COALESCE(o.reference,'') LIKE ?
+                OR COALESCE(o.label,'') LIKE ?
+                OR COALESCE(c.client_code,'') LIKE ?
+                OR COALESCE(c.full_name,'') LIKE ?
+                OR COALESCE(o.description,'') LIKE ?
+            )";
+            $like = '%' . $filters['q'] . '%';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        if ($filters['date_from'] !== '') {
+            $where[] = 'DATE(o.operation_date) >= ?';
+            $params[] = $filters['date_from'];
+        }
+
+        if ($filters['date_to'] !== '') {
+            $where[] = 'DATE(o.operation_date) <= ?';
+            $params[] = $filters['date_to'];
+        }
+
+        if ($filters['operation_type_code'] !== '') {
+            $where[] = 'COALESCE(ot.code, \'\') LIKE ?';
+            $params[] = '%' . $filters['operation_type_code'] . '%';
+        }
+
+        if ($filters['service_id'] !== '' && ctype_digit((string)$filters['service_id'])) {
+            $where[] = 'o.service_id = ?';
+            $params[] = (int)$filters['service_id'];
+        }
+
+        $fromSql = "
+            FROM operations o
+            LEFT JOIN clients c ON c.id = o.client_id
+            LEFT JOIN ref_operation_types ot ON ot.id = o.operation_type_id
+            LEFT JOIN ref_services s ON s.id = o.service_id
+            LEFT JOIN treasury_accounts ta ON ta.id = o.linked_treasury_account_id
+            WHERE " . implode(' AND ', $where);
+
+        $countSql = "SELECT COUNT(*) " . $fromSql;
+        $stmtCount = $pdo->prepare($countSql);
+        $stmtCount->execute($params);
+        $total = (int)$stmtCount->fetchColumn();
+
+        $perPage = (int)$filters['per_page'];
+        if ($perPage <= 0) {
+            $perPage = 20;
+        }
+        $perPage = min($perPage, 200);
+
+        $pages = max(1, (int)ceil($total / $perPage));
+
+        $page = (int)$filters['page'];
+        if ($page <= 0) {
+            $page = 1;
+        }
+        if ($page > $pages) {
+            $page = $pages;
+        }
+
+        $offset = ($page - 1) * $perPage;
+
+        $sql = "
+            SELECT
+                o.*,
+                c.client_code,
+                c.full_name AS client_full_name,
+                ot.code AS operation_type_code,
+                s.label AS service_label,
+                ta.account_code AS linked_treasury_account_code,
+                ta.account_label AS linked_treasury_account_label
+            " . $fromSql . "
+            ORDER BY o.operation_date DESC, o.id DESC
+            LIMIT {$perPage} OFFSET {$offset}
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        return [
+            'rows' => $rows,
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $perPage,
+            'pages' => $pages,
+            'has_prev' => $page > 1,
+            'has_next' => $page < $pages,
+            'prev_page' => $page > 1 ? $page - 1 : 1,
+            'next_page' => $page < $pages ? $page + 1 : $pages,
+        ];
+    }
+}
+if (!function_exists('sl_manage_accounts_money')) {
+    function sl_manage_accounts_money(float $value): string
+    {
+        return number_format($value, 2, ',', ' ');
+    }
+}
+
+if (!function_exists('sl_manage_accounts_valid_date')) {
+    function sl_manage_accounts_valid_date(string $value): bool
+    {
+        return (bool)preg_match('/^\d{4}-\d{2}-\d{2}$/', $value);
+    }
+}
+
+if (!function_exists('sl_manage_accounts_like')) {
+    function sl_manage_accounts_like(string $needle, array $haystack): bool
+    {
+        $needle = mb_strtolower(trim($needle));
+        if ($needle === '') {
+            return true;
+        }
+
+        foreach ($haystack as $value) {
+            if (mb_stripos((string)$value, $needle) !== false) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+if (!function_exists('sl_manage_accounts_paginate_array')) {
+    function sl_manage_accounts_paginate_array(array $rows, int $page, int $perPage): array
+    {
+        $total = count($rows);
+        $pages = max(1, (int)ceil($total / max(1, $perPage)));
+        $page = max(1, min($page, $pages));
+        $offset = ($page - 1) * $perPage;
+
+        return [
+            'rows' => array_slice($rows, $offset, $perPage),
+            'total' => $total,
+            'page' => $page,
+            'pages' => $pages,
+            'per_page' => $perPage,
+        ];
+    }
+}
+
+if (!function_exists('sl_manage_accounts_parse_filters')) {
+    function sl_manage_accounts_parse_filters(array $input): array
+    {
+        $from = trim((string)($input['from'] ?? date('Y-m-01')));
+        $to = trim((string)($input['to'] ?? date('Y-m-t')));
+
+        if (!sl_manage_accounts_valid_date($from)) {
+            $from = date('Y-m-01');
+        }
+        if (!sl_manage_accounts_valid_date($to)) {
+            $to = date('Y-m-t');
+        }
+        if ($from > $to) {
+            [$from, $to] = [$to, $from];
+        }
+
+        $perPage = (int)($input['per_page'] ?? 15);
+        $allowedPerPage = [10, 15, 20, 30, 50, 100];
+        if (!in_array($perPage, $allowedPerPage, true)) {
+            $perPage = 15;
+        }
+
+        return [
+            'from' => $from,
+            'to' => $to,
+            'q' => trim((string)($input['q'] ?? '')),
+            'family' => trim((string)($input['family'] ?? '')),
+            'client_status' => trim((string)($input['client_status'] ?? '')),
+            'client_type' => trim((string)($input['client_type'] ?? '')),
+            'country_commercial' => trim((string)($input['country_commercial'] ?? '')),
+            'country_destination' => trim((string)($input['country_destination'] ?? '')),
+            'postable' => trim((string)($input['postable'] ?? '')),
+            'active' => trim((string)($input['active'] ?? '')),
+            'currency' => trim((string)($input['currency'] ?? '')),
+            'bank' => trim((string)($input['bank'] ?? '')),
+            'per_page' => $perPage,
+            'client_page' => max(1, (int)($input['client_page'] ?? 1)),
+            'treasury_page' => max(1, (int)($input['treasury_page'] ?? 1)),
+            'service_page' => max(1, (int)($input['service_page'] ?? 1)),
+            'allowed_per_page' => $allowedPerPage,
+        ];
+    }
+}
+
+if (!function_exists('sl_manage_accounts_load_base_data')) {
+    function sl_manage_accounts_load_base_data(PDO $pdo): array
+    {
+        $serviceAccounts = tableExists($pdo, 'service_accounts')
+            ? $pdo->query("
+                SELECT *
+                FROM service_accounts
+                ORDER BY account_code ASC
+            ")->fetchAll(PDO::FETCH_ASSOC)
+            : [];
+
+        $treasuryAccounts = tableExists($pdo, 'treasury_accounts')
+            ? $pdo->query("
+                SELECT *
+                FROM treasury_accounts
+                ORDER BY account_code ASC
+            ")->fetchAll(PDO::FETCH_ASSOC)
+            : [];
+
+        $clientAccounts = [];
+        if (tableExists($pdo, 'bank_accounts')) {
+            $sql411 = "
+                SELECT
+                    ba.*,
+                    c.id AS client_id,
+                    c.client_code,
+                    c.full_name,
+                    c.country_commercial,
+                    c.client_type,
+                    c.is_active AS client_is_active
+                FROM bank_accounts ba
+                LEFT JOIN clients c ON c.generated_client_account = ba.account_number
+                WHERE ba.account_number LIKE '411%'
+                ORDER BY ba.account_number ASC
+            ";
+            $clientAccounts = $pdo->query($sql411)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+
+        return [
+            'service_accounts' => $serviceAccounts,
+            'treasury_accounts' => $treasuryAccounts,
+            'client_accounts' => $clientAccounts,
+        ];
+    }
+}
+
+if (!function_exists('sl_manage_accounts_load_movement_maps')) {
+    function sl_manage_accounts_load_movement_maps(PDO $pdo, string $from, string $to, array $treasuryAccounts): array
+    {
+        $serviceMovementMap = [];
+        $treasuryMovementMap = [];
+        $clientMovementMap = [];
+
+        if (tableExists($pdo, 'operations')) {
+            $stmt706 = $pdo->prepare("
+                SELECT
+                    account_code,
+                    SUM(total_credit) AS total_credit,
+                    SUM(total_debit) AS total_debit
+                FROM (
+                    SELECT
+                        credit_account_code AS account_code,
+                        SUM(amount) AS total_credit,
+                        0 AS total_debit
+                    FROM operations
+                    WHERE operation_date BETWEEN ? AND ?
+                      AND COALESCE(credit_account_code, '') LIKE '706%'
+                    GROUP BY credit_account_code
+
+                    UNION ALL
+
+                    SELECT
+                        debit_account_code AS account_code,
+                        0 AS total_credit,
+                        SUM(amount) AS total_debit
+                    FROM operations
+                    WHERE operation_date BETWEEN ? AND ?
+                      AND COALESCE(debit_account_code, '') LIKE '706%'
+                    GROUP BY debit_account_code
+                ) t
+                GROUP BY account_code
+            ");
+            $stmt706->execute([$from, $to, $from, $to]);
+
+            foreach ($stmt706->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $serviceMovementMap[(string)$row['account_code']] = [
+                    'credit' => (float)($row['total_credit'] ?? 0),
+                    'debit' => (float)($row['total_debit'] ?? 0),
+                    'net' => (float)($row['total_credit'] ?? 0) - (float)($row['total_debit'] ?? 0),
+                ];
+            }
+
+            $stmt411 = $pdo->prepare("
+                SELECT
+                    account_code,
+                    SUM(total_credit) AS total_credit,
+                    SUM(total_debit) AS total_debit
+                FROM (
+                    SELECT
+                        credit_account_code AS account_code,
+                        SUM(amount) AS total_credit,
+                        0 AS total_debit
+                    FROM operations
+                    WHERE operation_date BETWEEN ? AND ?
+                      AND COALESCE(credit_account_code, '') LIKE '411%'
+                    GROUP BY credit_account_code
+
+                    UNION ALL
+
+                    SELECT
+                        debit_account_code AS account_code,
+                        0 AS total_credit,
+                        SUM(amount) AS total_debit
+                    FROM operations
+                    WHERE operation_date BETWEEN ? AND ?
+                      AND COALESCE(debit_account_code, '') LIKE '411%'
+                    GROUP BY debit_account_code
+                ) t
+                GROUP BY account_code
+            ");
+            $stmt411->execute([$from, $to, $from, $to]);
+
+            foreach ($stmt411->fetchAll(PDO::FETCH_ASSOC) as $row) {
+                $clientMovementMap[(string)$row['account_code']] = [
+                    'credit' => (float)($row['total_credit'] ?? 0),
+                    'debit' => (float)($row['total_debit'] ?? 0),
+                    'net' => (float)($row['total_credit'] ?? 0) - (float)($row['total_debit'] ?? 0),
+                ];
+            }
+        }
+
+        if (tableExists($pdo, 'operations') || tableExists($pdo, 'treasury_movements')) {
+            foreach ($treasuryAccounts as $account) {
+                $code = (string)($account['account_code'] ?? '');
+                $id = (int)($account['id'] ?? 0);
+
+                $opsCredit = 0.0;
+                $opsDebit = 0.0;
+                $tmIn = 0.0;
+                $tmOut = 0.0;
+
+                if (tableExists($pdo, 'operations') && $code !== '') {
+                    $stmtOps512 = $pdo->prepare("
+                        SELECT
+                            COALESCE(SUM(CASE WHEN credit_account_code = ? THEN amount ELSE 0 END), 0) AS total_credit,
+                            COALESCE(SUM(CASE WHEN debit_account_code = ? THEN amount ELSE 0 END), 0) AS total_debit
+                        FROM operations
+                        WHERE operation_date BETWEEN ? AND ?
+                    ");
+                    $stmtOps512->execute([$code, $code, $from, $to]);
+                    $ops = $stmtOps512->fetch(PDO::FETCH_ASSOC) ?: [];
+                    $opsCredit = (float)($ops['total_credit'] ?? 0);
+                    $opsDebit = (float)($ops['total_debit'] ?? 0);
+                }
+
+                if (tableExists($pdo, 'treasury_movements') && $id > 0) {
+                    $stmtTm = $pdo->prepare("
+                        SELECT
+                            COALESCE(SUM(CASE WHEN target_treasury_account_id = ? THEN amount ELSE 0 END), 0) AS total_in,
+                            COALESCE(SUM(CASE WHEN source_treasury_account_id = ? THEN amount ELSE 0 END), 0) AS total_out
+                        FROM treasury_movements
+                        WHERE operation_date BETWEEN ? AND ?
+                    ");
+                    $stmtTm->execute([$id, $id, $from, $to]);
+                    $tm = $stmtTm->fetch(PDO::FETCH_ASSOC) ?: [];
+                    $tmIn = (float)($tm['total_in'] ?? 0);
+                    $tmOut = (float)($tm['total_out'] ?? 0);
+                }
+
+                $credit = $opsCredit + $tmIn;
+                $debit = $opsDebit + $tmOut;
+
+                $treasuryMovementMap[$code] = [
+                    'credit' => $credit,
+                    'debit' => $debit,
+                    'net' => $credit - $debit,
+                ];
+            }
+        }
+
+        return [
+            'service' => $serviceMovementMap,
+            'treasury' => $treasuryMovementMap,
+            'client' => $clientMovementMap,
+        ];
+    }
+}
+
+if (!function_exists('sl_manage_accounts_filter_client_rows')) {
+    function sl_manage_accounts_filter_client_rows(array $rows, array $filters): array
+    {
+        return array_values(array_filter($rows, function (array $row) use ($filters): bool {
+            if ($filters['family'] !== '' && $filters['family'] !== '411') {
+                return false;
+            }
+
+            $isActive = (int)($row['client_is_active'] ?? 1) === 1;
+
+            if ($filters['client_status'] === 'active' && !$isActive) {
+                return false;
+            }
+            if ($filters['client_status'] === 'inactive' && $isActive) {
+                return false;
+            }
+
+            if ($filters['active'] === 'active' && !$isActive) {
+                return false;
+            }
+            if ($filters['active'] === 'inactive' && $isActive) {
+                return false;
+            }
+
+            if ($filters['client_type'] !== '' && (string)($row['client_type'] ?? '') !== $filters['client_type']) {
+                return false;
+            }
+
+            if ($filters['country_commercial'] !== '' && (string)($row['country_commercial'] ?? '') !== $filters['country_commercial']) {
+                return false;
+            }
+
+            return sl_manage_accounts_like($filters['q'], [
+                $row['account_number'] ?? '',
+                $row['account_name'] ?? '',
+                $row['client_code'] ?? '',
+                $row['full_name'] ?? '',
+                $row['country_commercial'] ?? '',
+                $row['client_type'] ?? '',
+            ]);
+        }));
+    }
+}
+
+if (!function_exists('sl_manage_accounts_filter_treasury_rows')) {
+    function sl_manage_accounts_filter_treasury_rows(array $rows, array $filters): array
+    {
+        return array_values(array_filter($rows, function (array $row) use ($filters): bool {
+            if ($filters['family'] !== '' && $filters['family'] !== '512') {
+                return false;
+            }
+
+            $isActive = (int)($row['is_active'] ?? 1) === 1;
+
+            if ($filters['active'] === 'active' && !$isActive) {
+                return false;
+            }
+            if ($filters['active'] === 'inactive' && $isActive) {
+                return false;
+            }
+
+            if ($filters['currency'] !== '' && (string)($row['currency_code'] ?? '') !== $filters['currency']) {
+                return false;
+            }
+
+            if ($filters['bank'] !== '' && (string)($row['bank_name'] ?? '') !== $filters['bank']) {
+                return false;
+            }
+
+            return sl_manage_accounts_like($filters['q'], [
+                $row['account_code'] ?? '',
+                $row['account_label'] ?? '',
+                $row['bank_name'] ?? '',
+                $row['country_label'] ?? '',
+                $row['currency_code'] ?? '',
+            ]);
+        }));
+    }
+}
+
+if (!function_exists('sl_manage_accounts_filter_service_rows')) {
+    function sl_manage_accounts_filter_service_rows(array $rows, array $filters): array
+    {
+        return array_values(array_filter($rows, function (array $row) use ($filters): bool {
+            if ($filters['family'] !== '' && $filters['family'] !== '706') {
+                return false;
+            }
+
+            $isActive = (int)($row['is_active'] ?? 1) === 1;
+            $isPostable = (int)($row['is_postable'] ?? 0) === 1;
+
+            if ($filters['active'] === 'active' && !$isActive) {
+                return false;
+            }
+            if ($filters['active'] === 'inactive' && $isActive) {
+                return false;
+            }
+
+            if ($filters['postable'] === 'postable' && !$isPostable) {
+                return false;
+            }
+            if ($filters['postable'] === 'structure' && $isPostable) {
+                return false;
+            }
+
+            if ($filters['country_commercial'] !== '' && (string)($row['commercial_country_label'] ?? '') !== $filters['country_commercial']) {
+                return false;
+            }
+
+            if ($filters['country_destination'] !== '' && (string)($row['destination_country_label'] ?? '') !== $filters['country_destination']) {
+                return false;
+            }
+
+            return sl_manage_accounts_like($filters['q'], [
+                $row['account_code'] ?? '',
+                $row['account_label'] ?? '',
+                $row['operation_type_label'] ?? '',
+                $row['destination_country_label'] ?? '',
+                $row['commercial_country_label'] ?? '',
+            ]);
+        }));
+    }
+}
+
+if (!function_exists('sl_manage_accounts_build_summary')) {
+    function sl_manage_accounts_build_summary(array $clientRows, array $treasuryRows, array $serviceRows, array $movementMaps): array
+    {
+        $summary = [
+            '411' => ['count' => 0, 'current_balance' => 0.0, 'period_credit' => 0.0, 'period_debit' => 0.0, 'period_net' => 0.0],
+            '512' => ['count' => 0, 'current_balance' => 0.0, 'period_credit' => 0.0, 'period_debit' => 0.0, 'period_net' => 0.0],
+            '706' => ['count' => 0, 'current_balance' => 0.0, 'period_credit' => 0.0, 'period_debit' => 0.0, 'period_net' => 0.0],
+        ];
+
+        foreach ($clientRows as $row) {
+            $code = (string)($row['account_number'] ?? '');
+            $mv = $movementMaps['client'][$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
+
+            $summary['411']['count']++;
+            $summary['411']['current_balance'] += (float)($row['balance'] ?? 0);
+            $summary['411']['period_credit'] += (float)$mv['credit'];
+            $summary['411']['period_debit'] += (float)$mv['debit'];
+            $summary['411']['period_net'] += (float)$mv['net'];
+        }
+
+        foreach ($treasuryRows as $row) {
+            $code = (string)($row['account_code'] ?? '');
+            $mv = $movementMaps['treasury'][$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
+
+            $summary['512']['count']++;
+            $summary['512']['current_balance'] += (float)($row['current_balance'] ?? 0);
+            $summary['512']['period_credit'] += (float)$mv['credit'];
+            $summary['512']['period_debit'] += (float)$mv['debit'];
+            $summary['512']['period_net'] += (float)$mv['net'];
+        }
+
+        foreach ($serviceRows as $row) {
+            $code = (string)($row['account_code'] ?? '');
+            $mv = $movementMaps['service'][$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
+
+            $summary['706']['count']++;
+            $summary['706']['current_balance'] += (float)($row['current_balance'] ?? 0);
+            $summary['706']['period_credit'] += (float)$mv['credit'];
+            $summary['706']['period_debit'] += (float)$mv['debit'];
+            $summary['706']['period_net'] += (float)$mv['net'];
+        }
+
+        return $summary;
+    }
+}
+
+if (!function_exists('sl_manage_accounts_build_filter_options')) {
+    function sl_manage_accounts_build_filter_options(array $clientAccounts, array $treasuryAccounts, array $serviceAccounts): array
+    {
+        $clientTypes = [];
+        $commercialCountries = [];
+        $destinationCountries = [];
+        $currencies = [];
+        $banks = [];
+
+        foreach ($clientAccounts as $row) {
+            $value = trim((string)($row['client_type'] ?? ''));
+            if ($value !== '') {
+                $clientTypes[$value] = $value;
+            }
+
+            $value = trim((string)($row['country_commercial'] ?? ''));
+            if ($value !== '') {
+                $commercialCountries[$value] = $value;
+            }
+        }
+
+        foreach ($serviceAccounts as $row) {
+            $value = trim((string)($row['commercial_country_label'] ?? ''));
+            if ($value !== '') {
+                $commercialCountries[$value] = $value;
+            }
+
+            $value = trim((string)($row['destination_country_label'] ?? ''));
+            if ($value !== '') {
+                $destinationCountries[$value] = $value;
+            }
+        }
+
+        foreach ($treasuryAccounts as $row) {
+            $value = trim((string)($row['currency_code'] ?? ''));
+            if ($value !== '') {
+                $currencies[$value] = $value;
+            }
+
+            $value = trim((string)($row['bank_name'] ?? ''));
+            if ($value !== '') {
+                $banks[$value] = $value;
+            }
+        }
+
+        ksort($clientTypes);
+        ksort($commercialCountries);
+        ksort($destinationCountries);
+        ksort($currencies);
+        ksort($banks);
+
+        return [
+            'client_types' => $clientTypes,
+            'commercial_countries' => $commercialCountries,
+            'destination_countries' => $destinationCountries,
+            'currencies' => $currencies,
+            'banks' => $banks,
+        ];
+    }
+}
+if (!function_exists('sl_manage_accounts_build_page_query')) {
+    function sl_manage_accounts_build_page_query(array $query, string $pageKey, int $page): array
+    {
+        $query[$pageKey] = $page;
+
+        if ($pageKey !== 'client_page') {
+            $query['client_page'] = $query['client_page'] ?? 1;
+        }
+        if ($pageKey !== 'service_page') {
+            $query['service_page'] = $query['service_page'] ?? 1;
+        }
+        if ($pageKey !== 'treasury_page') {
+            $query['treasury_page'] = $query['treasury_page'] ?? 1;
+        }
+
+        return $query;
+    }
+}
+if (!function_exists('sl_safe_int')) {
+    function sl_safe_int($value, int $default = 0): int
+    {
+        return is_numeric($value) ? (int)$value : $default;
+    }
+}
+
+if (!function_exists('sl_valid_date')) {
+    function sl_valid_date(?string $value): bool
+    {
+        return is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1;
+    }
+}
+
+if (!function_exists('sl_normalize_per_page')) {
+    function sl_normalize_per_page($value, array $allowed = [10, 25, 50, 100], int $default = 25): int
+    {
+        $value = sl_safe_int($value, $default);
+        return in_array($value, $allowed, true) ? $value : $default;
+    }
+}
+
+if (!function_exists('sl_paginate_meta')) {
+    function sl_paginate_meta(int $total, int $page, int $perPage): array
+    {
+        $perPage = max(1, $perPage);
+        $pages = max(1, (int)ceil($total / $perPage));
+        $page = max(1, min($page, $pages));
+        $offset = ($page - 1) * $perPage;
+
+        return [
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $perPage,
+            'pages' => $pages,
+            'offset' => $offset,
+        ];
+    }
+}
+
+if (!function_exists('sl_paginated_query')) {
+    function sl_paginated_query(
+        PDO $pdo,
+        string $countSql,
+        array $countParams,
+        string $rowsSql,
+        array $rowsParams,
+        int $page,
+        int $perPage
+    ): array {
+        $stmtCount = $pdo->prepare($countSql);
+        $stmtCount->execute($countParams);
+        $total = (int)$stmtCount->fetchColumn();
+
+        $meta = sl_paginate_meta($total, $page, $perPage);
+
+        $rowsSql .= " LIMIT " . (int)$meta['per_page'] . " OFFSET " . (int)$meta['offset'];
+        $stmtRows = $pdo->prepare($rowsSql);
+        $stmtRows->execute($rowsParams);
+
+        return [
+            'rows' => $stmtRows->fetchAll(PDO::FETCH_ASSOC) ?: [],
+            'total' => $meta['total'],
+            'page' => $meta['page'],
+            'pages' => $meta['pages'],
+            'per_page' => $meta['per_page'],
+        ];
+    }
+}
+
+if (!function_exists('sl_build_pagination_query')) {
+    function sl_build_pagination_query(array $query, int $page): string
+    {
+        $query['page'] = $page;
+        return http_build_query($query);
+    }
+}
+
+if (!function_exists('sl_render_pagination')) {
+    function sl_render_pagination(string $baseUrl, array $query, int $page, int $pages, int $total): string
+    {
+        if ($pages <= 1) {
+            return '';
+        }
+
+        $start = max(1, $page - 2);
+        $end = min($pages, $page + 2);
+
+        ob_start();
+        ?>
+        <div class="btn-group" style="justify-content:space-between;align-items:center;width:100%;margin-top:18px;">
+            <div class="muted">
+                Page <?= (int)$page ?> / <?= (int)$pages ?> — <?= (int)$total ?> résultat(s)
+            </div>
+
+            <div class="btn-group">
+                <?php if ($page > 1): ?>
+                    <a href="<?= e($baseUrl) ?>?<?= e(sl_build_pagination_query($query, 1)) ?>" class="btn btn-outline">«</a>
+                    <a href="<?= e($baseUrl) ?>?<?= e(sl_build_pagination_query($query, $page - 1)) ?>" class="btn btn-outline">‹</a>
+                <?php endif; ?>
+
+                <?php for ($i = $start; $i <= $end; $i++): ?>
+                    <a
+                        href="<?= e($baseUrl) ?>?<?= e(sl_build_pagination_query($query, $i)) ?>"
+                        class="btn <?= $i === $page ? 'btn-success' : 'btn-outline' ?>"
+                    >
+                        <?= (int)$i ?>
+                    </a>
+                <?php endfor; ?>
+
+                <?php if ($page < $pages): ?>
+                    <a href="<?= e($baseUrl) ?>?<?= e(sl_build_pagination_query($query, $page + 1)) ?>" class="btn btn-outline">›</a>
+                    <a href="<?= e($baseUrl) ?>?<?= e(sl_build_pagination_query($query, $pages)) ?>" class="btn btn-outline">»</a>
+                <?php endif; ?>
+            </div>
+        </div>
+        <?php
+        return (string)ob_get_clean();
+    }
+}
+if (!function_exists('sl_admin_user_logs_get_filter_options')) {
+    function sl_admin_user_logs_get_filter_options(PDO $pdo): array
+    {
+        $users = [];
+        if (tableExists($pdo, 'users')) {
+            $userLabel = columnExists($pdo, 'users', 'username')
+                ? 'username'
+                : (columnExists($pdo, 'users', 'email') ? 'email' : 'id');
+
+            $users = $pdo->query("
+                SELECT id, {$userLabel} AS display_name
+                FROM users
+                ORDER BY {$userLabel} ASC
+            ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        }
+
+        $entityTypes = [];
+        if (tableExists($pdo, 'user_logs') && columnExists($pdo, 'user_logs', 'entity_type')) {
+            $entityTypes = $pdo->query("
+                SELECT DISTINCT entity_type
+                FROM user_logs
+                WHERE COALESCE(entity_type,'') <> ''
+                ORDER BY entity_type ASC
+            ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        }
+
+        $modules = [];
+        if (tableExists($pdo, 'user_logs') && columnExists($pdo, 'user_logs', 'module')) {
+            $modules = $pdo->query("
+                SELECT DISTINCT module
+                FROM user_logs
+                WHERE COALESCE(module,'') <> ''
+                ORDER BY module ASC
+            ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
+        }
+
+        return [
+            'users' => $users,
+            'entity_types' => array_values(array_filter(array_map('strval', $entityTypes))),
+            'modules' => array_values(array_filter(array_map('strval', $modules))),
+        ];
+    }
+}
+
+if (!function_exists('sl_admin_user_logs_parse_filters')) {
+    function sl_admin_user_logs_parse_filters(array $input): array
+    {
+        return [
+            'search' => trim((string)($input['search'] ?? '')),
+            'entity_type' => trim((string)($input['entity_type'] ?? '')),
+            'module' => trim((string)($input['module'] ?? '')),
+            'user_id' => max(0, (int)($input['user_id'] ?? 0)),
+            'from' => trim((string)($input['from'] ?? '')),
+            'to' => trim((string)($input['to'] ?? '')),
+            'page' => max(1, (int)($input['page'] ?? 1)),
+            'per_page' => function_exists('sl_normalize_per_page')
+                ? sl_normalize_per_page($input['per_page'] ?? 25)
+                : (in_array((int)($input['per_page'] ?? 25), [10, 25, 50, 100], true) ? (int)$input['per_page'] : 25),
+        ];
+    }
+}
+
+if (!function_exists('sl_admin_user_logs_get_kpis')) {
+    function sl_admin_user_logs_get_kpis(PDO $pdo, array $filters): array
+    {
+        $where = ['1=1'];
+        $params = [];
+
+        if (($filters['search'] ?? '') !== '') {
+            $where[] = "(
+                COALESCE(l.action,'') LIKE ?
+                OR COALESCE(l.module,'') LIKE ?
+                OR COALESCE(l.entity_type,'') LIKE ?
+                OR COALESCE(l.details,'') LIKE ?
+            )";
+            $like = '%' . $filters['search'] . '%';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        if (($filters['entity_type'] ?? '') !== '' && columnExists($pdo, 'user_logs', 'entity_type')) {
+            $where[] = "l.entity_type = ?";
+            $params[] = $filters['entity_type'];
+        }
+
+        if (($filters['module'] ?? '') !== '' && columnExists($pdo, 'user_logs', 'module')) {
+            $where[] = "l.module = ?";
+            $params[] = $filters['module'];
+        }
+
+        if ((int)($filters['user_id'] ?? 0) > 0 && columnExists($pdo, 'user_logs', 'user_id')) {
+            $where[] = "l.user_id = ?";
+            $params[] = (int)$filters['user_id'];
+        }
+
+        if (!empty($filters['from']) && function_exists('sl_valid_date') && sl_valid_date($filters['from']) && columnExists($pdo, 'user_logs', 'created_at')) {
+            $where[] = "DATE(l.created_at) >= ?";
+            $params[] = $filters['from'];
+        }
+
+        if (!empty($filters['to']) && function_exists('sl_valid_date') && sl_valid_date($filters['to']) && columnExists($pdo, 'user_logs', 'created_at')) {
+            $where[] = "DATE(l.created_at) <= ?";
+            $params[] = $filters['to'];
+        }
+
+        $totalLogs = 0;
+        if (tableExists($pdo, 'user_logs')) {
+            $stmt = $pdo->prepare("
+                SELECT COUNT(*)
+                FROM user_logs l
+                WHERE " . implode(' AND ', $where)
+            );
+            $stmt->execute($params);
+            $totalLogs = (int)$stmt->fetchColumn();
+        }
+
+        $filterOptions = sl_admin_user_logs_get_filter_options($pdo);
+
+        return [
+            'logs_found' => $totalLogs,
+            'entity_types_count' => count($filterOptions['entity_types']),
+            'modules_count' => count($filterOptions['modules']),
+            'unread_notifications' => function_exists('countUnreadNotifications')
+                ? (int)countUnreadNotifications($pdo)
+                : 0,
+        ];
+    }
+}
+
+if (!function_exists('sl_admin_user_logs_get_rows')) {
+    function sl_admin_user_logs_get_rows(PDO $pdo, array $filters): array
+    {
+        if (!tableExists($pdo, 'user_logs')) {
+            return [
+                'rows' => [],
+                'total' => 0,
+                'page' => 1,
+                'pages' => 1,
+                'per_page' => (int)($filters['per_page'] ?? 25),
+            ];
+        }
+
+        $where = ['1=1'];
+        $params = [];
+
+        if (($filters['search'] ?? '') !== '') {
+            $where[] = "(
+                COALESCE(l.action,'') LIKE ?
+                OR COALESCE(l.module,'') LIKE ?
+                OR COALESCE(l.entity_type,'') LIKE ?
+                OR COALESCE(l.details,'') LIKE ?
+            )";
+            $like = '%' . $filters['search'] . '%';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        if (($filters['entity_type'] ?? '') !== '' && columnExists($pdo, 'user_logs', 'entity_type')) {
+            $where[] = "l.entity_type = ?";
+            $params[] = $filters['entity_type'];
+        }
+
+        if (($filters['module'] ?? '') !== '' && columnExists($pdo, 'user_logs', 'module')) {
+            $where[] = "l.module = ?";
+            $params[] = $filters['module'];
+        }
+
+        if ((int)($filters['user_id'] ?? 0) > 0 && columnExists($pdo, 'user_logs', 'user_id')) {
+            $where[] = "l.user_id = ?";
+            $params[] = (int)$filters['user_id'];
+        }
+
+        if (!empty($filters['from']) && function_exists('sl_valid_date') && sl_valid_date($filters['from']) && columnExists($pdo, 'user_logs', 'created_at')) {
+            $where[] = "DATE(l.created_at) >= ?";
+            $params[] = $filters['from'];
+        }
+
+        if (!empty($filters['to']) && function_exists('sl_valid_date') && sl_valid_date($filters['to']) && columnExists($pdo, 'user_logs', 'created_at')) {
+            $where[] = "DATE(l.created_at) <= ?";
+            $params[] = $filters['to'];
+        }
+
+        $joinUser = '';
+        $selectUser = "NULL AS username";
+
+        if (tableExists($pdo, 'users') && columnExists($pdo, 'user_logs', 'user_id')) {
+            if (columnExists($pdo, 'users', 'username')) {
+                $selectUser = "u.username AS username";
+            } elseif (columnExists($pdo, 'users', 'email')) {
+                $selectUser = "u.email AS username";
+            } else {
+                $selectUser = "CAST(u.id AS CHAR) AS username";
+            }
+
+            $joinUser = "LEFT JOIN users u ON u.id = l.user_id";
+        }
+
+        $countSql = "
+            SELECT COUNT(*)
+            FROM user_logs l
+            {$joinUser}
+            WHERE " . implode(' AND ', $where);
+
+        $rowsSql = "
+            SELECT
+                l.*,
+                {$selectUser}
+            FROM user_logs l
+            {$joinUser}
+            WHERE " . implode(' AND ', $where) . "
+            ORDER BY " . (columnExists($pdo, 'user_logs', 'created_at') ? 'l.created_at DESC' : 'l.id DESC');
+
+        if (function_exists('sl_paginated_query')) {
+            return sl_paginated_query(
+                $pdo,
+                $countSql,
+                $params,
+                $rowsSql,
+                $params,
+                max(1, (int)($filters['page'] ?? 1)),
+                max(1, (int)($filters['per_page'] ?? 25))
+            );
+        }
+
+        $stmtCount = $pdo->prepare($countSql);
+        $stmtCount->execute($params);
+        $total = (int)$stmtCount->fetchColumn();
+
+        $perPage = max(1, (int)($filters['per_page'] ?? 25));
+        $pages = max(1, (int)ceil($total / $perPage));
+        $page = max(1, min((int)($filters['page'] ?? 1), $pages));
+        $offset = ($page - 1) * $perPage;
+
+        $stmt = $pdo->prepare($rowsSql . " LIMIT {$perPage} OFFSET {$offset}");
+        $stmt->execute($params);
+
+        return [
+            'rows' => $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [],
+            'total' => $total,
+            'page' => $page,
+            'pages' => $pages,
+            'per_page' => $perPage,
+        ];
+    }
+}

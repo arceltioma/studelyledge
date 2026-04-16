@@ -70,130 +70,51 @@ if (!function_exists('userLogsEntityUrl')) {
 $pageTitle = 'Audit des logs';
 $pageSubtitle = 'Historique des actions utilisateurs, filtrage avancé et accès direct aux objets';
 
-$search = trim((string)($_GET['search'] ?? ''));
-$entityType = trim((string)($_GET['entity_type'] ?? ''));
-$userId = (int)($_GET['user_id'] ?? 0);
-$dateFrom = trim((string)($_GET['from'] ?? ''));
-$dateTo = trim((string)($_GET['to'] ?? ''));
-$module = trim((string)($_GET['module'] ?? ''));
+$filters = function_exists('sl_admin_user_logs_parse_filters')
+    ? sl_admin_user_logs_parse_filters($_GET)
+    : [
+        'search' => trim((string)($_GET['search'] ?? '')),
+        'entity_type' => trim((string)($_GET['entity_type'] ?? '')),
+        'module' => trim((string)($_GET['module'] ?? '')),
+        'user_id' => (int)($_GET['user_id'] ?? 0),
+        'from' => trim((string)($_GET['from'] ?? '')),
+        'to' => trim((string)($_GET['to'] ?? '')),
+        'page' => max(1, (int)($_GET['page'] ?? 1)),
+        'per_page' => 25,
+    ];
 
-$users = [];
-if (tableExists($pdo, 'users')) {
-    $userLabel = columnExists($pdo, 'users', 'username')
-        ? 'username'
-        : (columnExists($pdo, 'users', 'email') ? 'email' : 'id');
+$options = function_exists('sl_admin_user_logs_get_filter_options')
+    ? sl_admin_user_logs_get_filter_options($pdo)
+    : ['users' => [], 'entity_types' => [], 'modules' => []];
 
-    $users = $pdo->query("
-        SELECT id, {$userLabel} AS display_name
-        FROM users
-        ORDER BY {$userLabel} ASC
-    ")->fetchAll(PDO::FETCH_ASSOC) ?: [];
-}
+$kpis = function_exists('sl_admin_user_logs_get_kpis')
+    ? sl_admin_user_logs_get_kpis($pdo, $filters)
+    : [
+        'logs_found' => 0,
+        'entity_types_count' => 0,
+        'modules_count' => 0,
+        'unread_notifications' => 0,
+    ];
 
-$entityTypes = [];
-if (tableExists($pdo, 'user_logs') && columnExists($pdo, 'user_logs', 'entity_type')) {
-    $entityTypes = $pdo->query("
-        SELECT DISTINCT entity_type
-        FROM user_logs
-        WHERE COALESCE(entity_type,'') <> ''
-        ORDER BY entity_type ASC
-    ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
-}
+$data = function_exists('sl_admin_user_logs_get_rows')
+    ? sl_admin_user_logs_get_rows($pdo, $filters)
+    : [
+        'rows' => [],
+        'total' => 0,
+        'page' => 1,
+        'pages' => 1,
+        'per_page' => 25,
+    ];
 
-$modules = [];
-if (tableExists($pdo, 'user_logs') && columnExists($pdo, 'user_logs', 'module')) {
-    $modules = $pdo->query("
-        SELECT DISTINCT module
-        FROM user_logs
-        WHERE COALESCE(module,'') <> ''
-        ORDER BY module ASC
-    ")->fetchAll(PDO::FETCH_COLUMN) ?: [];
-}
+$users = $options['users'] ?? [];
+$entityTypes = $options['entity_types'] ?? [];
+$modules = $options['modules'] ?? [];
 
-$where = ['1=1'];
-$params = [];
-
-if ($search !== '') {
-    $where[] = "(
-        COALESCE(l.action,'') LIKE ?
-        OR COALESCE(l.module,'') LIKE ?
-        OR COALESCE(l.entity_type,'') LIKE ?
-        OR COALESCE(l.details,'') LIKE ?
-    )";
-    $params[] = "%{$search}%";
-    $params[] = "%{$search}%";
-    $params[] = "%{$search}%";
-    $params[] = "%{$search}%";
-}
-
-if ($entityType !== '' && columnExists($pdo, 'user_logs', 'entity_type')) {
-    $where[] = "l.entity_type = ?";
-    $params[] = $entityType;
-}
-
-if ($module !== '' && columnExists($pdo, 'user_logs', 'module')) {
-    $where[] = "l.module = ?";
-    $params[] = $module;
-}
-
-if ($userId > 0 && columnExists($pdo, 'user_logs', 'user_id')) {
-    $where[] = "l.user_id = ?";
-    $params[] = $userId;
-}
-
-if ($dateFrom !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom) && columnExists($pdo, 'user_logs', 'created_at')) {
-    $where[] = "DATE(l.created_at) >= ?";
-    $params[] = $dateFrom;
-}
-
-if ($dateTo !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo) && columnExists($pdo, 'user_logs', 'created_at')) {
-    $where[] = "DATE(l.created_at) <= ?";
-    $params[] = $dateTo;
-}
-
-$joinUser = '';
-$selectUser = "NULL AS username";
-if (tableExists($pdo, 'users') && columnExists($pdo, 'user_logs', 'user_id')) {
-    if (columnExists($pdo, 'users', 'username')) {
-        $selectUser = "u.username AS username";
-    } elseif (columnExists($pdo, 'users', 'email')) {
-        $selectUser = "u.email AS username";
-    } else {
-        $selectUser = "CAST(u.id AS CHAR) AS username";
-    }
-    $joinUser = "LEFT JOIN users u ON u.id = l.user_id";
-}
-
-$logs = [];
-$totalLogs = 0;
-
-if (tableExists($pdo, 'user_logs')) {
-    $countStmt = $pdo->prepare("
-        SELECT COUNT(*)
-        FROM user_logs l
-        {$joinUser}
-        WHERE " . implode(' AND ', $where)
-    );
-    $countStmt->execute($params);
-    $totalLogs = (int)$countStmt->fetchColumn();
-
-    $stmt = $pdo->prepare("
-        SELECT
-            l.*,
-            {$selectUser}
-        FROM user_logs l
-        {$joinUser}
-        WHERE " . implode(' AND ', $where) . "
-        ORDER BY " . (columnExists($pdo, 'user_logs', 'created_at') ? 'l.created_at DESC' : 'l.id DESC') . "
-        LIMIT 300
-    ");
-    $stmt->execute($params);
-    $logs = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-}
-
-$totalUnreadNotifications = function_exists('countUnreadNotifications')
-    ? countUnreadNotifications($pdo)
-    : 0;
+$logs = $data['rows'] ?? [];
+$totalLogs = (int)($data['total'] ?? 0);
+$page = (int)($data['page'] ?? 1);
+$pages = (int)($data['pages'] ?? 1);
+$perPage = (int)($data['per_page'] ?? 25);
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -207,7 +128,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
         <section class="sl-grid sl-grid-4 sl-stable-block" style="margin-bottom:20px;">
             <div class="sl-card sl-kpi-card sl-kpi-card--blue">
                 <div class="sl-kpi-card__label">Logs trouvés</div>
-                <div class="sl-kpi-card__value"><?= (int)$totalLogs ?></div>
+                <div class="sl-kpi-card__value"><?= (int)$kpis['logs_found'] ?></div>
                 <div class="sl-kpi-card__meta">
                     <span>Après filtrage</span>
                     <strong>Journal</strong>
@@ -216,7 +137,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
             <div class="sl-card sl-kpi-card sl-kpi-card--emerald">
                 <div class="sl-kpi-card__label">Types entité</div>
-                <div class="sl-kpi-card__value"><?= count($entityTypes) ?></div>
+                <div class="sl-kpi-card__value"><?= (int)$kpis['entity_types_count'] ?></div>
                 <div class="sl-kpi-card__meta">
                     <span>Traçabilité</span>
                     <strong>Références</strong>
@@ -225,7 +146,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
             <div class="sl-card sl-kpi-card sl-kpi-card--green">
                 <div class="sl-kpi-card__label">Modules</div>
-                <div class="sl-kpi-card__value"><?= count($modules) ?></div>
+                <div class="sl-kpi-card__value"><?= (int)$kpis['modules_count'] ?></div>
                 <div class="sl-kpi-card__meta">
                     <span>Périmètre</span>
                     <strong>Application</strong>
@@ -234,7 +155,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
             <div class="sl-card sl-kpi-card sl-kpi-card--violet">
                 <div class="sl-kpi-card__label">Notifications non lues</div>
-                <div class="sl-kpi-card__value"><?= (int)$totalUnreadNotifications ?></div>
+                <div class="sl-kpi-card__value"><?= (int)$kpis['unread_notifications'] ?></div>
                 <div class="sl-kpi-card__meta">
                     <span>Supervision</span>
                     <strong>Temps réel</strong>
@@ -253,7 +174,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <div class="dashboard-grid-4">
                     <div>
                         <label>Recherche</label>
-                        <input type="text" name="search" value="<?= e($search) ?>" placeholder="action, module, détail...">
+                        <input type="text" name="search" value="<?= e($filters['search']) ?>" placeholder="action, module, détail...">
                     </div>
 
                     <div>
@@ -261,7 +182,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <select name="entity_type">
                             <option value="">Tous</option>
                             <?php foreach ($entityTypes as $type): ?>
-                                <option value="<?= e((string)$type) ?>" <?= $entityType === (string)$type ? 'selected' : '' ?>>
+                                <option value="<?= e((string)$type) ?>" <?= $filters['entity_type'] === (string)$type ? 'selected' : '' ?>>
                                     <?= e((string)$type) ?>
                                 </option>
                             <?php endforeach; ?>
@@ -273,7 +194,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <select name="module">
                             <option value="">Tous</option>
                             <?php foreach ($modules as $moduleName): ?>
-                                <option value="<?= e((string)$moduleName) ?>" <?= $module === (string)$moduleName ? 'selected' : '' ?>>
+                                <option value="<?= e((string)$moduleName) ?>" <?= $filters['module'] === (string)$moduleName ? 'selected' : '' ?>>
                                     <?= e((string)$moduleName) ?>
                                 </option>
                             <?php endforeach; ?>
@@ -285,7 +206,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <select name="user_id">
                             <option value="">Tous</option>
                             <?php foreach ($users as $user): ?>
-                                <option value="<?= (int)$user['id'] ?>" <?= $userId === (int)$user['id'] ? 'selected' : '' ?>>
+                                <option value="<?= (int)$user['id'] ?>" <?= (int)$filters['user_id'] === (int)$user['id'] ? 'selected' : '' ?>>
                                     <?= e((string)$user['display_name']) ?>
                                 </option>
                             <?php endforeach; ?>
@@ -294,12 +215,23 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                     <div>
                         <label>Du</label>
-                        <input type="date" name="from" value="<?= e($dateFrom) ?>">
+                        <input type="date" name="from" value="<?= e($filters['from']) ?>">
                     </div>
 
                     <div>
                         <label>Au</label>
-                        <input type="date" name="to" value="<?= e($dateTo) ?>">
+                        <input type="date" name="to" value="<?= e($filters['to']) ?>">
+                    </div>
+
+                    <div>
+                        <label>Par page</label>
+                        <select name="per_page">
+                            <?php foreach ([10, 25, 50, 100] as $size): ?>
+                                <option value="<?= (int)$size ?>" <?= $perPage === $size ? 'selected' : '' ?>>
+                                    <?= (int)$size ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
                 </div>
 
@@ -369,6 +301,18 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     </tbody>
                 </table>
             </div>
+
+            <?php
+            if (function_exists('sl_render_pagination')) {
+                echo sl_render_pagination(
+                    APP_URL . 'modules/admin/user_logs.php',
+                    $_GET,
+                    $page,
+                    $pages,
+                    $totalLogs
+                );
+            }
+            ?>
         </section>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>

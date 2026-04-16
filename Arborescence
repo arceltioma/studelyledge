@@ -1,120 +1,235 @@
-StudelyLedger/
+StudelyLedge/
+│
 ├── assets/
-│   ├── css/
-│   │   ├── style.css
-│   │   └── dashboard.css
-│   ├── js/
-│   │   ├── app.js
-│   │   └── charts.js
-│   └── img/
-│       ├── logo.png
-│       └── logo-sidebar.png
+│ ├── css/
+│ │ ├── dashboard.css
+│ │ └── style.css
+│ │
+│ ├── img/
+│ │ ├── logo-sidebar.png
+│ │ ├── logo-sidebar1.png
+│ │ ├── logo-sidebar2.png
+│ │ ├── logo.png
+│ │ ├── manifest.json
+│ │ ├── pack.png
+│ │ ├── studelyledger_app_icon.png
+│ │ ├── studelyledger_compact_white.png
+│ │ ├── studelyledger_horizontal_transparent.png
+│ │ ├── studelyledger_horizontal_white.png
+│ │ └── studelyledger_logo.svg
+│ │
+│ └── js/
+│ ├── app.js
+│ └── charts.js
 │
 ├── config/
-│   ├── app.php
-│   ├── database.php
-│   └── security.php
+│ ├── app.php
+│ ├── database.php
+│ └── security.php
+│
+├── exports/
+│ ├── preview_1775327840_fiche_CLT0001.pdf
+│ ├── preview_1775327973_fiche_CLT0001.pdf
+│ ├── preview_1775328470_releve_CLT0002.pdf
+│ ├── preview_1775328546_releve_CLT0002.pdf
+│ ├── preview_profile_20260404_224212.pdf
+│ ├── preview_profile_20260406_004946.pdf
+│ ├── preview_profile_20260407_034600.pdf
+│ ├── preview_profile_20260408_211144.pdf
+│ ├── preview_profile_20260408_211159.pdf
+│ ├── preview_profile_20260408_230735.pdf
+│ ├── preview_profile_20260410_222718.pdf
+│ ├── preview_profile_20260410_222745.pdf
+│ ├── preview_statement_20260404_224100.pdf
+│ ├── preview_statement_20260407_034451.pdf
+│ ├── preview_statement_20260410_222513.pdf
+│ ├── preview_statement_20260412_205548.pdf
+│ ├── preview_statement_20260412_210950.pdf
+│ └── preview_statement_20260413_185016.pdf
 │
 ├── includes/
-│   ├── admin_functions.php
-│   ├── auth_check.php
-│   ├── permission_middleware.php
-│   ├── header.php
-│   ├── sidebar.php
-│   ├── footer.php
-│   ├── document_start.php
-│   ├── document_end.php
-│   ├── rules_engine.php
-│   ├── anomaly_engine.php
-│   └── import_mapper.php
+│ ├── admin_functions.php
+│ ├── anomaly_engine.php
+│ ├── auth_check.php
+│ ├── bank_statement_parser.php
+│ ├── document_end.php
+│ ├── document_start.php
+│ ├── footer.php
+│ ├── header.php
+│ ├── import_mapper.php
+│ ├── pending_debits_engine.php
+│ ├── permission_middleware.php
+│ ├── rules_engine.php
+│ └── sidebar.php
+│
+├── modeles/
+│ ├── modele_clients.csv
+│ ├── modele_comptes_clients_411.csv
+│ ├── modele_comptes_internes_512.csv
+│ ├── modele_comptes_service_706.csv
+│ ├── modele_operations.csv
+│ ├── modele_plan_comptable_generique.csv
+│ ├── modele_virement_mensuel.csv
+│ └── README_IMPORTS.txt
 │
 ├── modules/
-│   ├── dashboard/
-│   │   └── dashboard.php
-│   │
-│   ├── clients/
-│   │   ├── clients_list.php
-│   │   ├── client_create.php
-│   │   ├── client_edit.php
-│   │   ├── client_view.php
-│   │   ├── clients_archive.php
-│   │   ├── import_clients_csv.php
-│   │   └── client_profiles.php
-│   │
-│   ├── operations/
-│   │   ├── operations_list.php
-│   │   ├── operation_create.php
-│   │   ├── operation_edit.php
-│   │   ├── operation_view.php
-│   │   └── operation_delete.php
-│   │
-│   ├── imports/
-│   │   ├── index.php
-│   │   ├── import_upload.php
-│   │   ├── import_mapping.php
-│   │   ├── import_preview.php
-│   │   ├── import_journal.php
-│   │   └── import_rejected.php
-│   │
-│   ├── treasury/
-│   │   ├── index.php
-│   │   ├── treasury_create.php
-│   │   ├── treasury_edit.php
-│   │   ├── treasury_view.php
-│   │   ├── treasury_archive.php
-│   │   └── import_treasury_csv.php
-│   │
-│   ├── service_accounts/
-│   │   ├── index.php
-│   │   ├── create.php
-│   │   ├── edit.php
-│   │   ├── view.php
-│   │   ├── archive.php
-│   │   └── import_service_accounts_csv.php
-│   │
-│   ├── analytics/
-│   │   └── revenue_analysis.php
-│   │
-│   ├── statements/
-│   │   ├── index.php
-│   │   ├── account_statements.php
-│   │   ├── client_profiles.php
-│   │   └── generate_bulk_pdf.php
-│   │
-│   ├── notifications/
-│   │   └── notifications.php
-│   │
-│   ├── search/
-│   │   └── global_search.php
-│   │
-│   ├── support/
-│   │   ├── support_requests.php
-│   │   ├── ask_question.php
-│   │   ├── report_bug.php
-│   │   └── request_access.php
-│   │
-│   ├── admin/
-│   │   ├── dashboard_admin.php
-│   │   ├── audit_logs.php
-│   │   ├── user_logs.php
-│   │   ├── users.php
-│   │   ├── roles.php
-│   │   ├── access_matrix.php
-│   │   ├── settings.php
-│   │   └── support_requests.php
-│   │
-│   └── admin_functional/
-│       ├── dashboard.php
-│       ├── manage_services.php
-│       ├── manage_operation_types.php
-│       ├── manage_accounts.php
-│       ├── manage_accounting_rules.php
-│       ├── accounting_rule_create.php
-│       └── accounting_rule_edit.php
+│
+│ ├── admin/
+│ │ ├── access_matrix.php
+│ │ ├── admin_roles.php
+│ │ ├── audit_logs.php
+│ │ ├── categories.php
+│ │ ├── dashboard_admin.php
+│ │ ├── intelligence_center.php
+│ │ ├── roles.php
+│ │ ├── settings.php
+│ │ ├── statuses.php
+│ │ ├── user_create.php
+│ │ ├── user_delete.php
+│ │ ├── user_edit.php
+│ │ ├── user_logs.php
+│ │ └── users.php
+│
+│ ├── admin_functional/
+│ │ ├── accounting_balance_audit.php
+│ │ ├── accounting_rule_create.php
+│ │ ├── accounting_rule_delete.php
+│ │ ├── accounting_rule_edit.php
+│ │ ├── accounting_rule_view.php
+│ │ ├── archive_client.php
+│ │ ├── catalogs.php
+│ │ ├── dashboard.php
+│ │ ├── delete_operation_type.php
+│ │ ├── delete_service.php
+│ │ ├── edit_operation_type.php
+│ │ ├── edit_service.php
+│ │ ├── manage_accounting_rules.php
+│ │ ├── manage_accounts.php
+│ │ ├── manage_operation_types.php
+│ │ └── manage_services.php
+│
+│ ├── analytics/
+│ │ └── revenue_analysis.php
+│
+│ ├── clients/
+│ │ ├── client_accounts.php
+│ │ ├── client_create.php
+│ │ ├── client_edit.php
+│ │ ├── client_timeline.php
+│ │ ├── client_view.php
+│ │ ├── clients_archive.php
+│ │ ├── clients_delete.php
+│ │ ├── clients_list.php
+│ │ └── import_clients_csv.php
+│
+│ ├── dashboard/
+│ │ ├── accounting_control_dashboard.php
+│ │ ├── dashboard.php
+│ │ └── rebuild_balances.php
+│
+│ ├── imports/
+│ │ ├── correct_rejected_row.php
+│ │ ├── import_journal.php
+│ │ ├── import_mapping.php
+│ │ ├── import_preview.php
+│ │ ├── import_upload.php
+│ │ ├── import_validate.php
+│ │ ├── index.php
+│ │ ├── OLD_import_monthly_operations_preview.php
+│ │ ├── OLD_import_monthly_operations.php
+│ │ ├── rejected_rows.php
+│ │ └── validate_import_batch.php
+│
+│ ├── manual_actions/
+│ │ ├── bulk_fees.php
+│ │ └── manual_operation.php
+│
+│ ├── monthly_payments/
+│ │ ├── import_monthly_payments.php
+│ │ ├── monthly_import_create.php
+│ │ ├── monthly_import_preview.php
+│ │ ├── monthly_import_validate.php
+│ │ ├── monthly_payments_import.php
+│ │ ├── monthly_payments_preview.php
+│ │ ├── monthly_payments_run.php
+│ │ ├── monthly_payments_validate.php
+│ │ ├── monthly_run_cancel.php
+│ │ ├── monthly_run_execute.php
+│ │ ├── monthly_run_view.php
+│ │ └── monthly_runs_list.php
+│
+│ ├── notifications/
+│ │ └── notifications.php
+│
+│ ├── operations/
+│ │ ├── operation_create.php
+│ │ ├── operation_delete.php
+│ │ ├── operation_edit.php
+│ │ ├── operation_view.php
+│ │ ├── operations_list.php
+│ │ └── run_monthly_client_operations.php
+│
+│ ├── pending_debits/
+│ │ ├── pending_debit_cancel.php
+│ │ ├── pending_debit_edit.php
+│ │ ├── pending_debit_execute.php
+│ │ ├── pending_debit_view.php
+│ │ └── pending_debits_list.php
+│
+│ ├── search/
+│ │ └── global_search.php
+│
+│ ├── service_accounts/
+│ │ ├── archive.php
+│ │ ├── create.php
+│ │ ├── edit.php
+│ │ ├── import_service_accounts_csv.php
+│ │ ├── index.php
+│ │ └── view.php
+│
+│ ├── statements/
+│ │ ├── account_statements.php
+│ │ ├── bulk_statement_export.php
+│ │ ├── client_profiles.php
+│ │ ├── client_statement.php
+│ │ ├── generate_bulk_pdf.php
+│ │ ├── generate_statement_pdf.php
+│ │ └── index.php
+│
+│ ├── support/
+│ │ ├── ask_question.php
+│ │ ├── report_bug.php
+│ │ ├── request_access.php
+│ │ └── support_requests.php
+│
+│ ├── treasury/
+│ │ ├── bank_accounts.php
+│ │ ├── import_treasury_csv.php
+│ │ ├── index.php
+│ │ ├── service_accounts.php
+│ │ ├── treasury_archive.php
+│ │ ├── treasury_create.php
+│ │ ├── treasury_edit.php
+│ │ └── treasury_view.php
+│
+├── pages/
+│ ├── contact.php
+│ ├── cookies_policy.php
+│ ├── copyright.php
+│ └── sitemap.php
+│
+├── uploads/
+│ ├── exports/
+│ └── imports/
 │
 ├── vendor/
-│   └── ...
 │
-├── logout.php
+├── admin_seed_notes.md
+├── Arborescence
+├── composer.json
+├── composer.lock
+├── hash.php
 ├── index.php
-└── .htaccess
+├── login.php
+├── logout.php
+└── studelyledge.sql

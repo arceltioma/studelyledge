@@ -11,270 +11,58 @@ enforcePagePermission($pdo, 'operations_create');
 $pageTitle = 'Comptes fonctionnels';
 $pageSubtitle = 'Lecture croisée des comptes 411, 512 et 706 avec recalcul des mouvements sur période.';
 
-if (!function_exists('ma_money')) {
-    function ma_money(float $value): string
-    {
-        return number_format($value, 2, ',', ' ');
-    }
-}
+$filters = sl_manage_accounts_parse_filters($_GET);
 
-if (!function_exists('ma_valid_date')) {
-    function ma_valid_date(string $value): bool
-    {
-        return (bool)preg_match('/^\d{4}-\d{2}-\d{2}$/', $value);
-    }
-}
+$baseData = sl_manage_accounts_load_base_data($pdo);
+$clientAccounts = $baseData['client_accounts'];
+$treasuryAccounts = $baseData['treasury_accounts'];
+$serviceAccounts = $baseData['service_accounts'];
 
-$from = trim((string)($_GET['from'] ?? date('Y-m-01')));
-$to = trim((string)($_GET['to'] ?? date('Y-m-t')));
+$movementMaps = sl_manage_accounts_load_movement_maps(
+    $pdo,
+    $filters['from'],
+    $filters['to'],
+    $treasuryAccounts
+);
 
-if (!ma_valid_date($from)) {
-    $from = date('Y-m-01');
-}
-if (!ma_valid_date($to)) {
-    $to = date('Y-m-t');
-}
-if ($from > $to) {
-    [$from, $to] = [$to, $from];
-}
+$filteredClientAccounts = sl_manage_accounts_filter_client_rows($clientAccounts, $filters);
+$filteredTreasuryAccounts = sl_manage_accounts_filter_treasury_rows($treasuryAccounts, $filters);
+$filteredServiceAccounts = sl_manage_accounts_filter_service_rows($serviceAccounts, $filters);
 
-/*
-|--------------------------------------------------------------------------
-| Comptes 706
-|--------------------------------------------------------------------------
-*/
-$serviceAccounts = tableExists($pdo, 'service_accounts')
-    ? $pdo->query("
-        SELECT *
-        FROM service_accounts
-        ORDER BY account_code ASC
-    ")->fetchAll(PDO::FETCH_ASSOC)
-    : [];
+$summary = sl_manage_accounts_build_summary(
+    $filteredClientAccounts,
+    $filteredTreasuryAccounts,
+    $filteredServiceAccounts,
+    $movementMaps
+);
 
-/*
-|--------------------------------------------------------------------------
-| Comptes 512
-|--------------------------------------------------------------------------
-*/
-$treasuryAccounts = tableExists($pdo, 'treasury_accounts')
-    ? $pdo->query("
-        SELECT *
-        FROM treasury_accounts
-        ORDER BY account_code ASC
-    ")->fetchAll(PDO::FETCH_ASSOC)
-    : [];
+$filterOptions = sl_manage_accounts_build_filter_options(
+    $clientAccounts,
+    $treasuryAccounts,
+    $serviceAccounts
+);
 
-/*
-|--------------------------------------------------------------------------
-| Comptes 411 (bank_accounts + clients)
-|--------------------------------------------------------------------------
-*/
-$clientAccounts = [];
-if (tableExists($pdo, 'bank_accounts')) {
-    $sql411 = "
-        SELECT
-            ba.*,
-            c.id AS client_id,
-            c.client_code,
-            c.full_name,
-            c.country_commercial,
-            c.client_type
-        FROM bank_accounts ba
-        LEFT JOIN clients c ON c.generated_client_account = ba.account_number
-        WHERE ba.account_number LIKE '411%'
-        ORDER BY ba.account_number ASC
-    ";
-    $clientAccounts = $pdo->query($sql411)->fetchAll(PDO::FETCH_ASSOC);
-}
+$clientPagination = sl_manage_accounts_paginate_array(
+    $filteredClientAccounts,
+    (int)$filters['client_page'],
+    (int)$filters['per_page']
+);
 
-/*
-|--------------------------------------------------------------------------
-| Mouvements période 706 via operations
-|--------------------------------------------------------------------------
-*/
-$serviceMovementMap = [];
-if (tableExists($pdo, 'operations')) {
-    $stmt706 = $pdo->prepare("
-        SELECT
-            account_code,
-            SUM(total_credit) AS total_credit,
-            SUM(total_debit) AS total_debit
-        FROM (
-            SELECT
-                credit_account_code AS account_code,
-                SUM(amount) AS total_credit,
-                0 AS total_debit
-            FROM operations
-            WHERE operation_date BETWEEN ? AND ?
-              AND COALESCE(credit_account_code, '') LIKE '706%'
-            GROUP BY credit_account_code
+$treasuryPagination = sl_manage_accounts_paginate_array(
+    $filteredTreasuryAccounts,
+    (int)$filters['treasury_page'],
+    (int)$filters['per_page']
+);
 
-            UNION ALL
+$servicePagination = sl_manage_accounts_paginate_array(
+    $filteredServiceAccounts,
+    (int)$filters['service_page'],
+    (int)$filters['per_page']
+);
 
-            SELECT
-                debit_account_code AS account_code,
-                0 AS total_credit,
-                SUM(amount) AS total_debit
-            FROM operations
-            WHERE operation_date BETWEEN ? AND ?
-              AND COALESCE(debit_account_code, '') LIKE '706%'
-            GROUP BY debit_account_code
-        ) t
-        GROUP BY account_code
-    ");
-    $stmt706->execute([$from, $to, $from, $to]);
-    foreach ($stmt706->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $serviceMovementMap[(string)$row['account_code']] = [
-            'credit' => (float)($row['total_credit'] ?? 0),
-            'debit' => (float)($row['total_debit'] ?? 0),
-            'net' => (float)($row['total_credit'] ?? 0) - (float)($row['total_debit'] ?? 0),
-        ];
-    }
-}
-
-/*
-|--------------------------------------------------------------------------
-| Mouvements période 512 via operations + treasury_movements
-|--------------------------------------------------------------------------
-*/
-$treasuryMovementMap = [];
-if (tableExists($pdo, 'operations') || tableExists($pdo, 'treasury_movements')) {
-    foreach ($treasuryAccounts as $account) {
-        $code = (string)($account['account_code'] ?? '');
-        $id = (int)($account['id'] ?? 0);
-
-        $opsCredit = 0.0;
-        $opsDebit = 0.0;
-        $tmIn = 0.0;
-        $tmOut = 0.0;
-
-        if (tableExists($pdo, 'operations') && $code !== '') {
-            $stmtOps512 = $pdo->prepare("
-                SELECT
-                    COALESCE(SUM(CASE WHEN credit_account_code = ? THEN amount ELSE 0 END), 0) AS total_credit,
-                    COALESCE(SUM(CASE WHEN debit_account_code = ? THEN amount ELSE 0 END), 0) AS total_debit
-                FROM operations
-                WHERE operation_date BETWEEN ? AND ?
-            ");
-            $stmtOps512->execute([$code, $code, $from, $to]);
-            $ops = $stmtOps512->fetch(PDO::FETCH_ASSOC) ?: [];
-            $opsCredit = (float)($ops['total_credit'] ?? 0);
-            $opsDebit = (float)($ops['total_debit'] ?? 0);
-        }
-
-        if (tableExists($pdo, 'treasury_movements') && $id > 0) {
-            $stmtTm = $pdo->prepare("
-                SELECT
-                    COALESCE(SUM(CASE WHEN target_treasury_account_id = ? THEN amount ELSE 0 END), 0) AS total_in,
-                    COALESCE(SUM(CASE WHEN source_treasury_account_id = ? THEN amount ELSE 0 END), 0) AS total_out
-                FROM treasury_movements
-                WHERE operation_date BETWEEN ? AND ?
-            ");
-            $stmtTm->execute([$id, $id, $from, $to]);
-            $tm = $stmtTm->fetch(PDO::FETCH_ASSOC) ?: [];
-            $tmIn = (float)($tm['total_in'] ?? 0);
-            $tmOut = (float)($tm['total_out'] ?? 0);
-        }
-
-        $credit = $opsCredit + $tmIn;
-        $debit = $opsDebit + $tmOut;
-
-        $treasuryMovementMap[$code] = [
-            'credit' => $credit,
-            'debit' => $debit,
-            'net' => $credit - $debit,
-        ];
-    }
-}
-
-/*
-|--------------------------------------------------------------------------
-| Mouvements période 411 via operations
-|--------------------------------------------------------------------------
-*/
-$clientMovementMap = [];
-if (tableExists($pdo, 'operations')) {
-    $stmt411 = $pdo->prepare("
-        SELECT
-            account_code,
-            SUM(total_credit) AS total_credit,
-            SUM(total_debit) AS total_debit
-        FROM (
-            SELECT
-                credit_account_code AS account_code,
-                SUM(amount) AS total_credit,
-                0 AS total_debit
-            FROM operations
-            WHERE operation_date BETWEEN ? AND ?
-              AND COALESCE(credit_account_code, '') LIKE '411%'
-            GROUP BY credit_account_code
-
-            UNION ALL
-
-            SELECT
-                debit_account_code AS account_code,
-                0 AS total_credit,
-                SUM(amount) AS total_debit
-            FROM operations
-            WHERE operation_date BETWEEN ? AND ?
-              AND COALESCE(debit_account_code, '') LIKE '411%'
-            GROUP BY debit_account_code
-        ) t
-        GROUP BY account_code
-    ");
-    $stmt411->execute([$from, $to, $from, $to]);
-    foreach ($stmt411->fetchAll(PDO::FETCH_ASSOC) as $row) {
-        $clientMovementMap[(string)$row['account_code']] = [
-            'credit' => (float)($row['total_credit'] ?? 0),
-            'debit' => (float)($row['total_debit'] ?? 0),
-            'net' => (float)($row['total_credit'] ?? 0) - (float)($row['total_debit'] ?? 0),
-        ];
-    }
-}
-
-/*
-|--------------------------------------------------------------------------
-| Blocs de synthèse recalculés sur période
-|--------------------------------------------------------------------------
-*/
-$summary = [
-    '411' => ['count' => 0, 'current_balance' => 0.0, 'period_credit' => 0.0, 'period_debit' => 0.0, 'period_net' => 0.0],
-    '512' => ['count' => 0, 'current_balance' => 0.0, 'period_credit' => 0.0, 'period_debit' => 0.0, 'period_net' => 0.0],
-    '706' => ['count' => 0, 'current_balance' => 0.0, 'period_credit' => 0.0, 'period_debit' => 0.0, 'period_net' => 0.0],
-];
-
-foreach ($clientAccounts as $row) {
-    $code = (string)($row['account_number'] ?? '');
-    $mv = $clientMovementMap[$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
-
-    $summary['411']['count']++;
-    $summary['411']['current_balance'] += (float)($row['balance'] ?? 0);
-    $summary['411']['period_credit'] += (float)$mv['credit'];
-    $summary['411']['period_debit'] += (float)$mv['debit'];
-    $summary['411']['period_net'] += (float)$mv['net'];
-}
-
-foreach ($treasuryAccounts as $row) {
-    $code = (string)($row['account_code'] ?? '');
-    $mv = $treasuryMovementMap[$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
-
-    $summary['512']['count']++;
-    $summary['512']['current_balance'] += (float)($row['current_balance'] ?? 0);
-    $summary['512']['period_credit'] += (float)$mv['credit'];
-    $summary['512']['period_debit'] += (float)$mv['debit'];
-    $summary['512']['period_net'] += (float)$mv['net'];
-}
-
-foreach ($serviceAccounts as $row) {
-    $code = (string)($row['account_code'] ?? '');
-    $mv = $serviceMovementMap[$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
-
-    $summary['706']['count']++;
-    $summary['706']['current_balance'] += (float)($row['current_balance'] ?? 0);
-    $summary['706']['period_credit'] += (float)$mv['credit'];
-    $summary['706']['period_debit'] += (float)$mv['debit'];
-    $summary['706']['period_net'] += (float)$mv['net'];
-}
+$clientAccountsPageRows = $clientPagination['rows'];
+$treasuryAccountsPageRows = $treasuryPagination['rows'];
+$serviceAccountsPageRows = $servicePagination['rows'];
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -285,18 +73,119 @@ require_once __DIR__ . '/../../includes/document_start.php';
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
         <div class="card" style="margin-bottom:20px;">
-            <h3 class="section-title">Filtres période</h3>
+            <h3 class="section-title">Filtres</h3>
 
             <form method="GET">
-                <div class="dashboard-grid-2">
+                <div class="dashboard-grid-4">
                     <div>
                         <label>Du</label>
-                        <input type="date" name="from" value="<?= e($from) ?>">
+                        <input type="date" name="from" value="<?= e($filters['from']) ?>">
                     </div>
 
                     <div>
                         <label>Au</label>
-                        <input type="date" name="to" value="<?= e($to) ?>">
+                        <input type="date" name="to" value="<?= e($filters['to']) ?>">
+                    </div>
+
+                    <div>
+                        <label>Recherche</label>
+                        <input type="text" name="q" value="<?= e($filters['q']) ?>" placeholder="Code, libellé, client, pays...">
+                    </div>
+
+                    <div>
+                        <label>Famille</label>
+                        <select name="family">
+                            <option value="">Toutes</option>
+                            <option value="411" <?= $filters['family'] === '411' ? 'selected' : '' ?>>411</option>
+                            <option value="512" <?= $filters['family'] === '512' ? 'selected' : '' ?>>512</option>
+                            <option value="706" <?= $filters['family'] === '706' ? 'selected' : '' ?>>706</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Statut actif / archivé</label>
+                        <select name="active">
+                            <option value="">Tous</option>
+                            <option value="active" <?= $filters['active'] === 'active' ? 'selected' : '' ?>>Actifs</option>
+                            <option value="inactive" <?= $filters['active'] === 'inactive' ? 'selected' : '' ?>>Archivés</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Statut client</label>
+                        <select name="client_status">
+                            <option value="">Tous</option>
+                            <option value="active" <?= $filters['client_status'] === 'active' ? 'selected' : '' ?>>Clients actifs</option>
+                            <option value="inactive" <?= $filters['client_status'] === 'inactive' ? 'selected' : '' ?>>Clients archivés</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Type client</label>
+                        <select name="client_type">
+                            <option value="">Tous</option>
+                            <?php foreach ($filterOptions['client_types'] as $value): ?>
+                                <option value="<?= e($value) ?>" <?= $filters['client_type'] === $value ? 'selected' : '' ?>><?= e($value) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Type 706</label>
+                        <select name="postable">
+                            <option value="">Tous</option>
+                            <option value="postable" <?= $filters['postable'] === 'postable' ? 'selected' : '' ?>>Postables</option>
+                            <option value="structure" <?= $filters['postable'] === 'structure' ? 'selected' : '' ?>>Structures</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Pays commercial</label>
+                        <select name="country_commercial">
+                            <option value="">Tous</option>
+                            <?php foreach ($filterOptions['commercial_countries'] as $value): ?>
+                                <option value="<?= e($value) ?>" <?= $filters['country_commercial'] === $value ? 'selected' : '' ?>><?= e($value) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Pays destination</label>
+                        <select name="country_destination">
+                            <option value="">Tous</option>
+                            <?php foreach ($filterOptions['destination_countries'] as $value): ?>
+                                <option value="<?= e($value) ?>" <?= $filters['country_destination'] === $value ? 'selected' : '' ?>><?= e($value) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Banque</label>
+                        <select name="bank">
+                            <option value="">Toutes</option>
+                            <?php foreach ($filterOptions['banks'] as $value): ?>
+                                <option value="<?= e($value) ?>" <?= $filters['bank'] === $value ? 'selected' : '' ?>><?= e($value) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Devise</label>
+                        <select name="currency">
+                            <option value="">Toutes</option>
+                            <?php foreach ($filterOptions['currencies'] as $value): ?>
+                                <option value="<?= e($value) ?>" <?= $filters['currency'] === $value ? 'selected' : '' ?>><?= e($value) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Lignes par page</label>
+                        <select name="per_page">
+                            <?php foreach ($filters['allowed_per_page'] as $value): ?>
+                                <option value="<?= (int)$value ?>" <?= (int)$filters['per_page'] === (int)$value ? 'selected' : '' ?>><?= (int)$value ?></option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
                 </div>
 
@@ -312,10 +201,10 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <h3 class="section-title">Comptes 411</h3>
                 <div class="sl-data-list">
                     <div class="sl-data-list__row"><span>Nombre</span><strong><?= (int)$summary['411']['count'] ?></strong></div>
-                    <div class="sl-data-list__row"><span>Solde courant cumulé</span><strong><?= ma_money((float)$summary['411']['current_balance']) ?></strong></div>
-                    <div class="sl-data-list__row"><span>Crédits période</span><strong><?= ma_money((float)$summary['411']['period_credit']) ?></strong></div>
-                    <div class="sl-data-list__row"><span>Débits période</span><strong><?= ma_money((float)$summary['411']['period_debit']) ?></strong></div>
-                    <div class="sl-data-list__row"><span>Net période</span><strong><?= ma_money((float)$summary['411']['period_net']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Solde courant cumulé</span><strong><?= sl_manage_accounts_money((float)$summary['411']['current_balance']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Crédits période</span><strong><?= sl_manage_accounts_money((float)$summary['411']['period_credit']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Débits période</span><strong><?= sl_manage_accounts_money((float)$summary['411']['period_debit']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Net période</span><strong><?= sl_manage_accounts_money((float)$summary['411']['period_net']) ?></strong></div>
                 </div>
             </div>
 
@@ -323,10 +212,10 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <h3 class="section-title">Comptes 512</h3>
                 <div class="sl-data-list">
                     <div class="sl-data-list__row"><span>Nombre</span><strong><?= (int)$summary['512']['count'] ?></strong></div>
-                    <div class="sl-data-list__row"><span>Solde courant cumulé</span><strong><?= ma_money((float)$summary['512']['current_balance']) ?></strong></div>
-                    <div class="sl-data-list__row"><span>Crédits période</span><strong><?= ma_money((float)$summary['512']['period_credit']) ?></strong></div>
-                    <div class="sl-data-list__row"><span>Débits période</span><strong><?= ma_money((float)$summary['512']['period_debit']) ?></strong></div>
-                    <div class="sl-data-list__row"><span>Net période</span><strong><?= ma_money((float)$summary['512']['period_net']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Solde courant cumulé</span><strong><?= sl_manage_accounts_money((float)$summary['512']['current_balance']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Crédits période</span><strong><?= sl_manage_accounts_money((float)$summary['512']['period_credit']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Débits période</span><strong><?= sl_manage_accounts_money((float)$summary['512']['period_debit']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Net période</span><strong><?= sl_manage_accounts_money((float)$summary['512']['period_net']) ?></strong></div>
                 </div>
             </div>
 
@@ -334,10 +223,10 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <h3 class="section-title">Comptes 706</h3>
                 <div class="sl-data-list">
                     <div class="sl-data-list__row"><span>Nombre</span><strong><?= (int)$summary['706']['count'] ?></strong></div>
-                    <div class="sl-data-list__row"><span>Solde courant cumulé</span><strong><?= ma_money((float)$summary['706']['current_balance']) ?></strong></div>
-                    <div class="sl-data-list__row"><span>Crédits période</span><strong><?= ma_money((float)$summary['706']['period_credit']) ?></strong></div>
-                    <div class="sl-data-list__row"><span>Débits période</span><strong><?= ma_money((float)$summary['706']['period_debit']) ?></strong></div>
-                    <div class="sl-data-list__row"><span>Net période</span><strong><?= ma_money((float)$summary['706']['period_net']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Solde courant cumulé</span><strong><?= sl_manage_accounts_money((float)$summary['706']['current_balance']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Crédits période</span><strong><?= sl_manage_accounts_money((float)$summary['706']['period_credit']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Débits période</span><strong><?= sl_manage_accounts_money((float)$summary['706']['period_debit']) ?></strong></div>
+                    <div class="sl-data-list__row"><span>Net période</span><strong><?= sl_manage_accounts_money((float)$summary['706']['period_net']) ?></strong></div>
                 </div>
             </div>
         </div>
@@ -369,132 +258,168 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($clientAccounts as $row): ?>
+                        <?php foreach ($clientAccountsPageRows as $row): ?>
                             <?php
                             $code = (string)($row['account_number'] ?? '');
-                            $mv = $clientMovementMap[$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
+                            $mv = $movementMaps['client'][$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
                             ?>
                             <tr>
                                 <td><?= e($code) ?></td>
                                 <td><?= e((string)($row['full_name'] ?? '—')) ?></td>
                                 <td><?= e((string)($row['country_commercial'] ?? '—')) ?></td>
                                 <td><?= e((string)($row['client_type'] ?? '—')) ?></td>
-                                <td><?= ma_money((float)($row['initial_balance'] ?? 0)) ?></td>
-                                <td><?= ma_money((float)($row['balance'] ?? 0)) ?></td>
-                                <td><?= ma_money((float)$mv['credit']) ?></td>
-                                <td><?= ma_money((float)$mv['debit']) ?></td>
-                                <td><?= ma_money((float)$mv['net']) ?></td>
+                                <td><?= sl_manage_accounts_money((float)($row['initial_balance'] ?? 0)) ?></td>
+                                <td><?= sl_manage_accounts_money((float)($row['balance'] ?? 0)) ?></td>
+                                <td><?= sl_manage_accounts_money((float)$mv['credit']) ?></td>
+                                <td><?= sl_manage_accounts_money((float)$mv['debit']) ?></td>
+                                <td><?= sl_manage_accounts_money((float)$mv['net']) ?></td>
                             </tr>
                         <?php endforeach; ?>
 
-                        <?php if (!$clientAccounts): ?>
+                        <?php if (!$clientAccountsPageRows): ?>
                             <tr><td colspan="9">Aucun compte 411.</td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
             </div>
+
+            <?php if ($clientPagination['pages'] > 1): ?>
+                <div class="btn-group" style="margin-top:18px;">
+                    <?php for ($i = 1; $i <= $clientPagination['pages']; $i++): ?>
+                        <?php $query = sl_manage_accounts_build_page_query($_GET, 'client_page', $i); ?>
+                        <a href="?<?= e(http_build_query($query)) ?>" class="btn <?= $i === $clientPagination['page'] ? 'btn-success' : 'btn-outline' ?>">
+                            <?= $i ?>
+                        </a>
+                    <?php endfor; ?>
+                </div>
+            <?php endif; ?>
         </div>
 
-        <div class="dashboard-grid-2">
-            <div class="table-card">
-                <div class="page-title page-title-inline">
-                    <div>
-                        <h3 class="section-title">Comptes 706</h3>
-                    </div>
-                    <div class="btn-group">
-                        <a href="<?= e(APP_URL) ?>modules/service_accounts/index.php" class="btn btn-outline">Gérer les 706</a>
-                    </div>
-                </div>
-
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Code</th>
-                            <th>Libellé</th>
-                            <th>Type op</th>
-                            <th>Destination</th>
-                            <th>Commercial</th>
-                            <th>Solde courant</th>
-                            <th>Crédit période</th>
-                            <th>Débit période</th>
-                            <th>Net période</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($serviceAccounts as $row): ?>
-                            <?php
-                            $code = (string)($row['account_code'] ?? '');
-                            $mv = $serviceMovementMap[$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
-                            ?>
-                            <tr>
-                                <td><?= e($code) ?></td>
-                                <td><?= e((string)($row['account_label'] ?? '')) ?></td>
-                                <td><?= e((string)($row['operation_type_label'] ?? '')) ?></td>
-                                <td><?= e((string)($row['destination_country_label'] ?? '')) ?></td>
-                                <td><?= e((string)($row['commercial_country_label'] ?? '')) ?></td>
-                                <td><?= ma_money((float)($row['current_balance'] ?? 0)) ?></td>
-                                <td><?= ma_money((float)$mv['credit']) ?></td>
-                                <td><?= ma_money((float)$mv['debit']) ?></td>
-                                <td><?= ma_money((float)$mv['net']) ?></td>
-                            </tr>
-                        <?php endforeach; ?>
-                        <?php if (!$serviceAccounts): ?>
-                            <tr><td colspan="9">Aucun compte 706.</td></tr>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
+        <div class="dashboard-grid-1" style="display:grid; grid-template-columns:1fr; gap:20px;">
+    <div class="table-card">
+        <div class="page-title page-title-inline">
+            <div>
+                <h3 class="section-title">Comptes 706</h3>
             </div>
-
-            <div class="table-card">
-                <div class="page-title page-title-inline">
-                    <div>
-                        <h3 class="section-title">Comptes 512</h3>
-                    </div>
-                    <div class="btn-group">
-                        <a href="<?= e(APP_URL) ?>modules/treasury/index.php" class="btn btn-outline">Gérer les 512</a>
-                    </div>
-                </div>
-
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Code</th>
-                            <th>Libellé</th>
-                            <th>Banque</th>
-                            <th>Pays</th>
-                            <th>Devise</th>
-                            <th>Solde courant</th>
-                            <th>Crédit période</th>
-                            <th>Débit période</th>
-                            <th>Net période</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($treasuryAccounts as $row): ?>
-                            <?php
-                            $code = (string)($row['account_code'] ?? '');
-                            $mv = $treasuryMovementMap[$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
-                            ?>
-                            <tr>
-                                <td><?= e($code) ?></td>
-                                <td><?= e((string)($row['account_label'] ?? '')) ?></td>
-                                <td><?= e((string)($row['bank_name'] ?? '')) ?></td>
-                                <td><?= e((string)($row['country_label'] ?? '')) ?></td>
-                                <td><?= e((string)($row['currency_code'] ?? '')) ?></td>
-                                <td><?= ma_money((float)($row['current_balance'] ?? 0)) ?></td>
-                                <td><?= ma_money((float)$mv['credit']) ?></td>
-                                <td><?= ma_money((float)$mv['debit']) ?></td>
-                                <td><?= ma_money((float)$mv['net']) ?></td>
-                            </tr>
-                        <?php endforeach; ?>
-                        <?php if (!$treasuryAccounts): ?>
-                            <tr><td colspan="9">Aucun compte 512.</td></tr>
-                        <?php endif; ?>
-                    </tbody>
-                </table>
+            <div class="btn-group">
+                <a href="<?= e(APP_URL) ?>modules/service_accounts/index.php" class="btn btn-outline">Gérer les 706</a>
             </div>
         </div>
 
+        <div class="table-responsive">
+            <table class="modern-table">
+                <thead>
+                    <tr>
+                        <th>Code</th>
+                        <th>Libellé</th>
+                        <th>Type op</th>
+                        <th>Destination</th>
+                        <th>Commercial</th>
+                        <th>Solde courant</th>
+                        <th>Crédit période</th>
+                        <th>Débit période</th>
+                        <th>Net période</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($serviceAccountsPageRows as $row): ?>
+                        <?php
+                        $code = (string)($row['account_code'] ?? '');
+                        $mv = $movementMaps['service'][$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
+                        ?>
+                        <tr>
+                            <td><?= e($code) ?></td>
+                            <td><?= e((string)($row['account_label'] ?? '')) ?></td>
+                            <td><?= e((string)($row['operation_type_label'] ?? '')) ?></td>
+                            <td><?= e((string)($row['destination_country_label'] ?? '')) ?></td>
+                            <td><?= e((string)($row['commercial_country_label'] ?? '')) ?></td>
+                            <td><?= sl_manage_accounts_money((float)($row['current_balance'] ?? 0)) ?></td>
+                            <td><?= sl_manage_accounts_money((float)$mv['credit']) ?></td>
+                            <td><?= sl_manage_accounts_money((float)$mv['debit']) ?></td>
+                            <td><?= sl_manage_accounts_money((float)$mv['net']) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <?php if (!$serviceAccountsPageRows): ?>
+                        <tr><td colspan="9">Aucun compte 706.</td></tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <?php if ($servicePagination['pages'] > 1): ?>
+            <div class="btn-group" style="margin-top:18px;">
+                <?php for ($i = 1; $i <= $servicePagination['pages']; $i++): ?>
+                    <?php $query = sl_manage_accounts_build_page_query($_GET, 'service_page', $i); ?>
+                    <a href="?<?= e(http_build_query($query)) ?>" class="btn <?= $i === $servicePagination['page'] ? 'btn-success' : 'btn-outline' ?>">
+                        <?= $i ?>
+                    </a>
+                <?php endfor; ?>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <div class="table-card">
+        <div class="page-title page-title-inline">
+            <div>
+                <h3 class="section-title">Comptes 512</h3>
+            </div>
+            <div class="btn-group">
+                <a href="<?= e(APP_URL) ?>modules/treasury/index.php" class="btn btn-outline">Gérer les 512</a>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="modern-table">
+                <thead>
+                    <tr>
+                        <th>Code</th>
+                        <th>Libellé</th>
+                        <th>Banque</th>
+                        <th>Pays</th>
+                        <th>Devise</th>
+                        <th>Solde courant</th>
+                        <th>Crédit période</th>
+                        <th>Débit période</th>
+                        <th>Net période</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($treasuryAccountsPageRows as $row): ?>
+                        <?php
+                        $code = (string)($row['account_code'] ?? '');
+                        $mv = $movementMaps['treasury'][$code] ?? ['credit' => 0.0, 'debit' => 0.0, 'net' => 0.0];
+                        ?>
+                        <tr>
+                            <td><?= e($code) ?></td>
+                            <td><?= e((string)($row['account_label'] ?? '')) ?></td>
+                            <td><?= e((string)($row['bank_name'] ?? '')) ?></td>
+                            <td><?= e((string)($row['country_label'] ?? '')) ?></td>
+                            <td><?= e((string)($row['currency_code'] ?? '')) ?></td>
+                            <td><?= sl_manage_accounts_money((float)($row['current_balance'] ?? 0)) ?></td>
+                            <td><?= sl_manage_accounts_money((float)$mv['credit']) ?></td>
+                            <td><?= sl_manage_accounts_money((float)$mv['debit']) ?></td>
+                            <td><?= sl_manage_accounts_money((float)$mv['net']) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    <?php if (!$treasuryAccountsPageRows): ?>
+                        <tr><td colspan="9">Aucun compte 512.</td></tr>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <?php if ($treasuryPagination['pages'] > 1): ?>
+            <div class="btn-group" style="margin-top:18px;">
+                <?php for ($i = 1; $i <= $treasuryPagination['pages']; $i++): ?>
+                    <?php $query = sl_manage_accounts_build_page_query($_GET, 'treasury_page', $i); ?>
+                    <a href="?<?= e(http_build_query($query)) ?>" class="btn <?= $i === $treasuryPagination['page'] ? 'btn-success' : 'btn-outline' ?>">
+                        <?= $i ?>
+                    </a>
+                <?php endfor; ?>
+            </div>
+        <?php endif; ?>
+    </div>
+</div>
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>

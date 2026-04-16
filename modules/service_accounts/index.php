@@ -23,6 +23,13 @@ $pageSubtitle = 'Gestion compacte des comptes de service, suivi des soldes et ac
 $search = trim((string)($_GET['search'] ?? ''));
 $status = trim((string)($_GET['status'] ?? ''));
 $typeView = trim((string)($_GET['type_view'] ?? ''));
+$perPage = (int)($_GET['per_page'] ?? 20);
+$page = max(1, (int)($_GET['page'] ?? 1));
+
+$allowedPerPage = [10, 20, 50, 100];
+if (!in_array($perPage, $allowedPerPage, true)) {
+    $perPage = 20;
+}
 
 $where = ['1=1'];
 $params = [];
@@ -56,29 +63,71 @@ if ($typeView === 'structure' && columnExists($pdo, 'service_accounts', 'is_post
     $where[] = "COALESCE(is_postable,0) = 0";
 }
 
-$stmt = $pdo->prepare("
+$whereSql = implode(' AND ', $where);
+
+/* =========================
+   Totaux sur jeu filtré complet
+========================= */
+$countStmt = $pdo->prepare("
+    SELECT COUNT(*) AS total_count
+    FROM service_accounts
+    WHERE {$whereSql}
+");
+$countStmt->execute($params);
+$totalAccounts = (int)($countStmt->fetchColumn() ?: 0);
+
+$statsStmt = $pdo->prepare("
+    SELECT
+        COALESCE(SUM(CASE WHEN COALESCE(is_active,1) = 1 THEN 1 ELSE 0 END), 0) AS total_active,
+        COALESCE(SUM(CASE WHEN COALESCE(is_postable,0) = 1 THEN 1 ELSE 0 END), 0) AS total_postable,
+        COALESCE(SUM(COALESCE(current_balance,0)), 0) AS total_current_balance
+    FROM service_accounts
+    WHERE {$whereSql}
+");
+$statsStmt->execute($params);
+$statsRow = $statsStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+$totalActive = (int)($statsRow['total_active'] ?? 0);
+$totalPostable = (int)($statsRow['total_postable'] ?? 0);
+$totalCurrentBalance = (float)($statsRow['total_current_balance'] ?? 0);
+
+/* =========================
+   Pagination
+========================= */
+$totalPages = max(1, (int)ceil($totalAccounts / $perPage));
+if ($page > $totalPages) {
+    $page = $totalPages;
+}
+
+$offset = ($page - 1) * $perPage;
+
+$listSql = "
     SELECT *
     FROM service_accounts
-    WHERE " . implode(' AND ', $where) . "
+    WHERE {$whereSql}
     ORDER BY COALESCE(is_active,1) DESC, account_code ASC
-");
+    LIMIT {$perPage} OFFSET {$offset}
+";
+
+$stmt = $pdo->prepare($listSql);
 $stmt->execute($params);
 $accounts = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
-$totalAccounts = count($accounts);
-$totalActive = 0;
-$totalCurrentBalance = 0.0;
-$totalPostable = 0;
+$paginationQuery = [
+    'search' => $search,
+    'status' => $status,
+    'type_view' => $typeView,
+    'per_page' => $perPage,
+];
 
-foreach ($accounts as $row) {
-    if ((int)($row['is_active'] ?? 1) === 1) {
-        $totalActive++;
-    }
-    if ((int)($row['is_postable'] ?? 0) === 1) {
-        $totalPostable++;
-    }
-    $totalCurrentBalance += (float)($row['current_balance'] ?? 0);
-}
+$buildPageUrl = static function (int $targetPage) use ($paginationQuery): string {
+    $query = $paginationQuery;
+    $query['page'] = $targetPage;
+    return APP_URL . 'modules/service_accounts/index.php?' . http_build_query($query);
+};
+
+$fromItem = $totalAccounts > 0 ? ($offset + 1) : 0;
+$toItem = min($offset + $perPage, $totalAccounts);
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -93,29 +142,53 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="sl-card sl-kpi-card sl-kpi-card--blue">
                 <div class="sl-kpi-card__label">Comptes</div>
                 <div class="sl-kpi-card__value"><?= (int)$totalAccounts ?></div>
-                <div class="sl-kpi-card__meta"><span>Total affiché</span><strong>706</strong></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Total filtré</span>
+                    <strong>706</strong>
+                </div>
             </div>
+
             <div class="sl-card sl-kpi-card sl-kpi-card--emerald">
                 <div class="sl-kpi-card__label">Actifs</div>
                 <div class="sl-kpi-card__value"><?= (int)$totalActive ?></div>
-                <div class="sl-kpi-card__meta"><span>Disponibles</span><strong>Suivi</strong></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Disponibles</span>
+                    <strong>Suivi</strong>
+                </div>
             </div>
+
             <div class="sl-card sl-kpi-card sl-kpi-card--green">
                 <div class="sl-kpi-card__label">Postables</div>
                 <div class="sl-kpi-card__value"><?= (int)$totalPostable ?></div>
-                <div class="sl-kpi-card__meta"><span>Écritures autorisées</span><strong>Opérationnels</strong></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Écritures autorisées</span>
+                    <strong>Opérationnels</strong>
+                </div>
             </div>
+
             <div class="sl-card sl-kpi-card sl-kpi-card--violet">
                 <div class="sl-kpi-card__label">Solde courant</div>
                 <div class="sl-kpi-card__value"><?= e(number_format($totalCurrentBalance, 2, ',', ' ')) ?></div>
-                <div class="sl-kpi-card__meta"><span>Somme affichée</span><strong>Produits</strong></div>
+                <div class="sl-kpi-card__meta">
+                    <span>Somme filtrée</span>
+                    <strong>Produits</strong>
+                </div>
             </div>
         </section>
 
         <section class="sl-card sl-stable-block" style="margin-bottom:20px;">
             <form method="GET">
                 <div class="dashboard-grid-4">
-                    <div><label>Recherche</label><input type="text" name="search" value="<?= e($search) ?>" placeholder="Code, intitulé, pays..."></div>
+                    <div>
+                        <label>Recherche</label>
+                        <input
+                            type="text"
+                            name="search"
+                            value="<?= e($search) ?>"
+                            placeholder="Code, intitulé, pays..."
+                        >
+                    </div>
+
                     <div>
                         <label>Statut</label>
                         <select name="status">
@@ -124,12 +197,24 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <option value="archived" <?= $status === 'archived' ? 'selected' : '' ?>>Archivés</option>
                         </select>
                     </div>
+
                     <div>
                         <label>Type</label>
                         <select name="type_view">
                             <option value="">Tous</option>
                             <option value="postable" <?= $typeView === 'postable' ? 'selected' : '' ?>>Postables</option>
                             <option value="structure" <?= $typeView === 'structure' ? 'selected' : '' ?>>Structures</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Par page</label>
+                        <select name="per_page">
+                            <?php foreach ($allowedPerPage as $size): ?>
+                                <option value="<?= $size ?>" <?= $perPage === $size ? 'selected' : '' ?>>
+                                    <?= $size ?>
+                                </option>
+                            <?php endforeach; ?>
                         </select>
                     </div>
                 </div>
@@ -147,7 +232,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="sl-card-head">
                 <div>
                     <h3>Liste compacte des comptes de service</h3>
-                    <p class="sl-card-head-subtitle">Vue synthétique, type comptable et accès direct</p>
+                    <p class="sl-card-head-subtitle">
+                        Vue synthétique, type comptable et accès direct
+                    </p>
+                </div>
+                <div class="muted">
+                    <?= e((string)$fromItem) ?> à <?= e((string)$toItem) ?> sur <?= e((string)$totalAccounts) ?>
                 </div>
             </div>
 
@@ -188,11 +278,46 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 </tr>
                             <?php endforeach; ?>
                         <?php else: ?>
-                            <tr><td colspan="8">Aucun compte de service trouvé.</td></tr>
+                            <tr>
+                                <td colspan="8">Aucun compte de service trouvé.</td>
+                            </tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
             </div>
+
+            <?php if ($totalPages > 1): ?>
+                <div class="btn-group" style="margin-top:18px; justify-content:space-between; align-items:center;">
+                    <div class="muted">
+                        Page <?= (int)$page ?> / <?= (int)$totalPages ?>
+                    </div>
+
+                    <div class="btn-group">
+                        <?php if ($page > 1): ?>
+                            <a class="btn btn-outline btn-sm" href="<?= e($buildPageUrl(1)) ?>">« Première</a>
+                            <a class="btn btn-outline btn-sm" href="<?= e($buildPageUrl($page - 1)) ?>">‹ Précédente</a>
+                        <?php endif; ?>
+
+                        <?php
+                        $startPage = max(1, $page - 2);
+                        $endPage = min($totalPages, $page + 2);
+                        for ($i = $startPage; $i <= $endPage; $i++):
+                        ?>
+                            <a
+                                class="btn btn-sm <?= $i === $page ? 'btn-success' : 'btn-outline' ?>"
+                                href="<?= e($buildPageUrl($i)) ?>"
+                            >
+                                <?= (int)$i ?>
+                            </a>
+                        <?php endfor; ?>
+
+                        <?php if ($page < $totalPages): ?>
+                            <a class="btn btn-outline btn-sm" href="<?= e($buildPageUrl($page + 1)) ?>">Suivante ›</a>
+                            <a class="btn btn-outline btn-sm" href="<?= e($buildPageUrl($totalPages)) ?>">Dernière »</a>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            <?php endif; ?>
         </section>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>

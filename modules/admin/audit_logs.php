@@ -92,6 +92,8 @@ $entityType = trim((string)($_GET['entity_type'] ?? ''));
 $userId = (int)($_GET['user_id'] ?? 0);
 $dateFrom = trim((string)($_GET['from'] ?? ''));
 $dateTo = trim((string)($_GET['to'] ?? ''));
+$page = sl_safe_int($_GET['page'] ?? 1, 1);
+$perPage = sl_normalize_per_page($_GET['per_page'] ?? 25);
 
 $users = [];
 if (tableExists($pdo, 'users')) {
@@ -135,10 +137,6 @@ if (tableExists($pdo, 'user_logs') && columnExists($pdo, 'user_logs', 'entity_ty
 $entityTypes = array_values(array_unique(array_filter(array_map('strval', $entityTypes))));
 sort($entityTypes);
 
-$actionLogs = [];
-$auditRows = [];
-
-/* KPI synthèse */
 $totalActionLogs = tableExists($pdo, 'user_logs')
     ? (int)$pdo->query("SELECT COUNT(*) FROM user_logs")->fetchColumn()
     : 0;
@@ -152,6 +150,11 @@ $totalUnreadNotifications = function_exists('countUnreadNotifications')
     : 0;
 
 $totalEntitiesTracked = count($entityTypes);
+
+$actionLogs = [];
+$auditRows = [];
+$totalResults = 0;
+$pages = 1;
 
 /* =========================
    ONGLET LOGS UTILISATEURS
@@ -183,18 +186,19 @@ if ($tab === 'logs' && tableExists($pdo, 'user_logs')) {
         $params[] = $userId;
     }
 
-    if ($dateFrom !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom) && columnExists($pdo, 'user_logs', 'created_at')) {
+    if (sl_valid_date($dateFrom) && columnExists($pdo, 'user_logs', 'created_at')) {
         $where[] = "DATE(l.created_at) >= ?";
         $params[] = $dateFrom;
     }
 
-    if ($dateTo !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo) && columnExists($pdo, 'user_logs', 'created_at')) {
+    if (sl_valid_date($dateTo) && columnExists($pdo, 'user_logs', 'created_at')) {
         $where[] = "DATE(l.created_at) <= ?";
         $params[] = $dateTo;
     }
 
     $joinUser = '';
     $selectUser = "NULL AS username";
+
     if (tableExists($pdo, 'users') && columnExists($pdo, 'user_logs', 'user_id')) {
         if (columnExists($pdo, 'users', 'username')) {
             $selectUser = "u.username AS username";
@@ -203,21 +207,31 @@ if ($tab === 'logs' && tableExists($pdo, 'user_logs')) {
         } else {
             $selectUser = "CAST(u.id AS CHAR) AS username";
         }
+
         $joinUser = "LEFT JOIN users u ON u.id = l.user_id";
     }
 
-    $stmt = $pdo->prepare("
+    $countSql = "
+        SELECT COUNT(*)
+        FROM user_logs l
+        {$joinUser}
+        WHERE " . implode(' AND ', $where);
+
+    $rowsSql = "
         SELECT
             l.*,
             {$selectUser}
         FROM user_logs l
         {$joinUser}
         WHERE " . implode(' AND ', $where) . "
-        ORDER BY " . (columnExists($pdo, 'user_logs', 'created_at') ? 'l.created_at DESC' : 'l.id DESC') . "
-        LIMIT 300
-    ");
-    $stmt->execute($params);
-    $actionLogs = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        ORDER BY " . (columnExists($pdo, 'user_logs', 'created_at') ? 'l.created_at DESC' : 'l.id DESC');
+
+    $data = sl_paginated_query($pdo, $countSql, $params, $rowsSql, $params, $page, $perPage);
+
+    $actionLogs = $data['rows'];
+    $page = $data['page'];
+    $pages = $data['pages'];
+    $totalResults = $data['total'];
 }
 
 /* =========================
@@ -250,18 +264,19 @@ if ($tab === 'trail' && tableExists($pdo, 'audit_trail')) {
         $params[] = $userId;
     }
 
-    if ($dateFrom !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom) && columnExists($pdo, 'audit_trail', 'created_at')) {
+    if (sl_valid_date($dateFrom) && columnExists($pdo, 'audit_trail', 'created_at')) {
         $where[] = "DATE(a.created_at) >= ?";
         $params[] = $dateFrom;
     }
 
-    if ($dateTo !== '' && preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTo) && columnExists($pdo, 'audit_trail', 'created_at')) {
+    if (sl_valid_date($dateTo) && columnExists($pdo, 'audit_trail', 'created_at')) {
         $where[] = "DATE(a.created_at) <= ?";
         $params[] = $dateTo;
     }
 
     $joinUser = '';
     $selectUser = "NULL AS username";
+
     if (tableExists($pdo, 'users') && columnExists($pdo, 'audit_trail', 'user_id')) {
         if (columnExists($pdo, 'users', 'username')) {
             $selectUser = "u.username AS username";
@@ -270,21 +285,31 @@ if ($tab === 'trail' && tableExists($pdo, 'audit_trail')) {
         } else {
             $selectUser = "CAST(u.id AS CHAR) AS username";
         }
+
         $joinUser = "LEFT JOIN users u ON u.id = a.user_id";
     }
 
-    $stmt = $pdo->prepare("
+    $countSql = "
+        SELECT COUNT(*)
+        FROM audit_trail a
+        {$joinUser}
+        WHERE " . implode(' AND ', $where);
+
+    $rowsSql = "
         SELECT
             a.*,
             {$selectUser}
         FROM audit_trail a
         {$joinUser}
         WHERE " . implode(' AND ', $where) . "
-        ORDER BY " . (columnExists($pdo, 'audit_trail', 'created_at') ? 'a.created_at DESC' : 'a.id DESC') . "
-        LIMIT 300
-    ");
-    $stmt->execute($params);
-    $auditRows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        ORDER BY " . (columnExists($pdo, 'audit_trail', 'created_at') ? 'a.created_at DESC' : 'a.id DESC');
+
+    $data = sl_paginated_query($pdo, $countSql, $params, $rowsSql, $params, $page, $perPage);
+
+    $auditRows = $data['rows'];
+    $page = $data['page'];
+    $pages = $data['pages'];
+    $totalResults = $data['total'];
 }
 
 require_once __DIR__ . '/../../includes/document_start.php';
@@ -437,6 +462,17 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <label>Au</label>
                         <input type="date" name="to" value="<?= e($dateTo) ?>">
                     </div>
+
+                    <div>
+                        <label>Par page</label>
+                        <select name="per_page">
+                            <?php foreach ([10, 25, 50, 100] as $size): ?>
+                                <option value="<?= (int)$size ?>" <?= $perPage === $size ? 'selected' : '' ?>>
+                                    <?= (int)$size ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="btn-group" style="margin-top:18px;">
@@ -512,6 +548,14 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         </tbody>
                     </table>
                 </div>
+
+                <?= sl_render_pagination(
+                    APP_URL . 'modules/admin/audit_logs.php',
+                    $_GET,
+                    $page,
+                    $pages,
+                    $totalResults
+                ) ?>
             </section>
         <?php else: ?>
             <section class="sl-card sl-stable-block">
@@ -581,6 +625,14 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         </tbody>
                     </table>
                 </div>
+
+                <?= sl_render_pagination(
+                    APP_URL . 'modules/admin/audit_logs.php',
+                    $_GET,
+                    $page,
+                    $pages,
+                    $totalResults
+                ) ?>
             </section>
         <?php endif; ?>
 

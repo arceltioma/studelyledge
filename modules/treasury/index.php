@@ -20,66 +20,47 @@ if (!tableExists($pdo, 'treasury_accounts')) {
 $pageTitle = 'Comptes internes (512)';
 $pageSubtitle = 'Gestion compacte des comptes de trésorerie, suivi des soldes et accès rapide';
 
-$search = trim((string)($_GET['search'] ?? ''));
-$status = trim((string)($_GET['status'] ?? ''));
-$typeView = trim((string)($_GET['type_view'] ?? ''));
+$filters = function_exists('sl_treasury_list_parse_filters')
+    ? sl_treasury_list_parse_filters($_GET)
+    : [
+        'search' => trim((string)($_GET['search'] ?? '')),
+        'status' => trim((string)($_GET['status'] ?? '')),
+        'type_view' => trim((string)($_GET['type_view'] ?? '')),
+        'page' => max(1, (int)($_GET['page'] ?? 1)),
+        'per_page' => 25,
+    ];
 
-$where = ['1=1'];
-$params = [];
+$listData = function_exists('sl_treasury_list_get_rows')
+    ? sl_treasury_list_get_rows($pdo, $filters)
+    : [
+        'rows' => [],
+        'total' => 0,
+        'page' => 1,
+        'per_page' => 25,
+        'pages' => 1,
+    ];
 
-if ($search !== '') {
-    $where[] = "(
-        COALESCE(account_code,'') LIKE ?
-        OR COALESCE(account_label,'') LIKE ?
-    )";
-    $params[] = "%{$search}%";
-    $params[] = "%{$search}%";
-}
+$kpis = function_exists('sl_treasury_list_get_kpis')
+    ? sl_treasury_list_get_kpis($pdo, $filters)
+    : [
+        'total_accounts' => 0,
+        'active_accounts' => 0,
+        'archived_accounts' => 0,
+        'postable_accounts' => 0,
+        'structure_accounts' => 0,
+        'opening_balance_total' => 0.0,
+        'current_balance_total' => 0.0,
+    ];
 
-if ($status === 'active' && columnExists($pdo, 'treasury_accounts', 'is_active')) {
-    $where[] = "COALESCE(is_active,1) = 1";
-}
+$accounts = $listData['rows'] ?? [];
+$total = (int)($listData['total'] ?? 0);
+$page = (int)($listData['page'] ?? 1);
+$perPage = (int)($listData['per_page'] ?? 25);
+$pages = (int)($listData['pages'] ?? 1);
 
-if ($status === 'archived' && columnExists($pdo, 'treasury_accounts', 'is_active')) {
-    $where[] = "COALESCE(is_active,1) = 0";
-}
-
-if ($typeView === 'postable' && columnExists($pdo, 'treasury_accounts', 'is_postable')) {
-    $where[] = "COALESCE(is_postable,0) = 1";
-}
-
-if ($typeView === 'structure' && columnExists($pdo, 'treasury_accounts', 'is_postable')) {
-    $where[] = "COALESCE(is_postable,0) = 0";
-}
-
-$stmt = $pdo->prepare("
-    SELECT *
-    FROM treasury_accounts
-    WHERE " . implode(' AND ', $where) . "
-    ORDER BY COALESCE(is_active,1) DESC, account_code ASC
-");
-$stmt->execute($params);
-$accounts = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-
-$totalAccounts = count($accounts);
-$totalActive = 0;
-$totalCurrentBalance = 0.0;
-$totalPostable = 0;
-$totalStructure = 0;
-
-foreach ($accounts as $row) {
-    if ((int)($row['is_active'] ?? 1) === 1) {
-        $totalActive++;
-    }
-
-    if ((int)($row['is_postable'] ?? 0) === 1) {
-        $totalPostable++;
-    } else {
-        $totalStructure++;
-    }
-
-    $totalCurrentBalance += (float)($row['current_balance'] ?? 0);
-}
+$search = (string)($filters['search'] ?? '');
+$status = (string)($filters['status'] ?? '');
+$typeView = (string)($filters['type_view'] ?? '');
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -90,45 +71,53 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <section class="sl-grid sl-grid-4 sl-stable-block" style="margin-bottom:20px;">
-            <div class="sl-card sl-kpi-card sl-kpi-card--blue">
-                <div class="sl-kpi-card__label">Comptes</div>
-                <div class="sl-kpi-card__value"><?= (int)$totalAccounts ?></div>
-                <div class="sl-kpi-card__meta">
-                    <span>Total affiché</span>
-                    <strong>512</strong>
-                </div>
+        <section class="sl-kpi-grid sl-kpi-grid--compact" style="margin-bottom:20px;">
+            <div class="sl-kpi-card sl-kpi-card--blue">
+                <span class="sl-kpi-card__label">Comptes 512</span>
+                <strong class="sl-kpi-card__value"><?= (int)$kpis['total_accounts'] ?></strong>
+                <span class="sl-kpi-card__meta">Total référencé</span>
             </div>
 
-            <div class="sl-card sl-kpi-card sl-kpi-card--emerald">
-                <div class="sl-kpi-card__label">Actifs</div>
-                <div class="sl-kpi-card__value"><?= (int)$totalActive ?></div>
-                <div class="sl-kpi-card__meta">
-                    <span>Disponibles</span>
-                    <strong>Suivi</strong>
-                </div>
+            <div class="sl-kpi-card sl-kpi-card--emerald">
+                <span class="sl-kpi-card__label">Actifs</span>
+                <strong class="sl-kpi-card__value"><?= (int)$kpis['active_accounts'] ?></strong>
+                <span class="sl-kpi-card__meta">Comptes exploitables</span>
             </div>
 
-            <div class="sl-card sl-kpi-card sl-kpi-card--green">
-                <div class="sl-kpi-card__label">Postables</div>
-                <div class="sl-kpi-card__value"><?= (int)$totalPostable ?></div>
-                <div class="sl-kpi-card__meta">
-                    <span>Écritures autorisées</span>
-                    <strong>Opérationnels</strong>
-                </div>
+            <div class="sl-kpi-card sl-kpi-card--rose">
+                <span class="sl-kpi-card__label">Archivés</span>
+                <strong class="sl-kpi-card__value"><?= (int)$kpis['archived_accounts'] ?></strong>
+                <span class="sl-kpi-card__meta">Non utilisés</span>
             </div>
 
-            <div class="sl-card sl-kpi-card sl-kpi-card--violet">
-                <div class="sl-kpi-card__label">Solde courant</div>
-                <div class="sl-kpi-card__value"><?= e(number_format($totalCurrentBalance, 2, ',', ' ')) ?></div>
-                <div class="sl-kpi-card__meta">
-                    <span>Somme affichée</span>
-                    <strong>Trésorerie</strong>
-                </div>
+            <div class="sl-kpi-card sl-kpi-card--green">
+                <span class="sl-kpi-card__label">Postables</span>
+                <strong class="sl-kpi-card__value"><?= (int)$kpis['postable_accounts'] ?></strong>
+                <span class="sl-kpi-card__meta">Écriture autorisée</span>
+            </div>
+
+            <div class="sl-kpi-card sl-kpi-card--amber">
+                <span class="sl-kpi-card__label">Structures</span>
+                <strong class="sl-kpi-card__value"><?= (int)$kpis['structure_accounts'] ?></strong>
+                <span class="sl-kpi-card__meta">Niveau regroupement</span>
+            </div>
+
+            <div class="sl-kpi-card sl-kpi-card--violet">
+                <span class="sl-kpi-card__label">Solde d'ouverture</span>
+                <strong class="sl-kpi-card__value"><?= e(number_format((float)$kpis['opening_balance_total'], 2, ',', ' ')) ?></strong>
+                <span class="sl-kpi-card__meta">Base initiale</span>
+            </div>
+
+            <div class="sl-kpi-card sl-kpi-card--indigo">
+                <span class="sl-kpi-card__label">Solde courant</span>
+                <strong class="sl-kpi-card__value"><?= e(number_format((float)$kpis['current_balance_total'], 2, ',', ' ')) ?></strong>
+                <span class="sl-kpi-card__meta">Trésorerie affichée</span>
             </div>
         </section>
 
-        <section class="sl-card sl-stable-block" style="margin-bottom:20px;">
+        <section class="card" style="margin-bottom:20px;">
+            <h3>Filtres</h3>
+
             <form method="GET">
                 <div class="dashboard-grid-4">
                     <div>
@@ -153,6 +142,15 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <option value="structure" <?= $typeView === 'structure' ? 'selected' : '' ?>>Structures</option>
                         </select>
                     </div>
+
+                    <div>
+                        <label>Résultats par page</label>
+                        <select name="per_page">
+                            <?php foreach ([10, 25, 50, 100] as $size): ?>
+                                <option value="<?= $size ?>" <?= $perPage === $size ? 'selected' : '' ?>><?= $size ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="btn-group" style="margin-top:18px;">
@@ -163,11 +161,11 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </form>
         </section>
 
-        <section class="sl-card sl-stable-block">
+        <section class="card">
             <div class="sl-card-head">
                 <div>
                     <h3>Liste compacte des comptes internes</h3>
-                    <p class="sl-card-head-subtitle">Vue synthétique, type comptable et accès direct</p>
+                    <p class="sl-card-head-subtitle"><?= (int)$total ?> résultat(s) — vue synthétique et actions rapides</p>
                 </div>
             </div>
 
@@ -187,19 +185,31 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <tbody>
                         <?php if ($accounts): ?>
                             <?php foreach ($accounts as $row): ?>
+                                <?php
+                                $isActive = (int)($row['is_active'] ?? 1) === 1;
+                                $openingBalance = (float)($row['opening_balance'] ?? 0);
+                                $currentBalance = (float)($row['current_balance'] ?? 0);
+                                ?>
                                 <tr>
                                     <td><?= e((string)($row['account_code'] ?? '')) ?></td>
                                     <td><?= e((string)($row['account_label'] ?? '')) ?></td>
-                                    <td><?= renderPostableBadge($row['is_postable'] ?? 0) ?></td>
-                                    <td><?= e(number_format((float)($row['opening_balance'] ?? 0), 2, ',', ' ')) ?></td>
-                                    <td><?= e(number_format((float)($row['current_balance'] ?? 0), 2, ',', ' ')) ?></td>
-                                    <td><?= ((int)($row['is_active'] ?? 1) === 1) ? 'Actif' : 'Archivé' ?></td>
+                                    <td><?= function_exists('renderPostableBadge') ? renderPostableBadge($row['is_postable'] ?? 0) : e((int)($row['is_postable'] ?? 0) === 1 ? 'Postable' : 'Structure') ?></td>
+                                    <td><?= e(number_format($openingBalance, 2, ',', ' ')) ?></td>
+                                    <td><?= e(number_format($currentBalance, 2, ',', ' ')) ?></td>
                                     <td>
-                                        <div class="btn-group">
+                                        <span class="badge badge-<?= $isActive ? 'success' : 'danger' ?>">
+                                            <?= $isActive ? 'Actif' : 'Archivé' ?>
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <div class="btn-group btn-group--compact">
                                             <a class="btn btn-sm btn-secondary" href="<?= e(APP_URL) ?>modules/treasury/treasury_view.php?id=<?= (int)$row['id'] ?>">Voir</a>
                                             <a class="btn btn-sm btn-outline" href="<?= e(APP_URL) ?>modules/treasury/treasury_edit.php?id=<?= (int)$row['id'] ?>">Modifier</a>
-                                            <?php if ((int)($row['is_active'] ?? 1) === 1): ?>
+
+                                            <?php if ($isActive): ?>
                                                 <a class="btn btn-sm btn-danger" href="<?= e(APP_URL) ?>modules/treasury/treasury_archive.php?id=<?= (int)$row['id'] ?>">Archiver</a>
+                                            <?php else: ?>
+                                                <a class="btn btn-sm btn-success" href="<?= e(APP_URL) ?>modules/treasury/treasury_archive.php?id=<?= (int)$row['id'] ?>&action=reactivate">Réactiver</a>
                                             <?php endif; ?>
                                         </div>
                                     </td>
@@ -213,6 +223,25 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     </tbody>
                 </table>
             </div>
+
+            <?php if ($pages > 1): ?>
+                <div class="btn-group" style="margin-top:18px;">
+                    <?php for ($p = 1; $p <= $pages; $p++): ?>
+                        <a
+                            class="btn <?= $p === $page ? 'btn-success' : 'btn-outline' ?>"
+                            href="<?= e(APP_URL) ?>modules/treasury/index.php?<?= http_build_query([
+                                'search' => $search,
+                                'status' => $status,
+                                'type_view' => $typeView,
+                                'per_page' => $perPage,
+                                'page' => $p,
+                            ]) ?>"
+                        >
+                            <?= $p ?>
+                        </a>
+                    <?php endfor; ?>
+                </div>
+            <?php endif; ?>
         </section>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>

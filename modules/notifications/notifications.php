@@ -52,41 +52,72 @@ if (isset($_GET['mark_all']) && $_GET['mark_all'] === '1') {
 }
 
 if (isset($_GET['read'])) {
-    markNotificationRead($pdo, (int)$_GET['read']);
-    header('Location: ' . APP_URL . 'modules/notifications/notifications.php');
+    markNotificationRead($pdo, (int) $_GET['read']);
+
+    $query = $_GET;
+    unset($query['read']);
+    $redirect = APP_URL . 'modules/notifications/notifications.php';
+    if ($query) {
+        $redirect .= '?' . http_build_query($query);
+    }
+
+    header('Location: ' . $redirect);
     exit;
 }
 
 $pageTitle = 'Notifications';
 $pageSubtitle = 'Centre d’alertes, événements et informations système';
 
-$items = tableExists($pdo, 'notifications')
-    ? $pdo->query("
-        SELECT *
-        FROM notifications
-        ORDER BY created_at DESC, id DESC
-        LIMIT 200
-    ")->fetchAll(PDO::FETCH_ASSOC)
-    : [];
+$filters = function_exists('sl_notifications_parse_filters')
+    ? sl_notifications_parse_filters($_GET)
+    : [
+        'q' => '',
+        'type' => '',
+        'level' => '',
+        'entity_type' => '',
+        'client_id' => '',
+        'operation_type_code' => '',
+        'service_id' => '',
+        'status' => '',
+        'date_from' => '',
+        'date_to' => '',
+        'page' => 1,
+        'per_page' => 25,
+    ];
 
-$stats = [
-    'total' => count($items),
-    'unread' => 0,
-    'warning' => 0,
-    'danger' => 0,
-    'success' => 0,
-];
+$options = function_exists('sl_notifications_get_filter_options')
+    ? sl_notifications_get_filter_options($pdo)
+    : [
+        'types' => [],
+        'levels' => [],
+        'entity_types' => [],
+        'clients' => [],
+        'operation_types' => [],
+        'services' => [],
+        'statuses' => [],
+    ];
 
-foreach ($items as $item) {
-    if ((int)($item['is_read'] ?? 0) === 0) {
-        $stats['unread']++;
-    }
+$stats = function_exists('sl_notifications_get_kpis')
+    ? sl_notifications_get_kpis($pdo)
+    : [
+        'total' => 0,
+        'unread' => 0,
+        'warning' => 0,
+        'danger' => 0,
+        'success' => 0,
+    ];
 
-    $level = strtolower((string)($item['level'] ?? 'info'));
-    if (isset($stats[$level])) {
-        $stats[$level]++;
-    }
-}
+$list = function_exists('sl_notifications_get_rows')
+    ? sl_notifications_get_rows($pdo, $filters)
+    : [
+        'rows' => [],
+        'total' => 0,
+        'page' => 1,
+        'per_page' => 25,
+        'pages' => 1,
+    ];
+
+$items = $list['rows'] ?? [];
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
@@ -96,104 +127,172 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <style>
-        .sl-notification-item {
-            display: flex;
-            gap: 16px;
-            align-items: flex-start;
-            padding: 16px;
-            border: 1px solid rgba(148, 163, 184, 0.12);
-            border-radius: 14px;
-            background: #fff;
-        }
-
-        .sl-notification-item + .sl-notification-item {
-            margin-top: 12px;
-        }
-
-        .sl-notification-item--unread {
-            border-left: 4px solid #22c55e;
-            background: rgba(248, 250, 252, 0.9);
-        }
-
-        .sl-notification-icon {
-            width: 42px;
-            height: 42px;
-            min-width: 42px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(15, 23, 42, 0.04);
-            font-size: 20px;
-        }
-
-        .sl-notification-content {
-            flex: 1;
-            min-width: 0;
-        }
-
-        .sl-notification-title {
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-
-        .sl-notification-meta {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 8px;
-        }
-
-        .sl-notification-actions {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            align-items: center;
-        }
-        </style>
-
         <section class="sl-grid sl-grid-4 sl-stable-block" style="margin-bottom:20px;">
             <div class="sl-card sl-kpi-card sl-kpi-card--blue">
                 <div class="sl-kpi-card__label">Notifications</div>
-                <div class="sl-kpi-card__value"><?= (int)$stats['total'] ?></div>
+                <div class="sl-kpi-card__value"><?= (int)($stats['total'] ?? 0) ?></div>
                 <div class="sl-kpi-card__meta">
-                    <span>Total affiché</span>
-                    <strong>200 max</strong>
+                    <span>Total</span>
+                    <strong>Système</strong>
                 </div>
             </div>
 
             <div class="sl-card sl-kpi-card sl-kpi-card--emerald">
                 <div class="sl-kpi-card__label">Non lues</div>
-                <div class="sl-kpi-card__value"><?= (int)$stats['unread'] ?></div>
+                <div class="sl-kpi-card__value"><?= (int)($stats['unread'] ?? 0) ?></div>
                 <div class="sl-kpi-card__meta">
                     <span>À traiter</span>
                     <strong>Priorité</strong>
                 </div>
             </div>
 
-            <div class="sl-card sl-kpi-card sl-kpi-card--green">
+            <div class="sl-card sl-kpi-card sl-kpi-card--amber">
                 <div class="sl-kpi-card__label">Warnings</div>
-                <div class="sl-kpi-card__value"><?= (int)$stats['warning'] ?></div>
+                <div class="sl-kpi-card__value"><?= (int)($stats['warning'] ?? 0) ?></div>
                 <div class="sl-kpi-card__meta">
-                    <span>Points d’attention</span>
+                    <span>Attention</span>
                     <strong>Suivi</strong>
                 </div>
             </div>
 
             <div class="sl-card sl-kpi-card sl-kpi-card--violet">
                 <div class="sl-kpi-card__label">Succès</div>
-                <div class="sl-kpi-card__value"><?= (int)$stats['success'] ?></div>
+                <div class="sl-kpi-card__value"><?= (int)($stats['success'] ?? 0) ?></div>
                 <div class="sl-kpi-card__meta">
-                    <span>Actions terminées</span>
-                    <strong>OK</strong>
+                    <span>Actions OK</span>
+                    <strong>Info</strong>
                 </div>
             </div>
         </section>
 
+        <section class="sl-card sl-stable-block sl-notifications-toolbar" style="margin-bottom:20px;">
+            <form method="GET" class="sl-toolbar-form">
+                <div class="dashboard-grid-4">
+                    <div>
+                        <label>Recherche</label>
+                        <input type="text" name="q" value="<?= e((string)$filters['q']) ?>" placeholder="Message, client, type, service...">
+                    </div>
+
+                    <div>
+                        <label>Type</label>
+                        <select name="type">
+                            <option value="">Tous</option>
+                            <?php foreach (($options['types'] ?? []) as $value): ?>
+                                <option value="<?= e((string)$value) ?>" <?= $filters['type'] === (string)$value ? 'selected' : '' ?>>
+                                    <?= e((string)$value) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Niveau</label>
+                        <select name="level">
+                            <option value="">Tous</option>
+                            <?php foreach (($options['levels'] ?? []) as $value): ?>
+                                <option value="<?= e((string)$value) ?>" <?= $filters['level'] === (string)$value ? 'selected' : '' ?>>
+                                    <?= e((string)$value) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Statut lecture</label>
+                        <select name="status">
+                            <option value="">Tous</option>
+                            <?php foreach (($options['statuses'] ?? []) as $row): ?>
+                                <option value="<?= e((string)($row['value'] ?? '')) ?>" <?= $filters['status'] === (string)($row['value'] ?? '') ? 'selected' : '' ?>>
+                                    <?= e((string)($row['label'] ?? '')) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Type entité</label>
+                        <select name="entity_type">
+                            <option value="">Tous</option>
+                            <?php foreach (($options['entity_types'] ?? []) as $value): ?>
+                                <option value="<?= e((string)$value) ?>" <?= $filters['entity_type'] === (string)$value ? 'selected' : '' ?>>
+                                    <?= e((string)$value) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Client</label>
+                        <select name="client_id">
+                            <option value="">Tous</option>
+                            <?php foreach (($options['clients'] ?? []) as $client): ?>
+                                <option value="<?= (int)($client['id'] ?? 0) ?>" <?= $filters['client_id'] === (string)($client['id'] ?? '') ? 'selected' : '' ?>>
+                                    <?= e((string)($client['client_code'] ?? '') . ' - ' . (string)($client['full_name'] ?? '')) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Type opération</label>
+                        <select name="operation_type_code">
+                            <option value="">Tous</option>
+                            <?php foreach (($options['operation_types'] ?? []) as $value): ?>
+                                <option value="<?= e((string)$value) ?>" <?= $filters['operation_type_code'] === (string)$value ? 'selected' : '' ?>>
+                                    <?= e((string)$value) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Service</label>
+                        <select name="service_id">
+                            <option value="">Tous</option>
+                            <?php foreach (($options['services'] ?? []) as $service): ?>
+                                <option value="<?= (int)($service['id'] ?? 0) ?>" <?= $filters['service_id'] === (string)($service['id'] ?? '') ? 'selected' : '' ?>>
+                                    <?= e((string)($service['code'] ?? '') . ' - ' . (string)($service['label'] ?? '')) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label>Du</label>
+                        <input type="date" name="date_from" value="<?= e((string)$filters['date_from']) ?>">
+                    </div>
+
+                    <div>
+                        <label>Au</label>
+                        <input type="date" name="date_to" value="<?= e((string)$filters['date_to']) ?>">
+                    </div>
+
+                    <div>
+                        <label>Par page</label>
+                        <select name="per_page">
+                            <?php foreach ([10, 25, 50, 100] as $pp): ?>
+                                <option value="<?= $pp ?>" <?= (int)$filters['per_page'] === $pp ? 'selected' : '' ?>><?= $pp ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="btn-group" style="margin-top:18px;">
+                    <button type="submit" class="btn btn-success">Filtrer</button>
+                    <a href="<?= e(APP_URL) ?>modules/notifications/notifications.php" class="btn btn-outline">Réinitialiser</a>
+                    <a href="<?= e(APP_URL) ?>modules/notifications/notifications.php?mark_all=1" class="btn btn-secondary">Tout marquer comme lu</a>
+                </div>
+            </form>
+        </section>
+
         <section class="sl-card">
-            <div class="btn-group" style="margin-bottom:16px;">
-                <a href="<?= e(APP_URL) ?>modules/notifications/notifications.php?mark_all=1" class="btn btn-outline">Tout marquer comme lu</a>
+            <div class="sl-card-head">
+                <div>
+                    <h3>Flux des notifications</h3>
+                    <p class="sl-card-head-subtitle">
+                        <?= (int)($list['total'] ?? 0) ?> résultat(s) • page <?= (int)($list['page'] ?? 1) ?>/<?= (int)($list['pages'] ?? 1) ?>
+                    </p>
+                </div>
             </div>
 
             <?php if ($items): ?>
@@ -208,10 +307,31 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                             <div class="sl-notification-meta">
                                 <span class="badge badge-outline">Type : <?= e((string)($item['type'] ?? '')) ?></span>
+
                                 <span class="<?= e(notificationBadgeClass((string)($item['level'] ?? 'info'))) ?>">
                                     <?= e((string)($item['level'] ?? 'info')) ?>
                                 </span>
+
                                 <span class="badge badge-outline"><?= e((string)($item['created_at'] ?? '')) ?></span>
+
+                                <?php if (!empty($item['client_code']) || !empty($item['full_name'])): ?>
+                                    <span class="badge badge-outline">
+                                        Client : <?= e(trim((string)($item['client_code'] ?? '') . ' - ' . (string)($item['full_name'] ?? ''))) ?>
+                                    </span>
+                                <?php endif; ?>
+
+                                <?php if (!empty($item['operation_type_code'])): ?>
+                                    <span class="badge badge-outline">
+                                        Opération : <?= e((string)$item['operation_type_code']) ?>
+                                    </span>
+                                <?php endif; ?>
+
+                                <?php if (!empty($item['service_label'])): ?>
+                                    <span class="badge badge-outline">
+                                        Service : <?= e((string)$item['service_label']) ?>
+                                    </span>
+                                <?php endif; ?>
+
                                 <?php if ((int)($item['is_read'] ?? 0) === 0): ?>
                                     <span class="badge badge-success">Non lue</span>
                                 <?php else: ?>
@@ -226,11 +346,34 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <?php endif; ?>
 
                             <?php if ((int)($item['is_read'] ?? 0) === 0): ?>
-                                <a class="btn btn-sm btn-outline" href="<?= e(APP_URL) ?>modules/notifications/notifications.php?read=<?= (int)$item['id'] ?>">Marquer lu</a>
+                                <?php
+                                $query = $_GET;
+                                $query['read'] = (int)$item['id'];
+                                ?>
+                                <a class="btn btn-sm btn-outline" href="<?= e(APP_URL) ?>modules/notifications/notifications.php?<?= e(http_build_query($query)) ?>">
+                                    Marquer lu
+                                </a>
                             <?php endif; ?>
                         </div>
                     </div>
                 <?php endforeach; ?>
+
+                <?php if (($list['pages'] ?? 1) > 1): ?>
+                    <div class="btn-group sl-pagination-inline" style="margin-top:18px;">
+                        <?php for ($p = 1; $p <= (int)$list['pages']; $p++): ?>
+                            <?php
+                            $query = $_GET;
+                            $query['page'] = $p;
+                            ?>
+                            <a
+                                class="btn <?= ((int)($list['page'] ?? 1) === $p) ? 'btn-success' : 'btn-outline' ?>"
+                                href="<?= e(APP_URL) ?>modules/notifications/notifications.php?<?= e(http_build_query($query)) ?>"
+                            >
+                                <?= $p ?>
+                            </a>
+                        <?php endfor; ?>
+                    </div>
+                <?php endif; ?>
             <?php else: ?>
                 <p class="muted">Aucune notification.</p>
             <?php endif; ?>

@@ -7,110 +7,62 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
 if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'pending_debits_list_page');
+    studelyEnforceAccess($pdo, 'pending_debits_view_page');
 } else {
-    enforcePagePermission($pdo, 'pending_debits_list');
+    enforcePagePermission($pdo, 'pending_debits_view');
 }
 
 if (!tableExists($pdo, 'pending_client_debits')) {
     exit('Table pending_client_debits introuvable.');
 }
 
-$statusFilter = trim((string)($_GET['status'] ?? ''));
-$clientFilter = trim((string)($_GET['client'] ?? ''));
-$q = trim((string)($_GET['q'] ?? ''));
+$filters = function_exists('sl_pending_debits_list_parse_filters')
+    ? sl_pending_debits_list_parse_filters($_GET)
+    : [
+        'q' => trim((string)($_GET['q'] ?? '')),
+        'status' => trim((string)($_GET['status'] ?? '')),
+        'client' => trim((string)($_GET['client'] ?? '')),
+        'page' => max(1, (int)($_GET['page'] ?? 1)),
+        'per_page' => 25,
+    ];
 
-$where = [];
-$params = [];
+$listData = function_exists('sl_pending_debits_list_get_rows')
+    ? sl_pending_debits_list_get_rows($pdo, $filters)
+    : [
+        'rows' => [],
+        'total' => 0,
+        'page' => 1,
+        'per_page' => 25,
+        'pages' => 1,
+    ];
 
-$selectParts = [
-    'pd.*'
-];
+$kpis = function_exists('sl_pending_debits_list_get_kpis')
+    ? sl_pending_debits_list_get_kpis($pdo, $filters)
+    : [
+        'total_count' => 0,
+        'pending_count' => 0,
+        'ready_count' => 0,
+        'partial_count' => 0,
+        'resolved_count' => 0,
+        'cancelled_count' => 0,
+        'initial_amount_total' => 0.0,
+        'executed_amount_total' => 0.0,
+        'remaining_amount_total' => 0.0,
+    ];
 
-$joinClient = '';
-if (tableExists($pdo, 'clients') && columnExists($pdo, 'pending_client_debits', 'client_id')) {
-    $joinClient = 'LEFT JOIN clients c ON c.id = pd.client_id';
-    $selectParts[] = 'c.client_code';
-    $selectParts[] = 'c.full_name';
-    $selectParts[] = 'c.generated_client_account';
-}
+$clients = function_exists('sl_pending_debits_list_get_clients')
+    ? sl_pending_debits_list_get_clients($pdo)
+    : [];
 
-if ($statusFilter !== '') {
-    $where[] = 'pd.status = ?';
-    $params[] = $statusFilter;
-}
+$items = $listData['rows'] ?? [];
+$total = (int)($listData['total'] ?? 0);
+$page = (int)($listData['page'] ?? 1);
+$perPage = (int)($listData['per_page'] ?? 25);
+$pages = (int)($listData['pages'] ?? 1);
 
-if ($clientFilter !== '' && ctype_digit($clientFilter)) {
-    $where[] = 'pd.client_id = ?';
-    $params[] = (int)$clientFilter;
-}
-
-if ($q !== '') {
-    $where[] = '(
-        pd.label LIKE ?
-        OR pd.trigger_type LIKE ?
-        OR pd.notes LIKE ?
-        OR c.client_code LIKE ?
-        OR c.full_name LIKE ?
-        OR c.generated_client_account LIKE ?
-    )';
-    $like = '%' . $q . '%';
-    $params[] = $like;
-    $params[] = $like;
-    $params[] = $like;
-    $params[] = $like;
-    $params[] = $like;
-    $params[] = $like;
-}
-
-$sql = "
-    SELECT " . implode(', ', $selectParts) . "
-    FROM pending_client_debits pd
-    {$joinClient}
-";
-
-if ($where) {
-    $sql .= ' WHERE ' . implode(' AND ', $where);
-}
-
-$sql .= " ORDER BY
-    CASE pd.status
-        WHEN 'ready' THEN 1
-        WHEN 'partial' THEN 2
-        WHEN 'pending' THEN 3
-        WHEN 'resolved' THEN 4
-        WHEN 'cancelled' THEN 5
-        ELSE 6
-    END,
-    pd.id DESC
-";
-
-$stmt = $pdo->prepare($sql);
-$stmt->execute($params);
-$items = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
-
-$clients = [];
-if (tableExists($pdo, 'clients')) {
-    $stmtClients = $pdo->query("
-        SELECT id, client_code, full_name
-        FROM clients
-        WHERE COALESCE(is_active, 1) = 1
-        ORDER BY client_code ASC, full_name ASC
-    ");
-    $clients = $stmtClients->fetchAll(PDO::FETCH_ASSOC) ?: [];
-}
-
-function sl_pending_debit_badge_class(string $status): string
-{
-    return match ($status) {
-        'ready' => 'success',
-        'partial' => 'warning',
-        'pending' => 'info',
-        'resolved' => 'success',
-        'cancelled' => 'danger',
-        default => 'secondary',
-    };
-}
+$q = (string)($filters['q'] ?? '');
+$statusFilter = (string)($filters['status'] ?? '');
+$clientFilter = (string)($filters['client'] ?? '');
 
 $pageTitle = 'Débits dus';
 $pageSubtitle = 'Suivi des débits clients 411 en attente, partiels, prêts ou soldés';
@@ -128,7 +80,51 @@ require_once __DIR__ . '/../../includes/document_start.php';
             <div class="success">Le débit dû a bien été exécuté.</div>
         <?php endif; ?>
 
-        <div class="card">
+        <div class="sl-kpi-grid sl-kpi-grid--compact">
+            <div class="sl-kpi-card">
+                <span class="sl-kpi-card__label">Total débits dus</span>
+                <strong class="sl-kpi-card__value"><?= (int)$kpis['total_count'] ?></strong>
+            </div>
+
+            <div class="sl-kpi-card">
+                <span class="sl-kpi-card__label">En attente</span>
+                <strong class="sl-kpi-card__value"><?= (int)$kpis['pending_count'] ?></strong>
+            </div>
+
+            <div class="sl-kpi-card">
+                <span class="sl-kpi-card__label">Prêts</span>
+                <strong class="sl-kpi-card__value"><?= (int)$kpis['ready_count'] ?></strong>
+            </div>
+
+            <div class="sl-kpi-card">
+                <span class="sl-kpi-card__label">Partiels</span>
+                <strong class="sl-kpi-card__value"><?= (int)$kpis['partial_count'] ?></strong>
+            </div>
+
+            <div class="sl-kpi-card">
+                <span class="sl-kpi-card__label">Montant initial</span>
+                <strong class="sl-kpi-card__value"><?= e(number_format((float)$kpis['initial_amount_total'], 2, ',', ' ')) ?></strong>
+            </div>
+
+            <div class="sl-kpi-card">
+                <span class="sl-kpi-card__label">Déjà exécuté</span>
+                <strong class="sl-kpi-card__value"><?= e(number_format((float)$kpis['executed_amount_total'], 2, ',', ' ')) ?></strong>
+            </div>
+
+            <div class="sl-kpi-card">
+                <span class="sl-kpi-card__label">Restant dû</span>
+                <strong class="sl-kpi-card__value"><?= e(number_format((float)$kpis['remaining_amount_total'], 2, ',', ' ')) ?></strong>
+            </div>
+
+            <div class="sl-kpi-card">
+                <span class="sl-kpi-card__label">Résolus / annulés</span>
+                <strong class="sl-kpi-card__value">
+                    <?= (int)$kpis['resolved_count'] ?> / <?= (int)$kpis['cancelled_count'] ?>
+                </strong>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top:20px;">
             <h3>Filtres</h3>
 
             <form method="GET">
@@ -151,6 +147,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <option value="partial" <?= $statusFilter === 'partial' ? 'selected' : '' ?>>partial</option>
                             <option value="ready" <?= $statusFilter === 'ready' ? 'selected' : '' ?>>ready</option>
                             <option value="resolved" <?= $statusFilter === 'resolved' ? 'selected' : '' ?>>resolved</option>
+                            <option value="settled" <?= $statusFilter === 'settled' ? 'selected' : '' ?>>settled</option>
                             <option value="cancelled" <?= $statusFilter === 'cancelled' ? 'selected' : '' ?>>cancelled</option>
                         </select>
                     </div>
@@ -166,6 +163,15 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <?php endforeach; ?>
                         </select>
                     </div>
+
+                    <div>
+                        <label>Résultats par page</label>
+                        <select name="per_page">
+                            <?php foreach ([10, 25, 50, 100] as $size): ?>
+                                <option value="<?= $size ?>" <?= $perPage === $size ? 'selected' : '' ?>><?= $size ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="btn-group" style="margin-top:20px;">
@@ -176,7 +182,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
         </div>
 
         <div class="card" style="margin-top:20px;">
-            <h3>Liste des débits dus</h3>
+            <div class="sl-card-head">
+                <div>
+                    <h3>Liste des débits dus</h3>
+                    <p class="muted"><?= (int)$total ?> résultat(s)</p>
+                </div>
+            </div>
 
             <div class="table-responsive">
                 <table class="modern-table">
@@ -199,26 +210,26 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     </thead>
                     <tbody>
                         <?php foreach ($items as $item): ?>
-                            <?php $status = (string)($item['status'] ?? ''); ?>
+                            <?php $status = strtolower(trim((string)($item['status'] ?? ''))); ?>
                             <tr>
                                 <td><?= (int)($item['id'] ?? 0) ?></td>
                                 <td><?= e(trim((string)($item['client_code'] ?? '') . ' - ' . (string)($item['full_name'] ?? '')) ?: '—') ?></td>
                                 <td><?= e((string)($item['generated_client_account'] ?? '—')) ?></td>
                                 <td><?= e((string)($item['label'] ?? '')) ?></td>
                                 <td><?= e((string)($item['trigger_type'] ?? '')) ?></td>
-                                <td><?= e(number_format((float)($item['initial_amount'] ?? 0), 2, ',', ' ')) ?></td>
+                                <td><?= e(number_format((float)($item['initial_amount'] ?? $item['amount_due'] ?? 0), 2, ',', ' ')) ?></td>
                                 <td><?= e(number_format((float)($item['executed_amount'] ?? 0), 2, ',', ' ')) ?></td>
-                                <td><?= e(number_format((float)($item['remaining_amount'] ?? 0), 2, ',', ' ')) ?></td>
+                                <td><?= e(number_format((float)($item['remaining_amount'] ?? $item['amount_due'] ?? 0), 2, ',', ' ')) ?></td>
                                 <td><?= e((string)($item['currency_code'] ?? 'EUR')) ?></td>
                                 <td>
-                                    <span class="badge badge-<?= e(sl_pending_debit_badge_class($status)) ?>">
+                                    <span class="badge badge-<?= e(function_exists('sl_pending_debit_badge_class') ? sl_pending_debit_badge_class($status) : 'secondary') ?>">
                                         <?= e($status !== '' ? $status : '—') ?>
                                     </span>
                                 </td>
                                 <td><?= e((string)($item['priority_level'] ?? '—')) ?></td>
                                 <td><?= e((string)($item['created_at'] ?? '')) ?></td>
                                 <td>
-                                    <div class="btn-group">
+                                    <div class="btn-group btn-group--compact">
                                         <a
                                             href="<?= e(APP_URL) ?>modules/pending_debits/pending_debit_view.php?id=<?= (int)$item['id'] ?>"
                                             class="btn btn-outline"
@@ -247,6 +258,25 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     </tbody>
                 </table>
             </div>
+
+            <?php if ($pages > 1): ?>
+                <div class="btn-group" style="margin-top:18px;">
+                    <?php for ($p = 1; $p <= $pages; $p++): ?>
+                        <a
+                            class="btn <?= $p === $page ? 'btn-success' : 'btn-outline' ?>"
+                            href="<?= e(APP_URL) ?>modules/pending_debits/pending_debits_list.php?<?= http_build_query([
+                                'q' => $q,
+                                'status' => $statusFilter,
+                                'client' => $clientFilter,
+                                'per_page' => $perPage,
+                                'page' => $p,
+                            ]) ?>"
+                        >
+                            <?= $p ?>
+                        </a>
+                    <?php endfor; ?>
+                </div>
+            <?php endif; ?>
         </div>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
