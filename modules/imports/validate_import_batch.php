@@ -9,6 +9,10 @@ require_once __DIR__ . '/../../config/security.php';
 
 enforcePagePermission($pdo, 'imports_create');
 
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
 $batchId = (int)($_GET['batch_id'] ?? 0);
 if ($batchId <= 0) {
     exit('Batch invalide.');
@@ -102,6 +106,11 @@ try {
         ];
 
         try {
+            $clientId = isset($client['id']) ? (int)$client['id'] : 0;
+            if ($clientId > 0) {
+                sl_assert_client_operation_allowed($pdo, $clientId);
+            }
+
             createOperationWithAccounting($pdo, $payload);
 
             $stmtDone = $pdo->prepare("

@@ -64,6 +64,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $amount = (float)$client['mensualite_amount'];
                 $treasuryCode = trim((string)($client['treasury_account_code'] ?? ''));
 
+                if ($clientId > 0) {
+                    sl_assert_client_operation_allowed($pdo, $clientId);
+                }
+
                 if ($treasuryCode === '') {
                     $results['errors']++;
                     $results['logs'][] = $client['client_code'] . ' : compte 512 manquant';

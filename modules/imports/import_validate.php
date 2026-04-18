@@ -174,6 +174,10 @@ try {
                 throw new RuntimeException('Montant invalide.');
             }
 
+            if ($clientId !== null && $clientId > 0) {
+                sl_assert_client_operation_allowed($pdo, $clientId);
+            }
+
             $selectedType = sl_import_find_by_code($operationTypes, $operationTypeCodeRaw, 'code');
             if (!$selectedType) {
                 throw new RuntimeException('Type d’opération introuvable.');

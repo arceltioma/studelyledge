@@ -1,15 +1,3 @@
-Vous avez un nouveau message. 
-
-Aller au contenu
-Utiliser Gmail avec un lecteur d'écran
-1 sur 25 185
-(aucun objet)
-Boîte de réception
-
-arcel tioma <arc.tioma@gmail.com>
-16:18 (il y a 3 minutes)
-À moi
-
 <?php
 require_once __DIR__ . '/../../config/database.php';
 $pdo = getPDO();

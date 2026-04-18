@@ -222,6 +222,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Le client est obligatoire pour cette opération.');
         }
 
+        if ($clientId !== null && $clientId > 0) {
+            sl_assert_client_operation_allowed($pdo, $clientId);
+        }
+
         if (($isInternalTransfer || $isManualCase) && ($sourceAccountCode === '' || $destinationAccountCode === '')) {
             throw new RuntimeException('Le compte source et le compte destination sont obligatoires.');
         }

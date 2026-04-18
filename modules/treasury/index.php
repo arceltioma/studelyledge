@@ -89,19 +89,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <strong class="sl-kpi-card__value"><?= (int)$kpis['archived_accounts'] ?></strong>
                 <span class="sl-kpi-card__meta">Non utilisés</span>
             </div>
-
-            <div class="sl-kpi-card sl-kpi-card--green">
-                <span class="sl-kpi-card__label">Postables</span>
-                <strong class="sl-kpi-card__value"><?= (int)$kpis['postable_accounts'] ?></strong>
-                <span class="sl-kpi-card__meta">Écriture autorisée</span>
-            </div>
-
-            <div class="sl-kpi-card sl-kpi-card--amber">
-                <span class="sl-kpi-card__label">Structures</span>
-                <strong class="sl-kpi-card__value"><?= (int)$kpis['structure_accounts'] ?></strong>
-                <span class="sl-kpi-card__meta">Niveau regroupement</span>
-            </div>
-
             <div class="sl-kpi-card sl-kpi-card--violet">
                 <span class="sl-kpi-card__label">Solde d'ouverture</span>
                 <strong class="sl-kpi-card__value"><?= e(number_format((float)$kpis['opening_balance_total'], 2, ',', ' ')) ?></strong>
@@ -175,7 +162,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <tr>
                             <th>Code</th>
                             <th>Intitulé</th>
-                            <th>Type</th>
                             <th>Solde ouverture</th>
                             <th>Solde courant</th>
                             <th>Statut</th>
@@ -193,7 +179,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <tr>
                                     <td><?= e((string)($row['account_code'] ?? '')) ?></td>
                                     <td><?= e((string)($row['account_label'] ?? '')) ?></td>
-                                    <td><?= function_exists('renderPostableBadge') ? renderPostableBadge($row['is_postable'] ?? 0) : e((int)($row['is_postable'] ?? 0) === 1 ? 'Postable' : 'Structure') ?></td>
                                     <td><?= e(number_format($openingBalance, 2, ',', ' ')) ?></td>
                                     <td><?= e(number_format($currentBalance, 2, ',', ' ')) ?></td>
                                     <td>

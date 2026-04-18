@@ -141,7 +141,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $currencyCode = $formData['currency_code'] !== '' ? $formData['currency_code'] : 'EUR';
         $clientId = $formData['client_id'] !== '' ? (int)$formData['client_id'] : null;
         $operationTypeId = $formData['operation_type_id'] !== '' ? (int)$formData['operation_type_id'] : 0;
-        $serviceId = $formData['service_id'] !== '' ? (int)$formData['service_id'] : null;
+        $serviceId = $formData['service_id'] !== '' ? (int)$formData['service_id'] : 0;
         $linkedBankAccountId = $formData['linked_bank_account_id'] !== '' ? (int)$formData['linked_bank_account_id'] : null;
         $reference = $formData['reference'];
         $label = $formData['label'];
@@ -162,7 +162,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Type d’opération obligatoire.');
         }
 
-        if ($serviceId === null || $serviceId <= 0) {
+        if ($serviceId <= 0) {
             throw new RuntimeException('Service obligatoire.');
         }
 
@@ -203,10 +203,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $manualKey = $typeCode . '::' . $serviceCode;
         $isInternalTransfer = ($manualKey === 'VIREMENT::INTERNE');
         $isManualCase = in_array($manualKey, $manualCases, true);
-
         $requiresClient = !$isInternalTransfer;
-        if ($requiresClient && !$clientId) {
+
+        if ($requiresClient && (!$clientId || $clientId <= 0)) {
             throw new RuntimeException('Le client est obligatoire pour cette opération.');
+        }
+
+        if ($clientId !== null && $clientId > 0) {
+            sl_assert_client_operation_allowed($pdo, $clientId);
         }
 
         if (($isInternalTransfer || $isManualCase) && ($sourceAccountCode === '' || $destinationAccountCode === '')) {
@@ -520,7 +524,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
             function refreshServices() {
                 const typeCode = getSelectedTypeCode();
                 const currentValue = serviceSelect.value;
-
                 serviceSelect.innerHTML = '';
 
                 const placeholder = document.createElement('option');
@@ -575,7 +578,6 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
             typeSelect.addEventListener('change', refreshServices);
             serviceSelect.addEventListener('change', refreshVisibility);
-
             refreshServices();
         });
         </script>

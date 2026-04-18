@@ -32,6 +32,7 @@ if (tableExists($pdo, 'clients') && columnExists($pdo, 'pending_client_debits', 
     $select[] = 'c.full_name';
     $select[] = 'c.generated_client_account';
     $select[] = 'c.currency AS client_currency';
+    $select[] = 'COALESCE(c.is_active,1) AS client_is_active';
 }
 
 $sql = "
@@ -70,6 +71,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
             throw new RuntimeException('Jeton CSRF invalide.');
+        }
+
+        $clientId = (int)($pendingDebit['client_id'] ?? 0);
+        if ($clientId > 0) {
+            sl_assert_client_operation_allowed($pdo, $clientId);
         }
 
         $requestedAmount = (float)str_replace(',', '.', $formData['execution_amount']);
@@ -191,6 +197,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
             <div class="card">
                 <h3>Rappel</h3>
+
                 <div class="sl-data-list">
                     <div class="sl-data-list__row"><span>Statut actuel</span><strong><?= e((string)($pendingDebit['status'] ?? '—')) ?></strong></div>
                     <div class="sl-data-list__row"><span>Déjà exécuté</span><strong><?= e(number_format((float)($pendingDebit['executed_amount'] ?? 0), 2, ',', ' ')) ?></strong></div>

@@ -12,6 +12,10 @@ if (function_exists('studelyEnforceAccess')) {
     enforcePagePermission($pdo, 'imports_journal');
 }
 
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
 $pageTitle = 'Journal des imports';
 $pageSubtitle = 'Suivi des imports, erreurs, doublons et opérations créées';
 
@@ -24,7 +28,7 @@ $filters = function_exists('sl_imports_journal_parse_filters')
         'from' => trim((string)($_GET['from'] ?? '')),
         'to' => trim((string)($_GET['to'] ?? '')),
         'page' => 1,
-        'per_page' => 50,
+        'per_page' => (int)($_GET['per_page'] ?? 50),
     ];
 
 $listData = function_exists('sl_imports_journal_get_rows')
@@ -55,9 +59,17 @@ $options = function_exists('sl_imports_journal_get_filter_options')
         'actions' => [],
     ];
 
-$flashSuccess = $_SESSION['success_message'] ?? '';
-$flashError = $_SESSION['error_message'] ?? '';
-unset($_SESSION['success_message'], $_SESSION['error_message']);
+$flashSuccess = $_SESSION['flash_success'] ?? ($_SESSION['success_message'] ?? '');
+$flashError = $_SESSION['flash_error'] ?? ($_SESSION['error_message'] ?? '');
+$flashDetails = $_SESSION['flash_details'] ?? [];
+
+unset(
+    $_SESSION['flash_success'],
+    $_SESSION['flash_error'],
+    $_SESSION['flash_details'],
+    $_SESSION['success_message'],
+    $_SESSION['error_message']
+);
 
 $logs = $listData['rows'] ?? [];
 $total = (int)($listData['total'] ?? 0);
@@ -90,6 +102,17 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
         <?php if ($flashError !== ''): ?>
             <div class="error"><?= e($flashError) ?></div>
+        <?php endif; ?>
+
+        <?php if (!empty($flashDetails) && is_array($flashDetails)): ?>
+            <div class="warning" style="margin-bottom:20px;">
+                <strong>Détails :</strong>
+                <ul style="margin:10px 0 0 18px;">
+                    <?php foreach ($flashDetails as $detail): ?>
+                        <li><?= e((string)$detail) ?></li>
+                    <?php endforeach; ?>
+                </ul>
+            </div>
         <?php endif; ?>
 
         <section class="sl-kpi-grid sl-kpi-grid--compact" style="margin-bottom:20px;">

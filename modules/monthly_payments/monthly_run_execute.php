@@ -77,6 +77,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $scheduledDay,
             $_SESSION['user_id'] ?? null
         ]);
+
         $runId = (int)$pdo->lastInsertId();
 
         $totalClients = 0;
@@ -96,6 +97,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $label = 'Mensualité - ' . ($clientCode . ' - ' . ($client['full_name'] ?? ''));
 
             try {
+                if ($clientId > 0) {
+                    sl_assert_client_operation_allowed($pdo, $clientId);
+                }
+
                 if ($monthlyTreasuryId <= 0) {
                     sl_monthly_payment_create_run_item($pdo, [
                         'run_id' => $runId,
@@ -276,11 +281,17 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
+
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
-        <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
+        <?php if ($successMessage !== ''): ?>
+            <div class="success"><?= e($successMessage) ?></div>
+        <?php endif; ?>
+
+        <?php if ($errorMessage !== ''): ?>
+            <div class="error"><?= e($errorMessage) ?></div>
+        <?php endif; ?>
 
         <div class="card">
             <form method="POST">
@@ -291,6 +302,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <label>Date d’exécution</label>
                         <input type="date" name="run_date" value="<?= e($runDate) ?>" required>
                     </div>
+
                     <div>
                         <label>Jour planifié</label>
                         <input type="number" name="scheduled_day" min="1" max="31" value="<?= e((string)$scheduledDay) ?>" required>
@@ -314,9 +326,11 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
             <div class="card" style="margin-top:20px;">
                 <h3>Détail du run #<?= (int)$result['run_id'] ?></h3>
+
                 <div class="btn-group" style="margin-bottom:15px;">
                     <a href="<?= e(APP_URL) ?>modules/monthly_payments/monthly_run_view.php?id=<?= (int)$result['run_id'] ?>" class="btn btn-primary">Voir le détail complet</a>
                 </div>
+
                 <ul>
                     <?php foreach ($result['details'] as $line): ?>
                         <li><?= e($line) ?></li>

@@ -162,6 +162,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Client obligatoire.');
         }
 
+        if ($clientId !== null && $clientId > 0) {
+            sl_assert_client_operation_allowed($pdo, $clientId);
+        }
+
         if ($sourceAccountCode === '' || $destinationAccountCode === '') {
             throw new RuntimeException('Compte source et compte destination obligatoires.');
         }
@@ -208,7 +212,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             $successMessage = 'Opération manuelle enregistrée.';
             $preview = null;
-
             $formData = [
                 'client_id' => '',
                 'operation_type_id' => '',
@@ -244,8 +247,13 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
-        <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
+        <?php if ($successMessage !== ''): ?>
+            <div class="success"><?= e($successMessage) ?></div>
+        <?php endif; ?>
+
+        <?php if ($errorMessage !== ''): ?>
+            <div class="error"><?= e($errorMessage) ?></div>
+        <?php endif; ?>
 
         <div class="dashboard-grid-2">
             <div class="form-card">
@@ -364,10 +372,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <span class="metric-label">Débit</span>
                         <span class="metric-value"><?= e($preview['debit_account_code'] ?? '—') ?></span>
                     </div>
+
                     <div class="stat-row">
                         <span class="metric-label">Crédit</span>
                         <span class="metric-value"><?= e($preview['credit_account_code'] ?? '—') ?></span>
                     </div>
+
                     <div class="stat-row">
                         <span class="metric-label">Analytique</span>
                         <span class="metric-value"><?= e($preview['analytic_account']['account_code'] ?? '—') ?></span>
