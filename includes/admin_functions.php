@@ -7982,3 +7982,435 @@ if (!function_exists('sl_admin_user_logs_get_rows')) {
         ];
     }
 }
+if (!function_exists('sl_get_available_treasury_accounts')) {
+    function sl_get_available_treasury_accounts(PDO $pdo): array
+    {
+        if (!tableExists($pdo, 'treasury_accounts')) {
+            return [];
+        }
+
+        $sql = "
+            SELECT
+                id,
+                account_code,
+                account_label,
+                current_balance,
+                COALESCE(is_active,1) AS is_active,
+                COALESCE(is_primary,0) AS is_primary,
+                COALESCE(is_secondary,0) AS is_secondary
+            FROM treasury_accounts
+            WHERE COALESCE(is_active,1) = 1
+            ORDER BY
+                COALESCE(is_primary,0) DESC,
+                COALESCE(is_secondary,0) DESC,
+                account_code ASC
+        ";
+
+        return $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+
+if (!function_exists('sl_find_default_archive_treasury_account')) {
+    function sl_find_default_archive_treasury_account(PDO $pdo): ?array
+    {
+        $accounts = sl_get_available_treasury_accounts($pdo);
+        if (!$accounts) {
+            return null;
+        }
+
+        foreach ($accounts as $account) {
+            if ((int)($account['is_primary'] ?? 0) === 1) {
+                return $account;
+            }
+        }
+
+        foreach ($accounts as $account) {
+            if ((int)($account['is_secondary'] ?? 0) === 1) {
+                return $account;
+            }
+        }
+
+        return $accounts[0] ?? null;
+    }
+}
+if (!function_exists('sl_restore_client_balance_from_archive')) {
+    function sl_restore_client_balance_from_archive(PDO $pdo, array $client, int $userId = 0): array
+    {
+        if (!tableExists($pdo, 'bank_accounts')) {
+            throw new RuntimeException('Table bank_accounts introuvable.');
+        }
+
+        if (!tableExists($pdo, 'treasury_accounts')) {
+            throw new RuntimeException('Table treasury_accounts introuvable.');
+        }
+
+        if (!tableExists($pdo, 'operations')) {
+            throw new RuntimeException('Table operations introuvable.');
+        }
+
+        $clientId = (int)($client['id'] ?? 0);
+        $client411 = trim((string)($client['generated_client_account'] ?? ''));
+        if ($clientId <= 0 || $client411 === '') {
+            throw new RuntimeException('Compte 411 client introuvable.');
+        }
+
+        $stmtLastArchive = $pdo->prepare("
+            SELECT *
+            FROM operations
+            WHERE client_id = ?
+              AND operation_type_code = 'ARCHIVE_CLIENT'
+            ORDER BY id DESC
+            LIMIT 1
+        ");
+        $stmtLastArchive->execute([$clientId]);
+        $archiveOp = $stmtLastArchive->fetch(PDO::FETCH_ASSOC);
+
+        if (!$archiveOp) {
+            return [
+                'restored_amount' => 0.0,
+                'treasury_account_id' => 0,
+                'treasury_account_code' => null,
+            ];
+        }
+
+        $amount = round((float)($archiveOp['amount'] ?? 0), 2);
+        if ($amount <= 0) {
+            return [
+                'restored_amount' => 0.0,
+                'treasury_account_id' => 0,
+                'treasury_account_code' => null,
+            ];
+        }
+
+        $treasuryCode = trim((string)($archiveOp['debit_account_code'] ?? ''));
+        if ($treasuryCode === '') {
+            throw new RuntimeException('Compte 512 source introuvable sur l’archive précédente.');
+        }
+
+        $stmt512 = $pdo->prepare("
+            SELECT id, account_code, account_label, current_balance
+            FROM treasury_accounts
+            WHERE account_code = ?
+            LIMIT 1
+        ");
+        $stmt512->execute([$treasuryCode]);
+        $treasury = $stmt512->fetch(PDO::FETCH_ASSOC);
+
+        if (!$treasury) {
+            throw new RuntimeException('Compte 512 source introuvable.');
+        }
+
+        $treasuryId = (int)($treasury['id'] ?? 0);
+        $current512 = (float)($treasury['current_balance'] ?? 0);
+
+        if ($current512 < $amount) {
+            throw new RuntimeException('Le compte 512 source ne dispose pas d’un solde suffisant pour restaurer le client.');
+        }
+
+        $stmt411 = $pdo->prepare("
+            SELECT id, account_number, account_name, initial_balance, balance
+            FROM bank_accounts
+            WHERE account_number = ?
+            LIMIT 1
+        ");
+        $stmt411->execute([$client411]);
+        $bankAccount = $stmt411->fetch(PDO::FETCH_ASSOC);
+
+        if (!$bankAccount) {
+            throw new RuntimeException('Compte bancaire 411 introuvable.');
+        }
+
+        $currencyCode = (string)($archiveOp['currency_code'] ?? 'EUR');
+
+        $operationColumns = [];
+        $operationValues = [];
+        $operationParams = [];
+
+        $operationMap = [
+            'operation_date' => date('Y-m-d'),
+            'client_id' => $clientId,
+            'operation_type_code' => 'RESTORE_CLIENT',
+            'amount' => $amount,
+            'currency_code' => $currencyCode,
+            'debit_account_code' => $treasuryCode,
+            'credit_account_code' => $client411,
+            'linked_treasury_account_code' => $treasuryCode,
+            'label' => 'Réactivation client - restitution 512 vers 411',
+            'description' => 'Réactivation client avec restitution du solde archivé',
+            'created_by' => $userId > 0 ? $userId : null,
+        ];
+
+        foreach ($operationMap as $column => $value) {
+            if (columnExists($pdo, 'operations', $column)) {
+                $operationColumns[] = $column;
+                $operationValues[] = '?';
+                $operationParams[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'operations', 'created_at')) {
+            $operationColumns[] = 'created_at';
+            $operationValues[] = 'NOW()';
+        }
+
+        if (columnExists($pdo, 'operations', 'updated_at')) {
+            $operationColumns[] = 'updated_at';
+            $operationValues[] = 'NOW()';
+        }
+
+        if ($operationColumns) {
+            $sqlInsertOp = "
+                INSERT INTO operations (" . implode(', ', $operationColumns) . ")
+                VALUES (" . implode(', ', $operationValues) . ")
+            ";
+            $stmtInsertOp = $pdo->prepare($sqlInsertOp);
+            $stmtInsertOp->execute($operationParams);
+        }
+
+        $stmtUpdate411 = $pdo->prepare("
+            UPDATE bank_accounts
+            SET balance = COALESCE(balance, 0) + ?
+            WHERE account_number = ?
+        ");
+        $stmtUpdate411->execute([$amount, $client411]);
+
+        $stmtUpdate512 = $pdo->prepare("
+            UPDATE treasury_accounts
+            SET current_balance = COALESCE(current_balance, 0) - ?
+            WHERE id = ?
+        ");
+        $stmtUpdate512->execute([$amount, $treasuryId]);
+
+        if (columnExists($pdo, 'clients', 'updated_at')) {
+            $stmtClientUpdate = $pdo->prepare("UPDATE clients SET updated_at = NOW() WHERE id = ?");
+            $stmtClientUpdate->execute([$clientId]);
+        }
+
+        return [
+            'restored_amount' => $amount,
+            'treasury_account_id' => $treasuryId,
+            'treasury_account_code' => $treasuryCode,
+        ];
+    }
+}
+if (!function_exists('sl_rebuild_client_balance')) {
+    function sl_rebuild_client_balance(PDO $pdo, int $clientId): void
+    {
+        if ($clientId <= 0 || !tableExists($pdo, 'clients') || !tableExists($pdo, 'bank_accounts')) {
+            return;
+        }
+
+        $stmtClient = $pdo->prepare("
+            SELECT generated_client_account
+            FROM clients
+            WHERE id = ?
+            LIMIT 1
+        ");
+        $stmtClient->execute([$clientId]);
+        $client = $stmtClient->fetch(PDO::FETCH_ASSOC);
+
+        if (!$client || empty($client['generated_client_account'])) {
+            return;
+        }
+
+        $accountNumber = (string)$client['generated_client_account'];
+
+        $stmt = $pdo->prepare("
+            SELECT balance
+            FROM bank_accounts
+            WHERE account_number = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$accountNumber]);
+        $balance = $stmt->fetchColumn();
+
+        if ($balance === false) {
+            return;
+        }
+
+        if (columnExists($pdo, 'clients', 'current_balance_411')) {
+            $stmtUpdate = $pdo->prepare("
+                UPDATE clients
+                SET current_balance_411 = ?
+                WHERE id = ?
+            ");
+            $stmtUpdate->execute([(float)$balance, $clientId]);
+        }
+    }
+}
+
+if (!function_exists('sl_archive_client_balance_to_treasury')) {
+    function sl_archive_client_balance_to_treasury(PDO $pdo, array $client, int $treasuryAccountId, int $userId = 0): array
+    {
+        if (!tableExists($pdo, 'bank_accounts')) {
+            throw new RuntimeException('Table bank_accounts introuvable.');
+        }
+
+        if (!tableExists($pdo, 'treasury_accounts')) {
+            throw new RuntimeException('Table treasury_accounts introuvable.');
+        }
+
+        if (!tableExists($pdo, 'operations')) {
+            throw new RuntimeException('Table operations introuvable.');
+        }
+
+        $clientId = (int)($client['id'] ?? 0);
+        $client411 = trim((string)($client['generated_client_account'] ?? ''));
+        if ($clientId <= 0 || $client411 === '') {
+            throw new RuntimeException('Compte 411 client introuvable.');
+        }
+
+        $stmt411 = $pdo->prepare("
+            SELECT id, account_number, account_name, initial_balance, balance
+            FROM bank_accounts
+            WHERE account_number = ?
+            LIMIT 1
+        ");
+        $stmt411->execute([$client411]);
+        $bankAccount = $stmt411->fetch(PDO::FETCH_ASSOC);
+
+        if (!$bankAccount) {
+            throw new RuntimeException('Compte bancaire 411 introuvable.');
+        }
+
+        $current411 = (float)($bankAccount['balance'] ?? 0);
+        if ($current411 <= 0) {
+            return [
+                'moved_amount' => 0.0,
+                'treasury_account_id' => $treasuryAccountId,
+                'treasury_account_code' => null,
+            ];
+        }
+
+        $stmt512 = $pdo->prepare("
+            SELECT id, account_code, account_label, current_balance
+            FROM treasury_accounts
+            WHERE id = ?
+            LIMIT 1
+        ");
+        $stmt512->execute([$treasuryAccountId]);
+        $treasury = $stmt512->fetch(PDO::FETCH_ASSOC);
+
+        if (!$treasury) {
+            throw new RuntimeException('Compte 512 de destination introuvable.');
+        }
+
+        $amount = round($current411, 2);
+        $treasuryCode = trim((string)($treasury['account_code'] ?? ''));
+
+        if ($treasuryCode === '') {
+            throw new RuntimeException('Le compte 512 sélectionné n’a pas de code comptable.');
+        }
+
+        $currencyCode = 'EUR';
+        if (tableExists($pdo, 'treasury_accounts') && columnExists($pdo, 'treasury_accounts', 'currency_code')) {
+            $stmtCurrency = $pdo->prepare("SELECT currency_code FROM treasury_accounts WHERE id = ? LIMIT 1");
+            $stmtCurrency->execute([$treasuryAccountId]);
+            $currencyCode = (string)($stmtCurrency->fetchColumn() ?: 'EUR');
+        }
+
+        $operationColumns = [];
+        $operationValues = [];
+        $operationParams = [];
+
+        $operationMap = [
+            'operation_date' => date('Y-m-d'),
+            'client_id' => $clientId,
+            'operation_type_code' => 'ARCHIVE_CLIENT',
+            'amount' => $amount,
+            'currency_code' => $currencyCode,
+            'debit_account_code' => $client411,
+            'credit_account_code' => $treasuryCode,
+            'linked_treasury_account_code' => $treasuryCode,
+            'label' => 'Archivage client - transfert 411 vers 512',
+            'description' => 'Archivage client avec transfert du solde 411 vers 512',
+            'created_by' => $userId > 0 ? $userId : null,
+        ];
+
+        foreach ($operationMap as $column => $value) {
+            if (columnExists($pdo, 'operations', $column)) {
+                $operationColumns[] = $column;
+                $operationValues[] = '?';
+                $operationParams[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'operations', 'created_at')) {
+            $operationColumns[] = 'created_at';
+            $operationValues[] = 'NOW()';
+        }
+
+        if (columnExists($pdo, 'operations', 'updated_at')) {
+            $operationColumns[] = 'updated_at';
+            $operationValues[] = 'NOW()';
+        }
+
+        if ($operationColumns) {
+            $sqlInsertOp = "
+                INSERT INTO operations (" . implode(', ', $operationColumns) . ")
+                VALUES (" . implode(', ', $operationValues) . ")
+            ";
+            $stmtInsertOp = $pdo->prepare($sqlInsertOp);
+            $stmtInsertOp->execute($operationParams);
+        }
+
+        $stmtUpdate411 = $pdo->prepare("
+            UPDATE bank_accounts
+            SET balance = 0
+            WHERE account_number = ?
+        ");
+        $stmtUpdate411->execute([$client411]);
+
+        $stmtUpdate512 = $pdo->prepare("
+            UPDATE treasury_accounts
+            SET current_balance = COALESCE(current_balance, 0) + ?
+            WHERE id = ?
+        ");
+        $stmtUpdate512->execute([$amount, $treasuryAccountId]);
+
+        if (columnExists($pdo, 'clients', 'updated_at')) {
+            $stmtClientUpdate = $pdo->prepare("UPDATE clients SET updated_at = NOW() WHERE id = ?");
+            $stmtClientUpdate->execute([$clientId]);
+        }
+
+        return [
+            'moved_amount' => $amount,
+            'treasury_account_id' => $treasuryAccountId,
+            'treasury_account_code' => $treasuryCode,
+        ];
+    }
+}
+if (!function_exists('sl_assert_client_operation_allowed')) {
+    function sl_assert_client_operation_allowed(PDO $pdo, int $clientId): void
+    {
+        if ($clientId <= 0) {
+            throw new RuntimeException('Client invalide.');
+        }
+
+        if (!tableExists($pdo, 'clients')) {
+            throw new RuntimeException('Table clients introuvable.');
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT id, full_name, client_code, COALESCE(is_active, 1) AS is_active
+            FROM clients
+            WHERE id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$clientId]);
+        $client = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$client) {
+            throw new RuntimeException('Client introuvable.');
+        }
+
+        if ((int)($client['is_active'] ?? 1) !== 1) {
+            $label = trim((string)($client['client_code'] ?? '') . ' - ' . (string)($client['full_name'] ?? ''));
+            if ($label === '-') {
+                $label = 'ce client';
+            }
+
+            throw new RuntimeException('Aucune opération n’est autorisée sur un client archivé : ' . $label . '.');
+        }
+    }
+}

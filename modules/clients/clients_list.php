@@ -166,16 +166,16 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <td><?= e(number_format((float)($row['current_balance_411'] ?? 0), 2, ',', ' ')) ?></td>
                                 <td><?= e(trim((string)($row['treasury_account_code'] ?? '') . ' - ' . (string)($row['treasury_account_label'] ?? '')) ?: '—') ?></td>
                                 <td><?= e(number_format((float)($row['monthly_amount'] ?? 0), 2, ',', ' ')) ?></td>
-                                <td>
-                                    <div class="btn-group btn-group--compact">
-                                        <a href="<?= e(APP_URL) ?>modules/clients/client_view.php?id=<?= (int)$row['id'] ?>" class="btn btn-outline btn-sm">Voir</a>
-                                        <a href="<?= e(APP_URL) ?>modules/clients/client_edit.php?id=<?= (int)$row['id'] ?>" class="btn btn-success btn-sm">Modifier</a>
-                                        <a href="<?= e(APP_URL) ?>modules/clients/client_archive.php?id=<?= (int)$row['id'] ?>" class="btn btn-warning btn-sm">
-                                            <?= $isActive ? 'Archiver' : 'Réactiver' ?>
-                                        </a>
-                                        <a href="<?= e(APP_URL) ?>modules/clients/client_delete.php?id=<?= (int)$row['id'] ?>" class="btn btn-danger btn-sm" onclick="return confirm('Confirmer la suppression ?');">Supprimer</a>
-                                    </div>
-                                </td>
+<td>
+    <div class="btn-group btn-group--compact">
+        <a href="<?= e(APP_URL) ?>modules/clients/client_view.php?id=<?= (int)$row['id'] ?>" class="btn btn-outline btn-sm">Voir</a>
+        <a href="<?= e(APP_URL) ?>modules/clients/client_edit.php?id=<?= (int)$row['id'] ?>" class="btn btn-success btn-sm">Modifier</a>
+        <a href="<?= e(APP_URL) ?>modules/clients/clients_archive.php?id=<?= (int)$row['id'] ?>&action=<?= $isActive ? 'archive' : 'restore' ?>" class="btn btn-warning btn-sm">
+            <?= $isActive ? 'Archiver' : 'Réactiver' ?>
+        </a>
+        <a href="<?= e(APP_URL) ?>modules/clients/client_delete.php?id=<?= (int)$row['id'] ?>" class="btn btn-danger btn-sm" onclick="return confirm('Confirmer la suppression ?');">Supprimer</a>
+    </div>
+</td>
                             </tr>
                         <?php endforeach; ?>
 
