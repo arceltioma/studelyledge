@@ -7,7 +7,11 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-enforcePagePermission($pdo, 'admin_functional_edit');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'accounting_rule_create');
+}
 
 $pageTitle = 'Créer règle comptable';
 $pageSubtitle = 'Création manuelle ou assistée par suggestion automatique';

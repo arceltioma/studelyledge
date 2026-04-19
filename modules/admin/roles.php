@@ -7,7 +7,10 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-enforcePagePermission($pdo, 'admin_roles_manage');
+studelyEnforceCurrentPageAccess($pdo);
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'roles_view_page');
+}
 
 if (!function_exists('ar_fetch_roles')) {
     function ar_fetch_roles(PDO $pdo): array

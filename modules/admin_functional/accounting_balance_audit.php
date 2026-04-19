@@ -6,11 +6,7 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'admin_functional_page');
-} else {
-    enforcePagePermission($pdo, 'admin_functional_view');
-}
+studelyEnforceCurrentPageAccess($pdo);
 
 $pageTitle = 'Audit de cohérence des soldes';
 $pageSubtitle = 'Contrôle entre soldes stockés et soldes théoriques recalculés depuis les opérations.';

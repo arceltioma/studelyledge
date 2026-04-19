@@ -7,12 +7,7 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'admin_functional_page');
-} else {
-    enforcePagePermission($pdo, 'admin_functional_view');
-}
-
+studelyEnforceCurrentPageAccess($pdo);
 $pageTitle = 'Dashboard administration fonctionnelle';
 $pageSubtitle = 'Pilotage des référentiels, des comptes 411 / 512 / 706 et des règles comptables.';
 

@@ -7,8 +7,11 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-enforcePagePermission($pdo, 'operations_create');
+studelyEnforceCurrentPageAccess($pdo);
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'delete_service_page');
+}
 $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
 if ($id <= 0) {
     exit('Service invalide.');

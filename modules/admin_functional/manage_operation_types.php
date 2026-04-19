@@ -7,10 +7,10 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'operation_types_manage_page');
-} else {
-    enforcePagePermission($pdo, 'operation_types_manage');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'manage_operation_types_page');
 }
 
 if (!tableExists($pdo, 'ref_operation_types')) {

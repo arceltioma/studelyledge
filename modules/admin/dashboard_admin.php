@@ -6,11 +6,8 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'admin_dashboard_page');
-} else {
-    enforcePagePermission($pdo, 'admin_dashboard_view');
-}
+studelyEnforceCurrentPageAccess($pdo);
+
 
 $totalUsers = tableExists($pdo, 'users') ? (int)$pdo->query("SELECT COUNT(*) FROM users")->fetchColumn() : 0;
 $totalRoles = tableExists($pdo, 'roles') ? (int)$pdo->query("SELECT COUNT(*) FROM roles")->fetchColumn() : 0;

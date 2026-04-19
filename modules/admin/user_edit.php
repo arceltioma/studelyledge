@@ -7,7 +7,7 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-enforcePagePermission($pdo, 'admin_users_manage');
+studelyEnforceCurrentPageAccess($pdo);
 
 if (!function_exists('aue_get_roles')) {
     function aue_get_roles(PDO $pdo): array

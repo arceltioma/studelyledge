@@ -6,7 +6,7 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-enforcePagePermission($pdo, 'operations_create');
+studelyEnforceCurrentPageAccess($pdo);
 
 $pageTitle = 'Comptes fonctionnels';
 $pageSubtitle = 'Lecture croisée des comptes 411, 512 et 706 avec recalcul des mouvements sur période.';

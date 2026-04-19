@@ -227,55 +227,71 @@ if (!function_exists('permissionCodeExists')) {
 if (!function_exists('currentUserCan')) {
     function currentUserCan(PDO $pdo, string $permissionCode): bool
     {
+        $permissionCode = trim($permissionCode);
+        if ($permissionCode === '') {
+            return false;
+        }
+
         if (session_status() === PHP_SESSION_NONE) {
             session_start();
         }
 
-        $user = currentUserRecord($pdo);
-        if (!$user) {
+        $userId = (int)($_SESSION['user_id'] ?? 0);
+        if ($userId <= 0) {
             return false;
         }
 
-        if (currentUserIsAdminLike($pdo)) {
+        $roleId = (int)($_SESSION['role_id'] ?? 0);
+
+        // Super admin total
+        if ($roleId === 1) {
             return true;
         }
 
-        if (
-            !tableExists($pdo, 'permissions') ||
-            !tableExists($pdo, 'role_permissions') ||
-            !tableExists($pdo, 'roles') ||
-            !columnExists($pdo, 'users', 'role_id')
-        ) {
-            return true;
-        }
-
-        if (!permissionCodeExists($pdo, $permissionCode)) {
-            return false;
-        }
-
-        $roleId = (int)($user['role_id'] ?? 0);
-        if ($roleId <= 0) {
+        if (!tableExists($pdo, 'permissions') || !tableExists($pdo, 'role_permissions')) {
             return false;
         }
 
         $stmt = $pdo->prepare("
-            SELECT COUNT(*)
+            SELECT 1
             FROM role_permissions rp
             INNER JOIN permissions p ON p.id = rp.permission_id
             WHERE rp.role_id = ?
               AND p.code = ?
+            LIMIT 1
         ");
         $stmt->execute([$roleId, $permissionCode]);
 
-        return (int)$stmt->fetchColumn() > 0;
+        return (bool)$stmt->fetchColumn();
     }
 }
+
 
 if (!function_exists('currentUserCanAny')) {
     function currentUserCanAny(PDO $pdo, array $permissionCodes): bool
     {
-        foreach ($permissionCodes as $code) {
-            if (is_string($code) && $code !== '' && currentUserCan($pdo, $code)) {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+
+        $userId = (int)($_SESSION['user_id'] ?? 0);
+        if ($userId <= 0) {
+            return false;
+        }
+
+        $roleId = (int)($_SESSION['role_id'] ?? 0);
+
+        // Super admin total
+        if ($roleId === 1) {
+            return true;
+        }
+
+        foreach ($permissionCodes as $permissionCode) {
+            if (!is_string($permissionCode)) {
+                continue;
+            }
+
+            if (currentUserCan($pdo, $permissionCode)) {
                 return true;
             }
         }
@@ -284,15 +300,32 @@ if (!function_exists('currentUserCanAny')) {
     }
 }
 
+
 if (!function_exists('currentUserCanAll')) {
     function currentUserCanAll(PDO $pdo, array $permissionCodes): bool
     {
-        foreach ($permissionCodes as $code) {
-            if (!is_string($code) || $code === '') {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+
+        $userId = (int)($_SESSION['user_id'] ?? 0);
+        if ($userId <= 0) {
+            return false;
+        }
+
+        $roleId = (int)($_SESSION['role_id'] ?? 0);
+
+        // Super admin total
+        if ($roleId === 1) {
+            return true;
+        }
+
+        foreach ($permissionCodes as $permissionCode) {
+            if (!is_string($permissionCode) || trim($permissionCode) === '') {
                 continue;
             }
 
-            if (!currentUserCan($pdo, $code)) {
+            if (!currentUserCan($pdo, $permissionCode)) {
                 return false;
             }
         }
@@ -382,45 +415,46 @@ if (!function_exists('studelyAccessMap')) {
 }
 
 if (!function_exists('studelyCanAccess')) {
-    function studelyCanAccess(PDO $pdo, string $accessKey): bool
+    function studelyCanAccess(PDO $pdo, string $permissionCode): bool
     {
-        $map = studelyAccessMap();
-        $codes = $map[$accessKey] ?? [];
-
-        if (!$codes) {
-            return false;
-        }
-
-        if (currentUserIsAdminLike($pdo)) {
-            return true;
-        }
-
-        return currentUserCanAny($pdo, $codes);
+        return currentUserCan($pdo, $permissionCode);
     }
 }
 
 if (!function_exists('studelyEnforceAccess')) {
-    function studelyEnforceAccess(PDO $pdo, string $accessKey, ?string $fallbackPermission = null): void
+    function studelyEnforceAccess(PDO $pdo, string $permissionCode, bool $redirect = false): void
     {
-        if (studelyCanAccess($pdo, $accessKey)) {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+
+        // 1. Vérifier login
+        if (!isset($_SESSION['user_id']) || (int)$_SESSION['user_id'] <= 0) {
+            header('Location: ' . (defined('APP_URL') ? APP_URL . 'login.php' : '/login.php'));
+            exit;
+        }
+
+        $roleId = (int)($_SESSION['role_id'] ?? 0);
+
+        // 2. Super admin bypass
+        if ($roleId === 1) {
             return;
         }
 
-        $map = studelyAccessMap();
-        $codes = $map[$accessKey] ?? [];
-        $fallback = $fallbackPermission ?: (($codes[0] ?? '') ?: 'dashboard_view');
+        // 3. Vérifier permission
+        if (!currentUserCan($pdo, $permissionCode)) {
 
-        if (!function_exists('enforcePagePermission')) {
-            if (!currentUserCan($pdo, $fallback)) {
-                http_response_code(403);
-                exit('Accès refusé : permission insuffisante pour cette page.');
+            if ($redirect) {
+                header('Location: ' . (defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php?error=access_denied' : '/'));
+                exit;
             }
-            return;
-        }
 
-        enforcePagePermission($pdo, $fallback);
+            http_response_code(403);
+            exit('Accès refusé : permission "' . htmlspecialchars($permissionCode) . '" requise.');
+        }
     }
 }
+
 
 if (!function_exists('studelyModulePermissions')) {
     function studelyModulePermissions(): array
@@ -539,50 +573,94 @@ if (!function_exists('logUserAction')) {
         PDO $pdo,
         int $userId,
         string $action,
-        ?string $module = null,
+        string $module,
         ?string $entityType = null,
-        $entityId = null,
+        ?int $entityId = null,
         ?string $details = null
-    ): void {
+    ): ?int {
+        if ($userId <= 0) {
+            return null;
+        }
+
+        $action = trim($action);
+        $module = trim($module);
+
+        if ($action === '' || $module === '') {
+            return null;
+        }
+
         if (!tableExists($pdo, 'user_logs')) {
-            return;
+            return null;
         }
 
         $columns = [];
         $values = [];
         $params = [];
 
-        $map = [
-            'user_id' => $userId,
-            'action' => $action,
-            'module' => $module,
-            'entity_type' => $entityType,
-            'entity_id' => $entityId,
-            'details' => $details,
+        $availableColumns = [
+            'user_id' => columnExists($pdo, 'user_logs', 'user_id'),
+            'action' => columnExists($pdo, 'user_logs', 'action'),
+            'module' => columnExists($pdo, 'user_logs', 'module'),
+            'entity_type' => columnExists($pdo, 'user_logs', 'entity_type'),
+            'entity_id' => columnExists($pdo, 'user_logs', 'entity_id'),
+            'details' => columnExists($pdo, 'user_logs', 'details'),
+            'created_at' => columnExists($pdo, 'user_logs', 'created_at'),
         ];
 
-        foreach ($map as $column => $value) {
-            if (columnExists($pdo, 'user_logs', $column)) {
-                $columns[] = $column;
-                $values[] = '?';
-                $params[] = $value;
-            }
+        if ($availableColumns['user_id']) {
+            $columns[] = 'user_id';
+            $values[] = '?';
+            $params[] = $userId;
         }
 
-        if (columnExists($pdo, 'user_logs', 'created_at')) {
+        if ($availableColumns['action']) {
+            $columns[] = 'action';
+            $values[] = '?';
+            $params[] = $action;
+        }
+
+        if ($availableColumns['module']) {
+            $columns[] = 'module';
+            $values[] = '?';
+            $params[] = $module;
+        }
+
+        if ($availableColumns['entity_type']) {
+            $columns[] = 'entity_type';
+            $values[] = '?';
+            $params[] = $entityType;
+        }
+
+        if ($availableColumns['entity_id']) {
+            $columns[] = 'entity_id';
+            $values[] = '?';
+            $params[] = $entityId;
+        }
+
+        if ($availableColumns['details']) {
+            $columns[] = 'details';
+            $values[] = '?';
+            $params[] = $details;
+        }
+
+        if ($availableColumns['created_at']) {
             $columns[] = 'created_at';
             $values[] = 'NOW()';
         }
 
         if (!$columns) {
-            return;
+            return null;
         }
 
-        $stmt = $pdo->prepare("
+        $sql = "
             INSERT INTO user_logs (" . implode(', ', $columns) . ")
             VALUES (" . implode(', ', $values) . ")
-        ");
+        ";
+
+        $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
+
+        return (int)$pdo->lastInsertId();
     }
 }
 
@@ -2278,64 +2356,117 @@ if (!function_exists('createNotification')) {
         string $type,
         string $message,
         string $level = 'info',
-        ?string $linkUrl = null,
+        ?string $link = null,
         ?string $entityType = null,
         ?int $entityId = null,
-        ?int $createdBy = null
-    ): void {
-        if (!tableExists($pdo, 'notifications')) {
-            return;
+        ?int $createdBy = null,
+        ?int $targetUserId = null
+    ): ?int {
+        $type = trim($type);
+        $message = trim($message);
+        $level = trim($level) !== '' ? trim($level) : 'info';
+
+        if ($type === '' || $message === '') {
+            return null;
         }
 
-        $allowedLevels = ['info', 'success', 'warning', 'danger'];
-        if (!in_array($level, $allowedLevels, true)) {
-            $level = 'info';
+        if (!tableExists($pdo, 'notifications')) {
+            return null;
         }
 
         $columns = [];
         $values = [];
         $params = [];
 
-        $map = [
-            'type' => $type,
-            'message' => $message,
-            'level' => $level,
-            'link_url' => $linkUrl,
-            'entity_type' => $entityType,
-            'entity_id' => $entityId,
-            'created_by' => $createdBy,
+        $availableColumns = [
+            'type' => columnExists($pdo, 'notifications', 'type'),
+            'message' => columnExists($pdo, 'notifications', 'message'),
+            'level' => columnExists($pdo, 'notifications', 'level'),
+            'link' => columnExists($pdo, 'notifications', 'link'),
+            'entity_type' => columnExists($pdo, 'notifications', 'entity_type'),
+            'entity_id' => columnExists($pdo, 'notifications', 'entity_id'),
+            'user_id' => columnExists($pdo, 'notifications', 'user_id'),
+            'created_by' => columnExists($pdo, 'notifications', 'created_by'),
+            'is_read' => columnExists($pdo, 'notifications', 'is_read'),
+            'created_at' => columnExists($pdo, 'notifications', 'created_at'),
         ];
 
-        foreach ($map as $column => $value) {
-            if (columnExists($pdo, 'notifications', $column)) {
-                $columns[] = $column;
-                $values[] = '?';
-                $params[] = $value;
-            }
+        if ($availableColumns['type']) {
+            $columns[] = 'type';
+            $values[] = '?';
+            $params[] = $type;
         }
 
-        if (columnExists($pdo, 'notifications', 'is_read')) {
+        if ($availableColumns['message']) {
+            $columns[] = 'message';
+            $values[] = '?';
+            $params[] = $message;
+        }
+
+        if ($availableColumns['level']) {
+            $columns[] = 'level';
+            $values[] = '?';
+            $params[] = $level;
+        }
+
+        if ($availableColumns['link']) {
+            $columns[] = 'link';
+            $values[] = '?';
+            $params[] = $link;
+        }
+
+        if ($availableColumns['entity_type']) {
+            $columns[] = 'entity_type';
+            $values[] = '?';
+            $params[] = $entityType;
+        }
+
+        if ($availableColumns['entity_id']) {
+            $columns[] = 'entity_id';
+            $values[] = '?';
+            $params[] = $entityId;
+        }
+
+        if ($availableColumns['user_id']) {
+            $columns[] = 'user_id';
+            $values[] = '?';
+            $params[] = $targetUserId;
+        }
+
+        if ($availableColumns['created_by']) {
+            $columns[] = 'created_by';
+            $values[] = '?';
+            $params[] = $createdBy;
+        }
+
+        if ($availableColumns['is_read']) {
             $columns[] = 'is_read';
             $values[] = '?';
             $params[] = 0;
         }
 
-        if (columnExists($pdo, 'notifications', 'created_at')) {
+        if ($availableColumns['created_at']) {
             $columns[] = 'created_at';
             $values[] = 'NOW()';
         }
 
         if (!$columns) {
-            return;
+            return null;
         }
 
-        $stmt = $pdo->prepare("
+        $sql = "
             INSERT INTO notifications (" . implode(', ', $columns) . ")
             VALUES (" . implode(', ', $values) . ")
-        ");
+        ";
+
+        $stmt = $pdo->prepare($sql);
         $stmt->execute($params);
+
+        return (int)$pdo->lastInsertId();
     }
 }
+
+
 
 if (!function_exists('getUnreadNotifications')) {
     function getUnreadNotifications(PDO $pdo, int $limit = 8): array
@@ -8414,3 +8545,463 @@ if (!function_exists('sl_assert_client_operation_allowed')) {
         }
     }
 }
+if (!function_exists('studely_defined_permissions')) {
+    function studely_defined_permissions(): array
+    {
+        return [
+            'dashboard_view_page' => 'Accès au dashboard principal',
+            'analytics_view_page' => 'Accès aux analyses et tableaux de bord avancés',
+            'global_search_view_page' => 'Accès à la recherche globale',
+
+            'clients_view_page' => 'Accès à la liste des clients',
+            'client_view_page' => 'Accès à la fiche client',
+            'client_create_page' => 'Accès à la création client',
+            'client_edit_page' => 'Accès à la modification client',
+            'clients_archive_page' => 'Accès à l’archivage / réactivation client',
+            'clients_delete_page' => 'Accès à la suppression client',
+            'client_accounts_view_page' => 'Accès à la liste des comptes clients 411',
+            'client_timeline_view_page' => 'Accès à la timeline client',
+            'clients_import_page' => 'Accès à l’import des clients',
+
+            'clients_create' => 'Créer un client',
+            'clients_edit' => 'Modifier un client',
+            'clients_archive' => 'Archiver / réactiver un client',
+            'clients_delete' => 'Supprimer un client',
+            'clients_import' => 'Importer des clients',
+
+            'operations_view_page' => 'Accès à la liste des opérations',
+            'operation_view_page' => 'Accès au détail d’une opération',
+            'operation_create_page' => 'Accès à la création d’une opération',
+            'operation_edit_page' => 'Accès à la modification d’une opération',
+            'operation_delete_page' => 'Accès à la suppression d’une opération',
+            'manual_actions_create_page' => 'Accès aux actions manuelles',
+            'operations_monthly_run_page' => 'Accès au lancement des opérations mensuelles clients',
+
+            'operations_view' => 'Consulter les opérations',
+            'operations_create' => 'Créer une opération',
+            'operations_edit' => 'Modifier une opération',
+            'operations_delete' => 'Supprimer une opération',
+            'manual_actions_create' => 'Créer une action manuelle',
+            'operations_monthly_run' => 'Lancer un traitement mensuel des opérations',
+
+            'imports_upload_page' => 'Accès à l’upload d’import',
+            'imports_preview_page' => 'Accès à la prévisualisation d’import',
+            'imports_validate_page' => 'Accès à la validation d’import',
+            'imports_validate_batch_page' => 'Accès à la validation d’un batch import',
+            'imports_journal_page' => 'Accès au journal des imports',
+            'imports_mapping_page' => 'Accès au mapping des imports',
+            'imports_rejected_rows_page' => 'Accès aux lignes rejetées',
+            'imports_correct_rejected_row_page' => 'Accès à la correction d’une ligne rejetée',
+
+            'imports_create' => 'Créer / charger un import',
+            'imports_preview' => 'Prévisualiser un import',
+            'imports_validate' => 'Valider un import',
+            'imports_validate_batch' => 'Valider un batch import',
+            'imports_mapping_manage' => 'Gérer le mapping des imports',
+            'imports_correct_rejected_rows' => 'Corriger les lignes rejetées',
+
+            'monthly_runs_list_page' => 'Accès à la liste des runs mensuels',
+            'monthly_run_view_page' => 'Accès au détail d’un run mensuel',
+            'monthly_run_execute_page' => 'Accès à l’exécution d’un run mensuel',
+            'monthly_run_cancel_page' => 'Accès à l’annulation d’un run mensuel',
+            'monthly_payments_import_page' => 'Accès à l’import des mensualités',
+            'monthly_payments_preview_page' => 'Accès à la prévisualisation des mensualités',
+            'monthly_payments_validate_page' => 'Accès à la validation des mensualités',
+
+            'monthly_runs_view' => 'Consulter les runs mensuels',
+            'monthly_run_execute' => 'Exécuter un run mensuel',
+            'monthly_run_cancel' => 'Annuler un run mensuel',
+            'monthly_payments_import' => 'Importer des mensualités',
+            'monthly_payments_validate' => 'Valider des mensualités',
+
+            'pending_debits_view_page' => 'Accès à la liste des débits dus',
+            'pending_debit_view_page' => 'Accès au détail d’un débit dû',
+            'pending_debit_edit_page' => 'Accès à la modification d’un débit dû',
+            'pending_debit_execute_page' => 'Accès à l’exécution d’un débit dû',
+            'pending_debit_cancel_page' => 'Accès à l’annulation d’un débit dû',
+
+            'pending_debits_view' => 'Consulter les débits dus',
+            'pending_debits_edit' => 'Modifier un débit dû',
+            'pending_debits_execute' => 'Exécuter un débit dû',
+            'pending_debits_cancel' => 'Annuler un débit dû',
+
+            'treasury_view_page' => 'Accès à la liste des comptes de trésorerie',
+            'treasury_create_page' => 'Accès à la création d’un compte 512',
+            'treasury_edit_page' => 'Accès à la modification d’un compte 512',
+            'treasury_view_detail_page' => 'Accès à la fiche d’un compte 512',
+            'treasury_archive_page' => 'Accès à l’archivage / réactivation d’un compte 512',
+            'treasury_import_page' => 'Accès à l’import des comptes 512',
+            'bank_accounts_view_page' => 'Accès à la vue des comptes bancaires',
+            'treasury_service_accounts_page' => 'Accès au lien trésorerie / comptes service',
+
+            'treasury_view' => 'Consulter les comptes 512',
+            'treasury_create' => 'Créer un compte 512',
+            'treasury_edit' => 'Modifier un compte 512',
+            'treasury_archive' => 'Archiver / réactiver un compte 512',
+            'treasury_import' => 'Importer des comptes 512',
+
+            'service_accounts_manage_page' => 'Accès à la gestion des comptes de service 706',
+            'service_accounts_create_page' => 'Accès à la création d’un compte 706',
+            'service_accounts_edit_page' => 'Accès à la modification d’un compte 706',
+            'service_accounts_view_page' => 'Accès à la fiche d’un compte 706',
+            'service_accounts_archive_page' => 'Accès à l’archivage d’un compte 706',
+            'service_accounts_import_page' => 'Accès à l’import des comptes 706',
+
+            'service_accounts_create' => 'Créer un compte 706',
+            'service_accounts_edit' => 'Modifier un compte 706',
+            'service_accounts_archive' => 'Archiver un compte 706',
+            'service_accounts_import' => 'Importer des comptes 706',
+
+            'statements_view_page' => 'Accès au module des relevés',
+            'account_statements_view_page' => 'Accès aux relevés de comptes',
+            'client_statement_view_page' => 'Accès au relevé client',
+            'client_profiles_view_page' => 'Accès aux profils clients',
+            'bulk_statement_export_page' => 'Accès à l’export groupé de relevés',
+            'generate_statement_pdf_page' => 'Accès à la génération PDF de relevé',
+            'generate_bulk_pdf_page' => 'Accès à la génération PDF en masse',
+
+            'statements_view' => 'Consulter les relevés',
+            'statements_export' => 'Exporter les relevés',
+            'client_profiles_export' => 'Exporter les profils clients',
+            'bulk_statement_export' => 'Exporter des relevés en masse',
+
+            'notifications_view_page' => 'Accès aux notifications',
+            'notifications_view' => 'Consulter les notifications',
+            'support_requests_view_page' => 'Accès aux demandes support',
+            'support_request_create_page' => 'Accès à la création d’une demande support',
+            'support_manage_page' => 'Accès à la gestion des demandes support',
+            'support_request_create' => 'Créer une demande support',
+            'support_manage' => 'Gérer les demandes support',
+
+            'admin_functional_dashboard_view_page' => 'Accès au dashboard fonctionnel',
+            'manage_services_page' => 'Accès à la gestion des services',
+            'edit_service_page' => 'Accès à la modification d’un service',
+            'delete_service_page' => 'Accès à la suppression d’un service',
+            'manage_operation_types_page' => 'Accès à la gestion des types d’opérations',
+            'edit_operation_type_page' => 'Accès à la modification d’un type d’opération',
+            'delete_operation_type_page' => 'Accès à la suppression d’un type d’opération',
+            'manage_accounts_page' => 'Accès à la gestion fonctionnelle des comptes',
+            'manage_accounting_rules_page' => 'Accès à la gestion des règles comptables',
+            'accounting_rule_create_page' => 'Accès à la création d’une règle comptable',
+            'accounting_rule_edit_page' => 'Accès à la modification d’une règle comptable',
+            'accounting_rule_delete_page' => 'Accès à la suppression d’une règle comptable',
+            'accounting_rule_view_page' => 'Accès à la fiche d’une règle comptable',
+            'accounting_balance_audit_page' => 'Accès à l’audit des équilibres comptables',
+            'catalogs_manage_page' => 'Accès à la gestion des catalogues',
+
+            'services_manage' => 'Gérer les services',
+            'services_edit' => 'Modifier un service',
+            'services_delete' => 'Supprimer un service',
+            'operation_types_manage' => 'Gérer les types d’opérations',
+            'operation_types_edit' => 'Modifier un type d’opération',
+            'operation_types_delete' => 'Supprimer un type d’opération',
+            'accounts_manage' => 'Gérer les comptes fonctionnels',
+            'accounting_rules_manage' => 'Gérer les règles comptables',
+            'accounting_rules_create' => 'Créer une règle comptable',
+            'accounting_rules_edit' => 'Modifier une règle comptable',
+            'accounting_rules_delete' => 'Supprimer une règle comptable',
+            'accounting_balance_audit_view' => 'Consulter l’audit comptable',
+            'catalogs_manage' => 'Gérer les catalogues',
+
+            'admin_dashboard_view_page' => 'Accès au dashboard administration',
+            'admin_users_manage_page' => 'Accès à la gestion des utilisateurs',
+            'user_create_page' => 'Accès à la création d’un utilisateur',
+            'user_edit_page' => 'Accès à la modification d’un utilisateur',
+            'user_delete_page' => 'Accès à la suppression d’un utilisateur',
+            'admin_roles_manage_page' => 'Accès à la gestion des rôles',
+            'roles_view_page' => 'Accès à la liste des rôles',
+            'access_matrix_manage_page' => 'Accès à la matrice des accès',
+            'user_logs_view_page' => 'Accès aux logs utilisateurs',
+            'audit_logs_view_page' => 'Accès à l’audit détaillé',
+            'intelligence_center_view_page' => 'Accès au centre d’intelligence',
+            'settings_manage_page' => 'Accès aux paramètres',
+            'statuses_manage_page' => 'Accès à la gestion des statuts',
+            'categories_manage_page' => 'Accès à la gestion des catégories',
+
+            'admin_users_manage' => 'Gérer les utilisateurs',
+            'users_create' => 'Créer un utilisateur',
+            'users_edit' => 'Modifier un utilisateur',
+            'users_delete' => 'Supprimer un utilisateur',
+            'admin_roles_manage' => 'Gérer les rôles',
+            'roles_view' => 'Consulter les rôles',
+            'access_matrix_manage' => 'Gérer la matrice des accès',
+            'user_logs_view' => 'Consulter les logs utilisateurs',
+            'audit_logs_view' => 'Consulter l’audit détaillé',
+            'intelligence_center_view' => 'Consulter le centre d’intelligence',
+            'settings_manage' => 'Gérer les paramètres',
+            'statuses_manage' => 'Gérer les statuts',
+            'categories_manage' => 'Gérer les catégories',
+        ];
+    }
+}
+if (!function_exists('studely_seed_permissions')) {
+    function studely_seed_permissions(PDO $pdo, bool $updateLabels = true): array
+    {
+        $catalog = studely_defined_permissions();
+
+        if (!$catalog) {
+            return [
+                'inserted' => 0,
+                'updated' => 0,
+                'total' => 0,
+            ];
+        }
+
+        $inserted = 0;
+        $updated = 0;
+
+        $stmtSelect = $pdo->prepare("SELECT id, label FROM permissions WHERE code = ? LIMIT 1");
+        $stmtInsert = $pdo->prepare("
+            INSERT INTO permissions (code, label, created_at)
+            VALUES (?, ?, NOW())
+        ");
+        $stmtUpdate = $pdo->prepare("
+            UPDATE permissions
+            SET label = ?
+            WHERE id = ?
+        ");
+
+        foreach ($catalog as $code => $label) {
+            $stmtSelect->execute([$code]);
+            $existing = $stmtSelect->fetch(PDO::FETCH_ASSOC);
+
+            if (!$existing) {
+                $stmtInsert->execute([$code, $label]);
+                $inserted++;
+                continue;
+            }
+
+            if ($updateLabels && (string)($existing['label'] ?? '') !== $label) {
+                $stmtUpdate->execute([$label, (int)$existing['id']]);
+                $updated++;
+            }
+        }
+
+        return [
+            'inserted' => $inserted,
+            'updated' => $updated,
+            'total' => count($catalog),
+        ];
+    }
+}
+if (!function_exists('sl_audit_and_notify_action')) {
+    function sl_audit_and_notify_action(
+        PDO $pdo,
+        int $userId,
+        string $action,
+        string $module,
+        ?string $entityType = null,
+        ?int $entityId = null,
+        $details = null,
+        ?string $notificationType = null,
+        ?string $notificationMessage = null,
+        ?string $notificationLevel = null,
+        ?string $notificationLink = null,
+        ?int $targetUserId = null,
+        bool $forceNotify = false
+    ): void {
+        if ($userId <= 0) {
+            return;
+        }
+
+        if (is_array($details)) {
+            $details = json_encode($details, JSON_UNESCAPED_UNICODE);
+        } elseif ($details !== null) {
+            $details = (string)$details;
+        }
+
+        if (function_exists('logUserAction')) {
+            logUserAction(
+                $pdo,
+                $userId,
+                $action,
+                $module,
+                $entityType,
+                $entityId,
+                $details
+            );
+        }
+
+        $shouldNotify = $forceNotify || sl_is_write_action($action);
+
+        if (!$shouldNotify) {
+            return;
+        }
+
+        $notificationType = $notificationType !== null && trim($notificationType) !== ''
+            ? trim($notificationType)
+            : sl_default_notification_type_for_action($action);
+
+        $notificationMessage = $notificationMessage !== null && trim($notificationMessage) !== ''
+            ? trim($notificationMessage)
+            : sl_default_notification_message($action, $module, $entityType, $entityId);
+
+        $notificationLevel = $notificationLevel !== null && trim($notificationLevel) !== ''
+            ? trim($notificationLevel)
+            : sl_default_notification_level_for_action($action);
+
+        if (function_exists('createNotification')) {
+            createNotification(
+                $pdo,
+                $notificationType,
+                $notificationMessage,
+                $notificationLevel,
+                $notificationLink,
+                $entityType,
+                $entityId,
+                $userId,
+                $targetUserId
+            );
+        }
+    }
+}
+
+if (!function_exists('sl_is_write_action')) {
+    function sl_is_write_action(string $action): bool
+    {
+        $action = strtolower(trim($action));
+
+        if ($action === '') {
+            return false;
+        }
+
+        $readPrefixes = [
+            'view',
+            'read',
+            'list',
+            'search',
+            'preview',
+            'open',
+            'display',
+            'show',
+            'consult',
+        ];
+
+        foreach ($readPrefixes as $prefix) {
+            if ($action === $prefix || str_starts_with($action, $prefix . '_')) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+}
+if (!function_exists('sl_default_notification_level_for_action')) {
+    function sl_default_notification_level_for_action(string $action): string
+    {
+        $action = strtolower(trim($action));
+
+        if (
+            str_contains($action, 'delete')
+            || str_contains($action, 'remove')
+            || str_contains($action, 'archive')
+            || str_contains($action, 'cancel')
+            || str_contains($action, 'reject')
+        ) {
+            return 'warning';
+        }
+
+        if (
+            str_contains($action, 'error')
+            || str_contains($action, 'fail')
+            || str_contains($action, 'forbidden')
+        ) {
+            return 'danger';
+        }
+
+        if (
+            str_contains($action, 'create')
+            || str_contains($action, 'import')
+            || str_contains($action, 'execute')
+            || str_contains($action, 'validate')
+            || str_contains($action, 'approve')
+            || str_contains($action, 'restore')
+        ) {
+            return 'success';
+        }
+
+        return 'info';
+    }
+}
+if (!function_exists('sl_default_notification_type_for_action')) {
+    function sl_default_notification_type_for_action(string $action): string
+    {
+        $action = trim($action);
+        if ($action === '') {
+            return 'system_action';
+        }
+
+        return $action;
+    }
+}
+if (!function_exists('sl_default_notification_message')) {
+    function sl_default_notification_message(
+        string $action,
+        string $module,
+        ?string $entityType = null,
+        ?int $entityId = null
+    ): string {
+        $action = trim($action);
+        $module = trim($module);
+        $entityType = trim((string)$entityType);
+
+        $parts = [];
+
+        if ($action !== '') {
+            $parts[] = 'Action : ' . $action;
+        }
+
+        if ($module !== '') {
+            $parts[] = 'Module : ' . $module;
+        }
+
+        if ($entityType !== '') {
+            $parts[] = 'Entité : ' . $entityType;
+        }
+
+        if ($entityId !== null && $entityId > 0) {
+            $parts[] = 'ID : ' . $entityId;
+        }
+
+        return implode(' | ', $parts);
+    }
+}
+if (!function_exists('sl_audit_action_from_result')) {
+    function sl_audit_action_from_result(
+        PDO $pdo,
+        string $action,
+        string $module,
+        ?string $entityType,
+        ?int $entityId,
+        array $context = [],
+        ?string $link = null,
+        ?int $targetUserId = null,
+        bool $forceNotify = false
+    ): void {
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+
+        $userId = (int)($_SESSION['user_id'] ?? 0);
+        if ($userId <= 0) {
+            return;
+        }
+
+        sl_audit_and_notify_action(
+            $pdo,
+            $userId,
+            $action,
+            $module,
+            $entityType,
+            $entityId,
+            $context,
+            null,
+            null,
+            null,
+            $link,
+            $targetUserId,
+            $forceNotify
+        );
+    }
+}
+

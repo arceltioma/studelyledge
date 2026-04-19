@@ -6,11 +6,7 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'dashboard_view_page');
-} else {
-    enforcePagePermission($pdo, 'dashboard_view');
-}
+studelyEnforceCurrentPageAccess($pdo);
 
 $filters = [
     'period_start' => trim((string)($_GET['period_start'] ?? date('Y-m-01'))),

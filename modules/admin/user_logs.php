@@ -6,11 +6,7 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'user_logs_view_page');
-} else {
-    enforcePagePermission($pdo, 'user_logs_view');
-}
+studelyEnforceCurrentPageAccess($pdo);
 
 if (!function_exists('userLogsBadgeClass')) {
     function userLogsBadgeClass(string $value): string

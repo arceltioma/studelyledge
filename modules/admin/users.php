@@ -6,7 +6,7 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-enforcePagePermission($pdo, 'admin_users_manage');
+studelyEnforceCurrentPageAccess($pdo);
 
 if (!function_exists('au_like')) {
     function au_like(string $value): string

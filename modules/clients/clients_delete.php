@@ -7,10 +7,10 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'clients_delete_page');
-} else {
-    enforcePagePermission($pdo, 'clients_delete');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'clients_delete_page');
 }
 
 $clientId = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
