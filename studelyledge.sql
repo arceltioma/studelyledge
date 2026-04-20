@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Hôte : 127.0.0.1
--- Généré le : mar. 14 avr. 2026 à 11:55
+-- Généré le : lun. 20 avr. 2026 à 12:12
 -- Version du serveur : 10.4.32-MariaDB
 -- Version de PHP : 8.2.12
 
@@ -153,8 +153,8 @@ INSERT INTO `bank_accounts` (`id`, `account_name`, `account_number`, `bank_name`
 (6, 'Compte client CLT0006', '411CLT0006', 'Compte client interne', 'Espagne', NULL, NULL, 0.00, 282210.00, 1, '2026-03-29 00:19:28', '2026-04-13 23:29:36'),
 (7, 'Compte client 870041597 - Nathael TIOMA', '411870041597', 'Compte client interne', 'Cameroun', NULL, NULL, 50000.00, 49590.00, 1, '2026-04-06 22:04:23', '2026-04-13 23:29:36'),
 (8, 'Compte client 983200894 - Arcel TIOMA', '411983200894', 'Compte client interne', 'Cameroun', NULL, NULL, 90000.00, 89680.00, 1, '2026-04-07 00:23:28', '2026-04-13 23:29:36'),
-(9, 'Compte client CLT058180 - Marc Tchatchouang', '411CLT058180', 'Compte client interne', 'Côte d\'Ivoire', NULL, NULL, 80000.00, 79690.00, 1, '2026-04-10 23:36:16', '2026-04-13 23:29:36'),
-(10, 'Compte client 337819647 - Lenny TIOMA', '411337819647', 'Compte client interne', 'Burkina Faso', NULL, NULL, 60000.00, 59750.00, 1, '2026-04-10 23:38:36', '2026-04-13 23:29:36'),
+(9, 'Compte client CLT058180 - Marc Tchatchouang', '411CLT058180', 'Compte client interne', 'Côte d\'Ivoire', NULL, NULL, 80000.00, 80000.00, 1, '2026-04-10 23:36:16', '2026-04-13 23:29:36'),
+(10, 'Compte client 337819647 - Lenny TIOMA', '411337819647', 'Compte client interne', 'Burkina Faso', NULL, NULL, 60000.00, 0.00, 1, '2026-04-10 23:38:36', '2026-04-13 23:29:36'),
 (11, 'Compte client 294030444 - Lysiah TIOMA', '411294030444', 'Compte client interne', 'Cameroun', NULL, NULL, 300.00, 49300.00, 1, '2026-04-13 18:53:36', '2026-04-13 23:29:36'),
 (12, 'Compte client 656519872 - Yonah TIOMA', '411656519872', 'Compte client interne', 'Algérie', NULL, NULL, 500.00, 0.00, 1, '2026-04-13 21:42:38', '2026-04-13 23:29:36');
 
@@ -218,26 +218,30 @@ CREATE TABLE `clients` (
   `monthly_last_generated_at` datetime DEFAULT NULL,
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  `updated_at` datetime DEFAULT NULL
+  `updated_at` datetime DEFAULT NULL,
+  `archived_balance_amount` decimal(15,2) DEFAULT NULL,
+  `archived_balance_512_account_id` int(11) DEFAULT NULL,
+  `archived_balance_512_account_code` varchar(50) DEFAULT NULL,
+  `archived_balance_transferred_at` datetime DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Déchargement des données de la table `clients`
 --
 
-INSERT INTO `clients` (`id`, `client_code`, `first_name`, `last_name`, `full_name`, `email`, `phone`, `postal_address`, `passport_number`, `passport_issue_country`, `passport_issue_date`, `passport_expiry_date`, `country_origin`, `country_destination`, `country_commercial`, `client_type`, `client_status`, `status_id`, `category_id`, `currency`, `generated_client_account`, `initial_treasury_account_id`, `monthly_amount`, `monthly_treasury_account_id`, `monthly_day`, `monthly_enabled`, `monthly_last_generated_at`, `is_active`, `created_at`, `updated_at`) VALUES
-(1, 'CLT0001', 'Aminata', 'Diallo', 'Aminata Diallo', 'aminata.diallo@test.local', '+221700000001', NULL, NULL, NULL, NULL, NULL, 'Sénégal', 'France', 'Sénégal', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT0001', 1, 120.00, 19, 13, 1, '2026-04-13 18:47:39', 1, '2026-03-29 00:19:28', '2026-04-13 18:47:39'),
-(2, 'CLT0002', 'Moussa', 'Traore', 'Moussa Traore', 'moussa.traore@test.local', '+223700000002', NULL, NULL, NULL, NULL, NULL, 'Mali', 'France', 'France', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT0002', 2, 210.00, 6, 13, 1, '2026-04-13 18:47:39', 1, '2026-03-29 00:19:28', '2026-04-13 18:47:39'),
-(3, 'CLT0003', 'Sarah', 'Nguessan', 'Sarah Nguessan', 'sarah.nguessan@test.local', '+225700000003', NULL, NULL, NULL, NULL, NULL, 'Côte d’Ivoire', 'Belgique', 'Belgique', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT0003', 10, 120.00, 18, 13, 1, '2026-04-13 18:47:39', 1, '2026-03-29 00:19:28', '2026-04-13 18:47:39'),
-(4, 'CLT0004', 'Kevin', 'Mba', 'Kevin Mba', 'kevin.mba@test.local', '+237700000004', NULL, NULL, NULL, NULL, NULL, 'Cameroun', 'Autres destinations', 'Cameroun', 'Particulier', 'Actif', NULL, NULL, 'XAF', '411CLT0004', 12, 110.00, 27, 13, 1, '2026-04-13 18:47:39', 1, '2026-03-29 00:19:28', '2026-04-13 18:47:39'),
-(5, 'CLT0005', 'Grace', 'Ekué', 'Grace Ekué', 'grace.ekue@test.local', '+228700000005', NULL, NULL, NULL, NULL, NULL, 'Togo', 'France', 'Togo', 'Entreprise', 'Actif', NULL, NULL, 'XOF', '411CLT0005', 48, 210.00, 51, 13, 1, '2026-04-13 18:47:40', 1, '2026-03-29 00:19:28', '2026-04-13 18:47:40'),
-(6, 'CLT0006', 'Nadia', 'Benali', 'Nadia Benali', 'nadia.benali@test.local', '+213700000006', NULL, NULL, NULL, NULL, NULL, 'Algérie', 'Espagne', 'Algérie', 'Partenaire', 'Actif', NULL, NULL, 'DZD', '411CLT0006', 50, 140.00, 55, 13, 1, '2026-04-13 18:47:40', 1, '2026-03-29 00:19:28', '2026-04-13 18:47:40'),
-(7, '983200894', 'Arcel', 'TIOMA', 'Arcel TIOMA', 'Arc.tioma@gmail.com', '+33673910669', '51 rue du westhoek 59760 Grande-Synthe, France', '1545df456124fs456', 'France', '2015-01-01', '2039-01-01', 'Cameroun', 'France', 'Cameroun', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411983200894', 21, 120.00, 52, 13, 1, '2026-04-13 18:47:39', 1, '2026-04-06 00:48:25', '2026-04-13 18:47:39'),
-(8, '870041597', 'Nathael', 'TIOMA', 'Nathael TIOMA', 'nathaeltioma@gmail.com', '+33612542632', '51 rue de làbas, 84521 Ville, France', '45475fgsrg421segf46', 'France', '2017-11-29', '2039-10-31', 'Algérie', 'France', 'Cameroun', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411870041597', 50, 210.00, 43, 13, 1, '2026-04-13 18:47:39', 1, '2026-04-06 22:04:23', '2026-04-13 18:47:39'),
-(9, 'CLT058180', 'Marc', 'Tchatchouang', 'Marc Tchatchouang', 'Arcel.tioma@gmail.com', '+33612542632', 'sqhgjyjzjyhrtgerger', 'thgrthyjytjryj', 'Côte d’Ivoire', '2026-04-10', '2031-08-21', 'Côte d’Ivoire', 'Allemagne', 'Côte d\'Ivoire', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT058180', NULL, 160.00, 50, 13, 1, '2026-04-13 18:47:40', 1, '2026-04-10 23:36:16', '2026-04-13 18:47:40'),
-(10, '337819647', 'Lenny', 'TIOMA', 'Lenny TIOMA', 'Arcel.tioma@gmail.com', '+33612542632', 'fhekgqrjghjerohgkjlbgjksdffkhrjg', 'ghujksrt45425gbhjsd545', 'Burkina Faso', '2026-04-10', '2030-02-14', 'Burkina Faso', 'Espagne', 'Burkina Faso', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411337819647', NULL, 150.00, 42, 13, 1, '2026-04-13 18:47:39', 1, '2026-04-10 23:38:36', '2026-04-13 18:47:39'),
-(11, '294030444', 'Lysiah', 'TIOMA', 'Lysiah TIOMA', 'Arc.tioma@gmail.com', '+33612542633', '12 rue de l\'étage droite 59760 GSY', '1215645UHDGHHD', 'Cameroun', '2026-04-13', '2028-01-13', 'Cameroun', 'Italie', 'Cameroun', 'Etudiant', NULL, NULL, NULL, 'EUR', '411294030444', 12, 200.00, 12, 26, 1, NULL, 1, '2026-04-13 18:53:36', '2026-04-13 19:07:03'),
-(12, '656519872', 'Yonah', 'TIOMA', 'Yonah TIOMA', 'arc.tioma@gmail.com', '+33612542633', '51 rue de la courte échelle, 59760 GSY', '1455465653245453', 'Algérie', '2026-04-13', '2029-04-05', 'Algérie', 'Belgique', 'Algérie', 'Etudiant', NULL, NULL, NULL, 'EUR', '411656519872', NULL, 450.00, NULL, 26, 1, NULL, 1, '2026-04-13 21:42:38', '2026-04-13 21:42:38');
+INSERT INTO `clients` (`id`, `client_code`, `first_name`, `last_name`, `full_name`, `email`, `phone`, `postal_address`, `passport_number`, `passport_issue_country`, `passport_issue_date`, `passport_expiry_date`, `country_origin`, `country_destination`, `country_commercial`, `client_type`, `client_status`, `status_id`, `category_id`, `currency`, `generated_client_account`, `initial_treasury_account_id`, `monthly_amount`, `monthly_treasury_account_id`, `monthly_day`, `monthly_enabled`, `monthly_last_generated_at`, `is_active`, `created_at`, `updated_at`, `archived_balance_amount`, `archived_balance_512_account_id`, `archived_balance_512_account_code`, `archived_balance_transferred_at`) VALUES
+(1, 'CLT0001', 'Aminata', 'Diallo', 'Aminata Diallo', 'aminata.diallo@test.local', '+221700000001', NULL, NULL, NULL, NULL, NULL, 'Sénégal', 'France', 'Sénégal', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT0001', 1, 120.00, 19, 13, 1, '2026-04-13 18:47:39', 1, '2026-03-29 00:19:28', '2026-04-13 18:47:39', NULL, NULL, NULL, NULL),
+(2, 'CLT0002', 'Moussa', 'Traore', 'Moussa Traore', 'moussa.traore@test.local', '+223700000002', NULL, NULL, NULL, NULL, NULL, 'Mali', 'France', 'France', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT0002', 2, 210.00, 6, 13, 1, '2026-04-13 18:47:39', 1, '2026-03-29 00:19:28', '2026-04-17 21:35:35', NULL, NULL, NULL, NULL),
+(3, 'CLT0003', 'Sarah', 'Nguessan', 'Sarah Nguessan', 'sarah.nguessan@test.local', '+225700000003', NULL, NULL, NULL, NULL, NULL, 'Côte d’Ivoire', 'Belgique', 'Belgique', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT0003', 10, 120.00, 18, 13, 1, '2026-04-13 18:47:39', 1, '2026-03-29 00:19:28', '2026-04-17 17:37:26', NULL, NULL, NULL, NULL),
+(4, 'CLT0004', 'Kevin', 'Mba', 'Kevin Mba', 'kevin.mba@test.local', '+237700000004', NULL, NULL, NULL, NULL, NULL, 'Cameroun', 'Autres destinations', 'Cameroun', 'Particulier', 'Actif', NULL, NULL, 'XAF', '411CLT0004', 12, 110.00, 27, 13, 1, '2026-04-13 18:47:39', 1, '2026-03-29 00:19:28', '2026-04-17 17:37:08', NULL, NULL, NULL, NULL),
+(5, 'CLT0005', 'Grace', 'Ekué', 'Grace Ekué', 'grace.ekue@test.local', '+228700000005', NULL, NULL, NULL, NULL, NULL, 'Togo', 'France', 'Togo', 'Entreprise', 'Actif', NULL, NULL, 'XOF', '411CLT0005', 48, 210.00, 51, 13, 1, '2026-04-13 18:47:40', 1, '2026-03-29 00:19:28', '2026-04-13 18:47:40', NULL, NULL, NULL, NULL),
+(6, 'CLT0006', 'Nadia', 'Benali', 'Nadia Benali', 'nadia.benali@test.local', '+213700000006', NULL, NULL, NULL, NULL, NULL, 'Algérie', 'Espagne', 'Algérie', 'Partenaire', 'Actif', NULL, NULL, 'DZD', '411CLT0006', 50, 140.00, 55, 13, 1, '2026-04-13 18:47:40', 1, '2026-03-29 00:19:28', '2026-04-13 18:47:40', NULL, NULL, NULL, NULL),
+(7, '983200894', 'Arcel', 'TIOMA', 'Arcel TIOMA', 'Arc.tioma@gmail.com', '+33673910669', '51 rue du westhoek 59760 Grande-Synthe, France', '1545df456124fs456', 'France', '2015-01-01', '2039-01-01', 'Cameroun', 'France', 'Cameroun', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411983200894', 21, 120.00, 52, 13, 1, '2026-04-13 18:47:39', 1, '2026-04-06 00:48:25', '2026-04-13 18:47:39', NULL, NULL, NULL, NULL),
+(8, '870041597', 'Nathael', 'TIOMA', 'Nathael TIOMA', 'nathaeltioma@gmail.com', '+33612542632', '51 rue de làbas, 84521 Ville, France', '45475fgsrg421segf46', 'France', '2017-11-29', '2039-10-31', 'Algérie', 'France', 'Cameroun', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411870041597', 50, 210.00, 43, 13, 1, '2026-04-13 18:47:39', 1, '2026-04-06 22:04:23', '2026-04-13 18:47:39', NULL, NULL, NULL, NULL),
+(9, 'CLT058180', 'Marc', 'Tchatchouang', 'Marc Tchatchouang', 'Arcel.tioma@gmail.com', '+33612542632', 'sqhgjyjzjyhrtgerger', 'thgrthyjytjryj', 'Côte d’Ivoire', '2026-04-10', '2031-08-21', 'Côte d’Ivoire', 'Allemagne', 'Côte d\'Ivoire', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411CLT058180', NULL, 160.00, 50, 13, 1, '2026-04-13 18:47:40', 1, '2026-04-10 23:36:16', '2026-04-17 20:05:49', NULL, NULL, NULL, NULL),
+(10, '337819647', 'Lenny', 'TIOMA', 'Lenny TIOMA', 'Arcel.tioma@gmail.com', '+33612542632', 'fhekgqrjghjerohgkjlbgjksdffkhrjg', 'ghujksrt45425gbhjsd545', 'Burkina Faso', '2026-04-10', '2030-02-14', 'Burkina Faso', 'Espagne', 'Burkina Faso', 'Etudiant', 'Actif', NULL, NULL, 'EUR', '411337819647', NULL, 150.00, 42, 13, 1, '2026-04-13 18:47:39', 0, '2026-04-10 23:38:36', '2026-04-17 21:54:45', NULL, NULL, NULL, NULL),
+(11, '294030444', 'Lysiah', 'TIOMA', 'Lysiah TIOMA', 'Arc.tioma@gmail.com', '+33612542633', '12 rue de l\'étage droite 59760 GSY', '1215645UHDGHHD', 'Cameroun', '2026-04-13', '2028-01-13', 'Cameroun', 'Italie', 'Cameroun', 'Etudiant', NULL, NULL, NULL, 'EUR', '411294030444', 12, 200.00, 12, 26, 1, NULL, 1, '2026-04-13 18:53:36', '2026-04-13 19:07:03', NULL, NULL, NULL, NULL),
+(12, '656519872', 'Yonah', 'TIOMA', 'Yonah TIOMA', 'arc.tioma@gmail.com', '+33612542633', '51 rue de la courte échelle, 59760 GSY', '1455465653245453', 'Algérie', '2026-04-13', '2029-04-05', 'Algérie', 'Belgique', 'Algérie', 'Etudiant', NULL, NULL, NULL, 'EUR', '411656519872', NULL, 450.00, NULL, 26, 1, NULL, 1, '2026-04-13 21:42:38', '2026-04-13 21:42:38', NULL, NULL, NULL, NULL);
 
 -- --------------------------------------------------------
 
@@ -581,16 +585,18 @@ INSERT INTO `notifications` (`id`, `type`, `message`, `level`, `link_url`, `enti
 (9, 'operation_create', 'Nouvelle opération créée : test frais AVI crédit/débit auto', 'success', 'http://localhost/StudelyLedge/modules/operations/operation_view.php?id=26', 'operation', 26, 0, 1, '2026-04-10 22:21:46', NULL),
 (10, 'operation_create', 'Nouvelle opération créée : FRAIS GESTION - GESTION', 'success', 'http://localhost/StudelyLedge/modules/operations/operation_view.php?id=27', 'operation', 27, 0, 1, '2026-04-10 22:23:13', NULL),
 (11, 'client_update', 'Client mis à jour : 983200894 - Arcel TIOMA', 'info', 'http://localhost/StudelyLedge/modules/clients/client_view.php?id=7', 'client', 7, 0, 1, '2026-04-11 13:15:02', NULL),
-(12, 'client_create', 'Client créé : 294030444 - Lysiah TIOMA', 'success', 'http://localhost/StudelyLedge/modules/clients/client_view.php?id=11', 'client', 11, 0, 1, '2026-04-13 18:53:36', NULL),
+(12, 'client_create', 'Client créé : 294030444 - Lysiah TIOMA', 'success', 'http://localhost/StudelyLedge/modules/clients/client_view.php?id=11', 'client', 11, 1, 1, '2026-04-13 18:53:36', '2026-04-15 23:26:16'),
 (13, 'pending_debit_insufficient', 'Insuffisance de solde 411 pour le client 294030444 - Lysiah TIOMA | demandé : 1 000,00 | exécuté : 0,00 | restant dû : 1 000,00', 'warning', 'http://localhost/StudelyLedge/modules/pending_debits/pending_debit_view.php?id=1', 'pending_client_debit', 1, 0, 1, '2026-04-13 18:57:30', NULL),
 (14, 'client_update', 'Client mis à jour : 294030444 - Lysiah TIOMA', 'info', 'http://localhost/StudelyLedge/modules/clients/client_view.php?id=11', 'client', 11, 0, 1, '2026-04-13 19:07:03', NULL),
 (15, 'pending_debit_ready', 'Le compte client 411 de 294030444 - Lysiah TIOMA est de nouveau alimenté. Débit restant dû disponible : 1 000,00', 'info', 'http://localhost/StudelyLedge/modules/pending_debits/pending_debit_view.php?id=1', 'pending_client_debit', 1, 0, 1, '2026-04-13 19:07:59', NULL),
 (16, 'operation_create', 'Nouvelle opération créée : TEST OPE VERSEMENT', 'success', 'http://localhost/StudelyLedge/modules/operations/operation_view.php?id=48', 'operation', 48, 0, 1, '2026-04-13 19:07:59', NULL),
 (17, 'pending_debit_resolved', 'Le débit dû du client 294030444 a été totalement soldé.', 'success', 'http://localhost/StudelyLedge/modules/pending_debits/pending_debit_view.php?id=1', 'pending_client_debit', 1, 0, 1, '2026-04-13 21:25:17', NULL),
-(18, 'client_create', 'Client créé : 656519872 - Yonah TIOMA', 'success', 'http://localhost/StudelyLedge/modules/clients/client_view.php?id=12', 'client', 12, 0, 1, '2026-04-13 21:42:38', NULL),
+(18, 'client_create', 'Client créé : 656519872 - Yonah TIOMA', 'success', 'http://localhost/StudelyLedge/modules/clients/client_view.php?id=12', 'client', 12, 1, 1, '2026-04-13 21:42:38', '2026-04-15 23:26:34'),
 (19, 'pending_debit_insufficient', 'Insuffisance de solde 411 pour le client 656519872 - Yonah TIOMA | demandé : 750,00 | exécuté : 500,00 | restant dû : 250,00', 'warning', 'http://localhost/StudelyLedge/modules/pending_debits/pending_debit_view.php?id=2', 'pending_client_debit', 2, 0, 1, '2026-04-13 23:29:36', NULL),
 (20, 'pending_debit_partial_execution', 'Débit partiel exécuté sur 411 client. Reliquat placé en débit dû.', 'warning', 'http://localhost/StudelyLedge/modules/pending_debits/pending_debit_view.php?id=2', 'pending_client_debit', 2, 0, 1, '2026-04-13 23:29:36', NULL),
-(21, 'operation_create', 'Nouvelle opération créée : TEST OPE DEBIT DU OPE', 'success', 'http://localhost/StudelyLedge/modules/operations/operation_view.php?id=50', 'operation', 50, 0, 1, '2026-04-13 23:29:37', NULL);
+(21, 'operation_create', 'Nouvelle opération créée : TEST OPE DEBIT DU OPE', 'success', 'http://localhost/StudelyLedge/modules/operations/operation_view.php?id=50', 'operation', 50, 0, 1, '2026-04-13 23:29:37', NULL),
+(22, 'pending_debit_insufficient', 'Insuffisance de solde 411 pour le client 656519872 - Yonah TIOMA | demandé : 450,00 | exécuté : 0,00 | restant dû : 450,00', 'warning', 'http://localhost/StudelyLedge/modules/pending_debits/pending_debit_view.php?id=3', 'pending_client_debit', 3, 0, 1, '2026-04-17 23:37:00', NULL),
+(23, 'pending_debit_insufficient', 'Insuffisance de solde 411 pour le client 656519872 - Yonah TIOMA | demandé : 1 750,00 | exécuté : 0,00 | restant dû : 1 750,00', 'warning', 'http://localhost/StudelyLedge/modules/pending_debits/pending_debit_view.php?id=4', 'pending_client_debit', 4, 0, 1, '2026-04-17 23:42:20', NULL);
 
 -- --------------------------------------------------------
 
@@ -678,7 +684,11 @@ INSERT INTO `operations` (`id`, `client_id`, `service_id`, `operation_type_id`, 
 (47, 9, NULL, NULL, 9, 9, '2026-04-13', 'VIREMENT_MENSUEL', 'monthly_run', 'Mensualité - CLT058180 - Marc Tchatchouang', 160.00, 'EUR', 'MENS-CLT058180-20260413', 'monthly_import', '411CLT058180', '5121701', NULL, 'e56c4e8d85fb00ba36818497b233c35981a55c0f5694aaa04a0d0d5d0053c0df', 0, 'Mensualité générée automatiquement - jour planifié: 13', 1, 4, '2026-04-13 18:47:40', '2026-04-13 18:47:40'),
 (48, 11, 18, 17, 11, 11, '2026-04-13', 'VERSEMENT', 'manual', 'TEST OPE VERSEMENT', 50000.00, 'EUR', 'LYS02124564', 'manual', '5120401', '411294030444', NULL, '5a4d0ddb5bb3e93901a83d9c2a90c8d31c60301d2590e5917695da5f6ecddd64', 0, 'TEST OPE VERSEMENT', 1, NULL, '2026-04-13 19:07:58', '2026-04-13 19:07:58'),
 (49, 11, 11, 22, 11, 10, '2026-04-13', 'COMMISSION_DE_TRANSFERT', 'manual_pending_debit', 'Débit dû initié - TEST OP DEBIT DU', 1000.00, 'EUR', 'LYS02124-RELQ-20260413212516', 'pending_debit', '411294030444', '706304', '706304', '23ba51117fccad98de783c9f2a2fd3e7cf40096fb6fb3c215e13016517f8081c', 0, 'Exécution d’un reliquat de débit dû 411 #1', 1, NULL, '2026-04-13 21:25:16', '2026-04-13 21:25:16'),
-(50, 12, 20, 18, 12, 12, '2026-04-13', 'VIREMENT', 'manual', 'TEST OPE DEBIT DU OPE', 500.00, 'EUR', 'YON12545451', 'manual', '411656519872', '5121701', NULL, '117d7be44a234f90109ef1987c500f86f6d74a6126e19dddca76e9150804a416', 0, 'TEST OPE DEBIT DU OPE', 1, NULL, '2026-04-13 23:29:36', '2026-04-13 23:29:36');
+(50, 12, 20, 18, 12, 12, '2026-04-13', 'VIREMENT', 'manual', 'TEST OPE DEBIT DU OPE', 500.00, 'EUR', 'YON12545451', 'manual', '411656519872', '5121701', NULL, '117d7be44a234f90109ef1987c500f86f6d74a6126e19dddca76e9150804a416', 0, 'TEST OPE DEBIT DU OPE', 1, NULL, '2026-04-13 23:29:36', '2026-04-13 23:29:36'),
+(53, 9, NULL, NULL, NULL, NULL, '2026-04-17', 'ARCHIVE_CLIENT', NULL, '', 79690.00, 'EUR', NULL, NULL, '411CLT058180', '5120101', NULL, NULL, 0, NULL, 1, NULL, '2026-04-17 20:05:49', NULL),
+(54, 2, NULL, NULL, NULL, NULL, '2026-04-17', 'ARCHIVE_CLIENT', NULL, 'Archivage client - transfert 411 vers 512', 7895.00, 'EUR', NULL, NULL, '5120101', '411CLT0002', NULL, NULL, 0, NULL, 1, NULL, '2026-04-17 20:59:11', '2026-04-17 20:59:11'),
+(55, 2, NULL, NULL, NULL, NULL, '2026-04-17', 'RESTORE_CLIENT', NULL, 'Réactivation client - restitution 512 vers 411', 7895.00, 'EUR', NULL, NULL, '411CLT0002', '5120101', NULL, NULL, 0, NULL, 1, NULL, '2026-04-17 21:35:35', '2026-04-17 21:35:35'),
+(56, 10, NULL, NULL, NULL, NULL, '2026-04-17', 'ARCHIVE_CLIENT', NULL, 'Archivage client - transfert 411 vers 512', 59750.00, 'EUR', NULL, NULL, '411337819647', '5120101', NULL, NULL, 0, NULL, 1, NULL, '2026-04-17 21:54:45', '2026-04-17 21:54:45');
 
 -- --------------------------------------------------------
 
@@ -729,7 +739,9 @@ CREATE TABLE `pending_client_debits` (
 
 INSERT INTO `pending_client_debits` (`id`, `client_id`, `client_code`, `client_account_code`, `source_operation_id`, `trigger_type`, `label`, `currency_code`, `operation_date`, `initial_amount`, `executed_amount`, `remaining_amount`, `status`, `priority_level`, `notes`, `last_notification_at`, `resolved_at`, `created_by`, `created_at`, `updated_at`, `source_module`, `source_entity_type`, `source_entity_id`, `operation_type_code`, `service_id`, `operation_type_id`, `linked_bank_account_id`, `debit_account_code`, `credit_account_code`, `service_account_code`, `operation_label`, `operation_reference`, `last_notification_sent_at`, `settled_at`) VALUES
 (1, 11, '294030444', '411294030444', NULL, 'COMMISSION_DE_TRANSFERT', 'TEST OP DEBIT DU', 'EUR', NULL, 1000.00, 1000.00, 0.00, 'settled', 'normal', 'Créé automatiquement suite à insuffisance de solde 411', '2026-04-13 19:07:59', NULL, 1, '2026-04-13 18:57:30', '2026-04-13 21:25:16', 'manual', 'operation', NULL, 'COMMISSION_DE_TRANSFERT', 11, 22, 10, '411294030444', '706304', '706304', 'TEST OP DEBIT DU', 'LYS02124', '2026-04-13 19:07:59', '2026-04-13 21:25:16'),
-(2, 12, '656519872', '411656519872', 50, 'VIREMENT', 'TEST OPE DEBIT DU OPE', 'EUR', NULL, 750.00, 500.00, 250.00, 'partial', 'normal', 'Créé automatiquement suite à insuffisance de solde 411', '2026-04-13 23:29:36', NULL, 1, '2026-04-13 23:29:36', '2026-04-13 23:29:36', 'manual', 'operation', NULL, 'VIREMENT', 20, 18, 50, '411656519872', '5121701', NULL, 'TEST OPE DEBIT DU OPE', 'YON12545451', NULL, NULL);
+(2, 12, '656519872', '411656519872', 50, 'VIREMENT', 'TEST OPE DEBIT DU OPE', 'EUR', NULL, 750.00, 500.00, 250.00, 'partial', 'normal', 'Créé automatiquement suite à insuffisance de solde 411', '2026-04-13 23:29:36', NULL, 1, '2026-04-13 23:29:36', '2026-04-13 23:29:36', 'manual', 'operation', NULL, 'VIREMENT', 20, 18, 50, '411656519872', '5121701', NULL, 'TEST OPE DEBIT DU OPE', 'YON12545451', NULL, NULL),
+(3, 12, '656519872', '411656519872', NULL, 'VIREMENT', 'TEST MULTIPLE DEBIT DÛ', 'EUR', NULL, 450.00, 0.00, 450.00, 'pending', 'normal', 'Créé automatiquement suite à insuffisance de solde 411', '2026-04-17 23:37:00', NULL, 1, '2026-04-17 23:37:00', '2026-04-17 23:37:00', 'manual', 'operation', NULL, 'VIREMENT', 20, 18, 12, '411656519872', '5120401', NULL, 'TEST MULTIPLE DEBIT DÛ', 'YON125454511121', NULL, NULL),
+(4, 12, '656519872', '411656519872', NULL, 'REGULARISATION', 'TEST MULTIPLE DEBIT DU REGNEG', 'EUR', NULL, 1750.00, 0.00, 1750.00, 'pending', 'normal', 'Créé automatiquement suite à insuffisance de solde 411', '2026-04-17 23:42:20', NULL, 1, '2026-04-17 23:42:20', '2026-04-17 23:42:20', 'manual', 'operation', NULL, 'REGULARISATION', 16, 19, 18, '411656519872', '5120407', NULL, 'TEST MULTIPLE DEBIT DU REGNEG', 'YON12545451_REGNEG', NULL, NULL);
 
 -- --------------------------------------------------------
 
@@ -758,7 +770,9 @@ INSERT INTO `pending_client_debit_logs` (`id`, `pending_debit_id`, `action_type`
 (2, 1, 'ready', 'pending', 'ready', 1000.00, 'Le compte client est redevenu positif. Débit initiable.', 1, '2026-04-13 19:07:59'),
 (3, 1, 'execute', 'ready', 'settled', 1000.00, 'Exécution manuelle du débit dû', 1, '2026-04-13 21:25:16'),
 (4, 2, 'create', NULL, 'partial', 250.00, 'Création d’un débit dû 411', 1, '2026-04-13 23:29:36'),
-(5, 2, 'attach_operation', NULL, NULL, NULL, 'Opération partielle liée au débit dû', 1, '2026-04-13 23:29:36');
+(5, 2, 'attach_operation', NULL, NULL, NULL, 'Opération partielle liée au débit dû', 1, '2026-04-13 23:29:36'),
+(6, 3, 'create', NULL, 'pending', 450.00, 'Création d’un débit dû 411', 1, '2026-04-17 23:37:00'),
+(7, 4, 'create', NULL, 'pending', 1750.00, 'Création d’un débit dû 411', 1, '2026-04-17 23:42:20');
 
 -- --------------------------------------------------------
 
@@ -834,7 +848,142 @@ INSERT INTO `permissions` (`id`, `code`, `label`, `created_at`) VALUES
 (730, 'pending_debits_manage', 'Gérer les débits dus 411', '2026-04-12 22:01:29'),
 (731, 'pending_debits_execute', 'Initier les débits dus 411', '2026-04-12 22:01:29'),
 (732, 'pending_debits_edit', 'Modifier les débits dus 411', '2026-04-12 22:01:29'),
-(733, 'pending_debits_cancel', 'Annuler les débits dus 411', '2026-04-12 22:01:29');
+(733, 'pending_debits_cancel', 'Annuler les débits dus 411', '2026-04-12 22:01:29'),
+(734, 'dashboard_view_page', 'Accès au dashboard principal', '2026-04-18 22:29:31'),
+(735, 'analytics_view_page', 'Accès aux analyses et tableaux de bord avancés', '2026-04-18 22:29:31'),
+(736, 'global_search_view_page', 'Accès à la recherche globale', '2026-04-18 22:29:31'),
+(737, 'clients_view_page', 'Accès à la liste des clients', '2026-04-18 22:29:31'),
+(738, 'client_view_page', 'Accès à la fiche client', '2026-04-18 22:29:31'),
+(739, 'client_create_page', 'Accès à la création client', '2026-04-18 22:29:31'),
+(740, 'client_edit_page', 'Accès à la modification client', '2026-04-18 22:29:31'),
+(741, 'clients_archive_page', 'Accès à l’archivage / réactivation client', '2026-04-18 22:29:31'),
+(742, 'clients_delete_page', 'Accès à la suppression client', '2026-04-18 22:29:31'),
+(743, 'client_accounts_view_page', 'Accès à la liste des comptes clients 411', '2026-04-18 22:29:31'),
+(744, 'client_timeline_view_page', 'Accès à la timeline client', '2026-04-18 22:29:31'),
+(745, 'clients_import_page', 'Accès à l’import des clients', '2026-04-18 22:29:31'),
+(746, 'clients_import', 'Importer des clients', '2026-04-18 22:29:31'),
+(747, 'operations_view_page', 'Accès à la liste des opérations', '2026-04-18 22:29:31'),
+(748, 'operation_view_page', 'Accès au détail d’une opération', '2026-04-18 22:29:31'),
+(749, 'operation_create_page', 'Accès à la création d’une opération', '2026-04-18 22:29:31'),
+(750, 'operation_edit_page', 'Accès à la modification d’une opération', '2026-04-18 22:29:31'),
+(751, 'operation_delete_page', 'Accès à la suppression d’une opération', '2026-04-18 22:29:31'),
+(752, 'manual_actions_create_page', 'Accès aux actions manuelles', '2026-04-18 22:29:31'),
+(753, 'operations_monthly_run_page', 'Accès au lancement des opérations mensuelles clients', '2026-04-18 22:29:31'),
+(754, 'operations_monthly_run', 'Lancer un traitement mensuel des opérations', '2026-04-18 22:29:31'),
+(755, 'imports_upload_page', 'Accès à l’upload d’import', '2026-04-18 22:29:31'),
+(756, 'imports_preview_page', 'Accès à la prévisualisation d’import', '2026-04-18 22:29:31'),
+(757, 'imports_validate_page', 'Accès à la validation d’import', '2026-04-18 22:29:31'),
+(758, 'imports_validate_batch_page', 'Accès à la validation d’un batch import', '2026-04-18 22:29:31'),
+(759, 'imports_journal_page', 'Accès au journal des imports', '2026-04-18 22:29:31'),
+(760, 'imports_mapping_page', 'Accès au mapping des imports', '2026-04-18 22:29:31'),
+(761, 'imports_rejected_rows_page', 'Accès aux lignes rejetées', '2026-04-18 22:29:31'),
+(762, 'imports_correct_rejected_row_page', 'Accès à la correction d’une ligne rejetée', '2026-04-18 22:29:31'),
+(763, 'imports_validate_batch', 'Valider un batch import', '2026-04-18 22:29:31'),
+(764, 'imports_mapping_manage', 'Gérer le mapping des imports', '2026-04-18 22:29:31'),
+(765, 'imports_correct_rejected_rows', 'Corriger les lignes rejetées', '2026-04-18 22:29:31'),
+(766, 'monthly_runs_list_page', 'Accès à la liste des runs mensuels', '2026-04-18 22:29:31'),
+(767, 'monthly_run_view_page', 'Accès au détail d’un run mensuel', '2026-04-18 22:29:31'),
+(768, 'monthly_run_execute_page', 'Accès à l’exécution d’un run mensuel', '2026-04-18 22:29:31'),
+(769, 'monthly_run_cancel_page', 'Accès à l’annulation d’un run mensuel', '2026-04-18 22:29:31'),
+(770, 'monthly_payments_import_page', 'Accès à l’import des mensualités', '2026-04-18 22:29:31'),
+(771, 'monthly_payments_preview_page', 'Accès à la prévisualisation des mensualités', '2026-04-18 22:29:31'),
+(772, 'monthly_payments_validate_page', 'Accès à la validation des mensualités', '2026-04-18 22:29:31'),
+(773, 'monthly_runs_view', 'Consulter les runs mensuels', '2026-04-18 22:29:31'),
+(774, 'monthly_run_execute', 'Exécuter un run mensuel', '2026-04-18 22:29:31'),
+(775, 'monthly_run_cancel', 'Annuler un run mensuel', '2026-04-18 22:29:31'),
+(776, 'monthly_payments_import', 'Importer des mensualités', '2026-04-18 22:29:31'),
+(777, 'monthly_payments_validate', 'Valider des mensualités', '2026-04-18 22:29:31'),
+(778, 'pending_debits_view_page', 'Accès à la liste des débits dus', '2026-04-18 22:29:31'),
+(779, 'pending_debit_view_page', 'Accès au détail d’un débit dû', '2026-04-18 22:29:31'),
+(780, 'pending_debit_edit_page', 'Accès à la modification d’un débit dû', '2026-04-18 22:29:31'),
+(781, 'pending_debit_execute_page', 'Accès à l’exécution d’un débit dû', '2026-04-18 22:29:31'),
+(782, 'pending_debit_cancel_page', 'Accès à l’annulation d’un débit dû', '2026-04-18 22:29:31'),
+(783, 'treasury_view_page', 'Accès à la liste des comptes de trésorerie', '2026-04-18 22:29:31'),
+(784, 'treasury_create_page', 'Accès à la création d’un compte 512', '2026-04-18 22:29:31'),
+(785, 'treasury_edit_page', 'Accès à la modification d’un compte 512', '2026-04-18 22:29:31'),
+(786, 'treasury_view_detail_page', 'Accès à la fiche d’un compte 512', '2026-04-18 22:29:31'),
+(787, 'treasury_archive_page', 'Accès à l’archivage / réactivation d’un compte 512', '2026-04-18 22:29:31'),
+(788, 'treasury_import_page', 'Accès à l’import des comptes 512', '2026-04-18 22:29:31'),
+(789, 'bank_accounts_view_page', 'Accès à la vue des comptes bancaires', '2026-04-18 22:29:31'),
+(790, 'treasury_service_accounts_page', 'Accès au lien trésorerie / comptes service', '2026-04-18 22:29:31'),
+(791, 'treasury_archive', 'Archiver / réactiver un compte 512', '2026-04-18 22:29:31'),
+(792, 'service_accounts_manage_page', 'Accès à la gestion des comptes de service 706', '2026-04-18 22:29:31'),
+(793, 'service_accounts_create_page', 'Accès à la création d’un compte 706', '2026-04-18 22:29:31'),
+(794, 'service_accounts_edit_page', 'Accès à la modification d’un compte 706', '2026-04-18 22:29:31'),
+(795, 'service_accounts_view_page', 'Accès à la fiche d’un compte 706', '2026-04-18 22:29:31'),
+(796, 'service_accounts_archive_page', 'Accès à l’archivage d’un compte 706', '2026-04-18 22:29:31'),
+(797, 'service_accounts_import_page', 'Accès à l’import des comptes 706', '2026-04-18 22:29:31'),
+(798, 'service_accounts_create', 'Créer un compte 706', '2026-04-18 22:29:31'),
+(799, 'service_accounts_edit', 'Modifier un compte 706', '2026-04-18 22:29:31'),
+(800, 'service_accounts_archive', 'Archiver un compte 706', '2026-04-18 22:29:31'),
+(801, 'service_accounts_import', 'Importer des comptes 706', '2026-04-18 22:29:31'),
+(802, 'statements_view_page', 'Accès au module des relevés', '2026-04-18 22:29:31'),
+(803, 'account_statements_view_page', 'Accès aux relevés de comptes', '2026-04-18 22:29:31'),
+(804, 'client_statement_view_page', 'Accès au relevé client', '2026-04-18 22:29:31'),
+(805, 'client_profiles_view_page', 'Accès aux profils clients', '2026-04-18 22:29:31'),
+(806, 'bulk_statement_export_page', 'Accès à l’export groupé de relevés', '2026-04-18 22:29:31'),
+(807, 'generate_statement_pdf_page', 'Accès à la génération PDF de relevé', '2026-04-18 22:29:31'),
+(808, 'generate_bulk_pdf_page', 'Accès à la génération PDF en masse', '2026-04-18 22:29:31'),
+(809, 'client_profiles_export', 'Exporter les profils clients', '2026-04-18 22:29:31'),
+(810, 'bulk_statement_export', 'Exporter des relevés en masse', '2026-04-18 22:29:31'),
+(811, 'notifications_view_page', 'Accès aux notifications', '2026-04-18 22:29:31'),
+(812, 'support_requests_view_page', 'Accès aux demandes support', '2026-04-18 22:29:31'),
+(813, 'support_request_create_page', 'Accès à la création d’une demande support', '2026-04-18 22:29:31'),
+(814, 'support_manage_page', 'Accès à la gestion des demandes support', '2026-04-18 22:29:31'),
+(815, 'notifications_view', 'Consulter les notifications', '2026-04-18 22:29:31'),
+(816, 'support_request_create', 'Créer une demande support', '2026-04-18 22:29:31'),
+(817, 'admin_functional_dashboard_view_page', 'Accès au dashboard fonctionnel', '2026-04-18 22:29:31'),
+(818, 'manage_services_page', 'Accès à la gestion des services', '2026-04-18 22:29:31'),
+(819, 'create_service_page', 'Accès à la création d’un service', '2026-04-18 22:29:31'),
+(820, 'edit_service_page', 'Accès à la modification d’un service', '2026-04-18 22:29:31'),
+(821, 'delete_service_page', 'Accès à la suppression d’un service', '2026-04-18 22:29:31'),
+(822, 'manage_operation_types_page', 'Accès à la gestion des types d’opérations', '2026-04-18 22:29:31'),
+(823, 'create_operation_type_page', 'Accès à la création d’un type d’opération', '2026-04-18 22:29:31'),
+(824, 'edit_operation_type_page', 'Accès à la modification d’un type d’opération', '2026-04-18 22:29:31'),
+(825, 'delete_operation_type_page', 'Accès à la suppression d’un type d’opération', '2026-04-18 22:29:31'),
+(826, 'manage_accounts_page', 'Accès à la gestion fonctionnelle des comptes', '2026-04-18 22:29:31'),
+(827, 'manage_accounting_rules_page', 'Accès à la gestion des règles comptables', '2026-04-18 22:29:31'),
+(828, 'accounting_rule_create_page', 'Accès à la création d’une règle comptable', '2026-04-18 22:29:31'),
+(829, 'accounting_rule_edit_page', 'Accès à la modification d’une règle comptable', '2026-04-18 22:29:31'),
+(830, 'accounting_rule_delete_page', 'Accès à la suppression d’une règle comptable', '2026-04-18 22:29:31'),
+(831, 'accounting_rule_view_page', 'Accès à la fiche d’une règle comptable', '2026-04-18 22:29:31'),
+(832, 'accounting_balance_audit_page', 'Accès à l’audit des équilibres comptables', '2026-04-18 22:29:31'),
+(833, 'catalogs_manage_page', 'Accès à la gestion des catalogues', '2026-04-18 22:29:31'),
+(834, 'services_create', 'Créer un service', '2026-04-18 22:29:31'),
+(835, 'services_edit', 'Modifier un service', '2026-04-18 22:29:31'),
+(836, 'services_delete', 'Supprimer un service', '2026-04-18 22:29:31'),
+(837, 'operation_types_create', 'Créer un type d’opération', '2026-04-18 22:29:31'),
+(838, 'operation_types_edit', 'Modifier un type d’opération', '2026-04-18 22:29:31'),
+(839, 'operation_types_delete', 'Supprimer un type d’opération', '2026-04-18 22:29:31'),
+(840, 'accounts_manage', 'Gérer les comptes fonctionnels', '2026-04-18 22:29:31'),
+(841, 'accounting_rules_manage', 'Gérer les règles comptables', '2026-04-18 22:29:31'),
+(842, 'accounting_rules_create', 'Créer une règle comptable', '2026-04-18 22:29:31'),
+(843, 'accounting_rules_edit', 'Modifier une règle comptable', '2026-04-18 22:29:31'),
+(844, 'accounting_rules_delete', 'Supprimer une règle comptable', '2026-04-18 22:29:31'),
+(845, 'accounting_balance_audit_view', 'Consulter l’audit comptable', '2026-04-18 22:29:31'),
+(846, 'catalogs_manage', 'Gérer les catalogues', '2026-04-18 22:29:31'),
+(847, 'admin_dashboard_view_page', 'Accès au dashboard administration', '2026-04-18 22:29:31'),
+(848, 'admin_users_manage_page', 'Accès à la gestion des utilisateurs', '2026-04-18 22:29:31'),
+(849, 'user_create_page', 'Accès à la création d’un utilisateur', '2026-04-18 22:29:31'),
+(850, 'user_edit_page', 'Accès à la modification d’un utilisateur', '2026-04-18 22:29:31'),
+(851, 'user_delete_page', 'Accès à la suppression d’un utilisateur', '2026-04-18 22:29:31'),
+(852, 'admin_roles_manage_page', 'Accès à la gestion des rôles', '2026-04-18 22:29:31'),
+(853, 'roles_view_page', 'Accès à la liste des rôles', '2026-04-18 22:29:31'),
+(854, 'access_matrix_manage_page', 'Accès à la matrice des accès', '2026-04-18 22:29:31'),
+(855, 'user_logs_view_page', 'Accès aux logs utilisateurs', '2026-04-18 22:29:31'),
+(856, 'audit_logs_view_page', 'Accès à l’audit détaillé', '2026-04-18 22:29:31'),
+(857, 'intelligence_center_view_page', 'Accès au centre d’intelligence', '2026-04-18 22:29:31'),
+(858, 'settings_manage_page', 'Accès aux paramètres', '2026-04-18 22:29:31'),
+(859, 'statuses_manage_page', 'Accès à la gestion des statuts', '2026-04-18 22:29:31'),
+(860, 'categories_manage_page', 'Accès à la gestion des catégories', '2026-04-18 22:29:31'),
+(861, 'users_create', 'Créer un utilisateur', '2026-04-18 22:29:31'),
+(862, 'users_edit', 'Modifier un utilisateur', '2026-04-18 22:29:31'),
+(863, 'users_delete', 'Supprimer un utilisateur', '2026-04-18 22:29:31'),
+(864, 'roles_view', 'Consulter les rôles', '2026-04-18 22:29:31'),
+(865, 'access_matrix_manage', 'Gérer la matrice des accès', '2026-04-18 22:29:31'),
+(866, 'audit_logs_view', 'Consulter l’audit détaillé', '2026-04-18 22:29:31'),
+(867, 'intelligence_center_view', 'Consulter le centre d’intelligence', '2026-04-18 22:29:31'),
+(868, 'categories_manage', 'Gérer les catégories', '2026-04-18 22:29:31');
 
 -- --------------------------------------------------------
 
@@ -977,6 +1126,177 @@ INSERT INTO `role_permissions` (`role_id`, `permission_id`) VALUES
 (1, 19),
 (1, 20),
 (1, 21),
+(1, 698),
+(1, 699),
+(1, 700),
+(1, 701),
+(1, 702),
+(1, 703),
+(1, 704),
+(1, 705),
+(1, 706),
+(1, 707),
+(1, 708),
+(1, 709),
+(1, 710),
+(1, 711),
+(1, 712),
+(1, 713),
+(1, 714),
+(1, 715),
+(1, 716),
+(1, 717),
+(1, 718),
+(1, 719),
+(1, 720),
+(1, 721),
+(1, 722),
+(1, 723),
+(1, 724),
+(1, 725),
+(1, 726),
+(1, 727),
+(1, 728),
+(1, 729),
+(1, 730),
+(1, 731),
+(1, 732),
+(1, 733),
+(1, 734),
+(1, 735),
+(1, 736),
+(1, 737),
+(1, 738),
+(1, 739),
+(1, 740),
+(1, 741),
+(1, 742),
+(1, 743),
+(1, 744),
+(1, 745),
+(1, 746),
+(1, 747),
+(1, 748),
+(1, 749),
+(1, 750),
+(1, 751),
+(1, 752),
+(1, 753),
+(1, 754),
+(1, 755),
+(1, 756),
+(1, 757),
+(1, 758),
+(1, 759),
+(1, 760),
+(1, 761),
+(1, 762),
+(1, 763),
+(1, 764),
+(1, 765),
+(1, 766),
+(1, 767),
+(1, 768),
+(1, 769),
+(1, 770),
+(1, 771),
+(1, 772),
+(1, 773),
+(1, 774),
+(1, 775),
+(1, 776),
+(1, 777),
+(1, 778),
+(1, 779),
+(1, 780),
+(1, 781),
+(1, 782),
+(1, 783),
+(1, 784),
+(1, 785),
+(1, 786),
+(1, 787),
+(1, 788),
+(1, 789),
+(1, 790),
+(1, 791),
+(1, 792),
+(1, 793),
+(1, 794),
+(1, 795),
+(1, 796),
+(1, 797),
+(1, 798),
+(1, 799),
+(1, 800),
+(1, 801),
+(1, 802),
+(1, 803),
+(1, 804),
+(1, 805),
+(1, 806),
+(1, 807),
+(1, 808),
+(1, 809),
+(1, 810),
+(1, 811),
+(1, 812),
+(1, 813),
+(1, 814),
+(1, 815),
+(1, 816),
+(1, 817),
+(1, 818),
+(1, 819),
+(1, 820),
+(1, 821),
+(1, 822),
+(1, 823),
+(1, 824),
+(1, 825),
+(1, 826),
+(1, 827),
+(1, 828),
+(1, 829),
+(1, 830),
+(1, 831),
+(1, 832),
+(1, 833),
+(1, 834),
+(1, 835),
+(1, 836),
+(1, 837),
+(1, 838),
+(1, 839),
+(1, 840),
+(1, 841),
+(1, 842),
+(1, 843),
+(1, 844),
+(1, 845),
+(1, 846),
+(1, 847),
+(1, 848),
+(1, 849),
+(1, 850),
+(1, 851),
+(1, 852),
+(1, 853),
+(1, 854),
+(1, 855),
+(1, 856),
+(1, 857),
+(1, 858),
+(1, 859),
+(1, 860),
+(1, 861),
+(1, 862),
+(1, 863),
+(1, 864),
+(1, 865),
+(1, 866),
+(1, 867),
+(1, 868),
 (2, 1),
 (2, 2),
 (2, 5),
@@ -1452,69 +1772,71 @@ CREATE TABLE `treasury_accounts` (
   `current_balance` decimal(15,2) NOT NULL DEFAULT 0.00,
   `is_active` tinyint(1) NOT NULL DEFAULT 1,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
-  `updated_at` datetime DEFAULT NULL
+  `updated_at` datetime DEFAULT NULL,
+  `is_primary` tinyint(1) DEFAULT 0,
+  `is_secondary` tinyint(1) DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 --
 -- Déchargement des données de la table `treasury_accounts`
 --
 
-INSERT INTO `treasury_accounts` (`id`, `account_code`, `account_label`, `bank_name`, `subsidiary_name`, `zone_code`, `country_label`, `country_type`, `payment_place`, `currency_code`, `opening_balance`, `current_balance`, `is_active`, `created_at`, `updated_at`) VALUES
-(1, '5120101', 'Fr_LCL_C - France', 'Fr_LCL_C', 'Studely', 'EU', 'France', 'Filiale', 'Local', 'EUR', 100000.00, 63400.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(2, '5120102', 'Fr_LCL_M - France', 'Fr_LCL_M', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 16470.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(3, '5120103', 'FR_CIC - France', 'FR_CIC', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 200.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(4, '5120104', 'FR_CCOOP - France', 'FR_CCOOP', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(5, '5120105', 'Fr_MANGO - France', 'Fr_MANGO', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(6, '5120106', 'FR_SG - France', 'FR_SG', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 210.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(7, '5120107', 'FR_SG_EXPL - France', 'FR_SG_EXPL', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(8, '5120108', 'FR_SPENDESK - France', 'FR_SPENDESK', 'Studely', 'EU', 'France', 'Filiale', 'Local', 'EUR', 100000.00, 50000.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(9, '5120109', 'FR_TRUST - France', 'FR_TRUST', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 50000.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(10, '5120301', 'BE_QUONTO - Belgique', 'BE_QUONTO', 'Studely', 'EU', 'Belgique', 'Filiale', 'Local', 'EUR', 100000.00, 85520.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(11, '5120302', 'BE_REVOLUT - Belgique', 'BE_REVOLUT', 'Studely', 'EU', 'Belgique', 'Filiale', 'France', 'EUR', 0.00, 150.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(12, '5120401', 'CM_BAC - Cameroun', 'CM_BAC', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 1000000.00, 350100.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(13, '5120402', 'CM_BAC_EXPL - Cameroun', 'CM_BAC_EXPL', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(14, '5120403', 'CM_BAC_REM - Cameroun', 'CM_BAC_REM', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(15, '5120404', 'CM_BGFI_DE - Cameroun', 'CM_BGFI_DE', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 200.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(16, '5120405', 'CM_BGFI_EXPL - Cameroun', 'CM_BGFI_EXPL', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 150.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(17, '5120406', 'CM_BGFI_FR - Cameroun', 'CM_BGFI_FR', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 100.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(18, '5120407', 'CM_CBC - Cameroun', 'CM_CBC', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 120.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(19, '5120408', 'CM_UBA - Cameroun', 'CM_UBA', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 120.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36'),
-(20, '5120409', 'SF_CM_ACCESS_BANK - Cameroun', 'SF_CM_ACCESS_BANK', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(21, '5120410', 'SF_CM_AFD_BANK - Cameroun', 'SF_CM_AFD_BANK', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 200.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(22, '5120411', 'SF_CM_AFD_EXPL - Cameroun', 'SF_CM_AFD_EXPL', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(23, '5120412', 'SF_CM_BAC - Cameroun', 'SF_CM_BAC', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(24, '5120413', 'SF_CM_BAC_EXPL - Cameroun', 'SF_CM_BAC_EXPL', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(25, '5120414', 'SF_CM_BGFI - Cameroun', 'SF_CM_BGFI', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 100.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(26, '5120415', 'SF_CM_CCA_BANK - Cameroun', 'SF_CM_CCA_BANK', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(27, '5120416', 'SF_CM_UBA - Cameroun', 'SF_CM_UBA', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 110.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(28, '5120501', 'SF_SN_EcoBQ - Sénégal', 'SF_SN_EcoBQ', 'Studely Finance', 'AO', 'Sénégal', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(29, '5120502', 'SN_ECOBQ - Sénégal', 'SN_ECOBQ', 'Studely', 'AO', 'Sénégal', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(30, '5120601', 'CIV_ECOBQ - Côte d\'Ivoire', 'CIV_ECOBQ', 'Studely', 'AO', 'Côte d\'Ivoire', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(31, '5120602', 'SF_CIV_AFG - Côte d\'Ivoire', 'SF_CIV_AFG', 'Studely Finance', 'AO', 'Côte d\'Ivoire', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(32, '5120603', 'SF_CIV_EcoBQ - Côte d\'Ivoire', 'SF_CIV_EcoBQ', 'Studely Finance', 'AO', 'Côte d\'Ivoire', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(33, '5120701', 'BN_ECOBQ - Benin', 'BN_ECOBQ', 'Studely', 'AO', 'Benin', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(34, '5120702', 'SF_BN_EcoBQ - Benin', 'SF_BN_EcoBQ', 'Studely Finance', 'AO', 'Benin', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(35, '5120801', 'BFA_ECOBQ - Burkina Faso', 'BFA_ECOBQ', 'Studely', 'AO', 'Burkina Faso', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(36, '5120901', 'CD_BGFI - Congo Brazzaville', 'CD_BGFI', 'Studely', 'AC', 'Congo Brazzaville', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(37, '5120902', 'CD_BGFI_EXPL - Congo Brazzaville', 'CD_BGFI_EXPL', 'Studely', 'AC', 'Congo Brazzaville', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(38, '5120903', 'MUP_MF - Congo Brazzaville', 'MUP_MF', 'Studely', 'AC', 'Congo Brazzaville', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(39, '5121001', 'RD_BGFI - Congo Kinshasa', 'RD_BGFI', 'Studely', 'AC', 'Congo Kinshasa', 'Filiale', 'Local', 'USD', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(40, '5121002', 'RD_BGFI_EURO - Congo Kinshasa', 'RD_BGFI_EURO', 'Studely', 'AC', 'Congo Kinshasa', 'Filiale', 'Local', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(41, '5121101', 'GB_BGFI - Gabon', 'GB_BGFI', 'Studely', 'AC', 'Gabon', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(42, '5121102', 'GB_BGFI_EXPL - Gabon', 'GB_BGFI_EXPL', 'Studely', 'AC', 'Gabon', 'Filiale', 'Local', 'XAF', 0.00, 150.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(43, '5121103', 'SF_GB_ECOBQ - Gabon', 'SF_GB_ECOBQ', 'Studely Finance', 'AC', 'Gabon', 'Filiale', 'Local', 'XAF', 0.00, 210.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(44, '5121201', 'SF_CHD_ECOBAQ - Tchad', 'SF_CHD_ECOBAQ', 'Studely Finance', 'AC', 'Tchad', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(45, '5121202', 'SF_TCHAD_UBA - Tchad', 'SF_TCHAD_UBA', 'Studely Finance', 'AC', 'Tchad', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(46, '5121301', 'ML_ECOBQ - Mali', 'ML_ECOBQ', 'Studely', 'AO', 'Mali', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(47, '5121302', 'ML_SCOLARIS FI - Mali', 'ML_SCOLARIS FI', 'Studely', 'AO', 'Mali', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(48, '5121401', 'TGO_ECOBQ - Togo', 'TGO_ECOBQ', 'Studely', 'AO', 'Togo', 'Filiale', 'Local', 'XOF', 800000.00, 74458.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(49, '5121403', 'SF_TG_EcoBQ - Togo', 'SF_TG_EcoBQ', 'Studely Finance', 'AO', 'Togo', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(50, '5121701', 'ALG_BNP - Algérie', 'ALG_BNP', 'Studely', 'AN', 'Algérie', 'Filiale', 'Local', 'DZD', 1000000.00, 712160.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(51, '5121801', 'GUI_ECOBQ - Guinée', 'GUI_ECOBQ', 'Studely', 'AO', 'Guinée', 'Filiale', 'Local', 'GNF', 0.00, 210.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(52, '5121802', 'SF_GUI_EcoBQ - Guinée', 'SF_GUI_EcoBQ', 'Studely Finance', 'AO', 'Guinée', 'Filiale', 'Local', 'GNF', 0.00, 120.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(53, '5121901', 'TN_ATTI - Tunisie', 'TN_ATTI', 'Studely', 'AN', 'Tunisie', 'Filiale', 'Local', 'TND', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(54, '5122001', 'MA_ATTI - Maroc', 'MA_ATTI', 'Studely', 'AN', 'Maroc', 'Filiale', 'Local', 'MAD', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37'),
-(55, '5122101', 'NG_ECOBQ - Niger', 'NG_ECOBQ', 'Studely', 'AO', 'Niger', 'Filiale', 'Local', 'XOF', 0.00, 140.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37');
+INSERT INTO `treasury_accounts` (`id`, `account_code`, `account_label`, `bank_name`, `subsidiary_name`, `zone_code`, `country_label`, `country_type`, `payment_place`, `currency_code`, `opening_balance`, `current_balance`, `is_active`, `created_at`, `updated_at`, `is_primary`, `is_secondary`) VALUES
+(1, '5120101', 'Fr_LCL_C - France', 'Fr_LCL_C', 'Studely', 'EU', 'France', 'Filiale', 'Local', 'EUR', 100000.00, 123150.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(2, '5120102', 'Fr_LCL_M - France', 'Fr_LCL_M', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 16470.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(3, '5120103', 'FR_CIC - France', 'FR_CIC', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 200.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(4, '5120104', 'FR_CCOOP - France', 'FR_CCOOP', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(5, '5120105', 'Fr_MANGO - France', 'Fr_MANGO', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(6, '5120106', 'FR_SG - France', 'FR_SG', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 210.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(7, '5120107', 'FR_SG_EXPL - France', 'FR_SG_EXPL', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(8, '5120108', 'FR_SPENDESK - France', 'FR_SPENDESK', 'Studely', 'EU', 'France', 'Filiale', 'Local', 'EUR', 100000.00, 50000.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(9, '5120109', 'FR_TRUST - France', 'FR_TRUST', 'Studely', 'EU', 'France', 'Siege', 'France', 'EUR', 0.00, 50000.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(10, '5120301', 'BE_QUONTO - Belgique', 'BE_QUONTO', 'Studely', 'EU', 'Belgique', 'Filiale', 'Local', 'EUR', 100000.00, 85520.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(11, '5120302', 'BE_REVOLUT - Belgique', 'BE_REVOLUT', 'Studely', 'EU', 'Belgique', 'Filiale', 'France', 'EUR', 0.00, 150.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(12, '5120401', 'CM_BAC - Cameroun', 'CM_BAC', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 1000000.00, 350100.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(13, '5120402', 'CM_BAC_EXPL - Cameroun', 'CM_BAC_EXPL', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(14, '5120403', 'CM_BAC_REM - Cameroun', 'CM_BAC_REM', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(15, '5120404', 'CM_BGFI_DE - Cameroun', 'CM_BGFI_DE', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 200.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(16, '5120405', 'CM_BGFI_EXPL - Cameroun', 'CM_BGFI_EXPL', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 150.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(17, '5120406', 'CM_BGFI_FR - Cameroun', 'CM_BGFI_FR', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 100.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(18, '5120407', 'CM_CBC - Cameroun', 'CM_CBC', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 120.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(19, '5120408', 'CM_UBA - Cameroun', 'CM_UBA', 'Studely', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 120.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:36', 0, 0),
+(20, '5120409', 'SF_CM_ACCESS_BANK - Cameroun', 'SF_CM_ACCESS_BANK', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(21, '5120410', 'SF_CM_AFD_BANK - Cameroun', 'SF_CM_AFD_BANK', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 200.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(22, '5120411', 'SF_CM_AFD_EXPL - Cameroun', 'SF_CM_AFD_EXPL', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(23, '5120412', 'SF_CM_BAC - Cameroun', 'SF_CM_BAC', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(24, '5120413', 'SF_CM_BAC_EXPL - Cameroun', 'SF_CM_BAC_EXPL', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(25, '5120414', 'SF_CM_BGFI - Cameroun', 'SF_CM_BGFI', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 100.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(26, '5120415', 'SF_CM_CCA_BANK - Cameroun', 'SF_CM_CCA_BANK', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(27, '5120416', 'SF_CM_UBA - Cameroun', 'SF_CM_UBA', 'Studely Finance', 'AC', 'Cameroun', 'Filiale', 'Local', 'XAF', 0.00, 110.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(28, '5120501', 'SF_SN_EcoBQ - Sénégal', 'SF_SN_EcoBQ', 'Studely Finance', 'AO', 'Sénégal', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(29, '5120502', 'SN_ECOBQ - Sénégal', 'SN_ECOBQ', 'Studely', 'AO', 'Sénégal', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(30, '5120601', 'CIV_ECOBQ - Côte d\'Ivoire', 'CIV_ECOBQ', 'Studely', 'AO', 'Côte d\'Ivoire', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(31, '5120602', 'SF_CIV_AFG - Côte d\'Ivoire', 'SF_CIV_AFG', 'Studely Finance', 'AO', 'Côte d\'Ivoire', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(32, '5120603', 'SF_CIV_EcoBQ - Côte d\'Ivoire', 'SF_CIV_EcoBQ', 'Studely Finance', 'AO', 'Côte d\'Ivoire', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(33, '5120701', 'BN_ECOBQ - Benin', 'BN_ECOBQ', 'Studely', 'AO', 'Benin', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(34, '5120702', 'SF_BN_EcoBQ - Benin', 'SF_BN_EcoBQ', 'Studely Finance', 'AO', 'Benin', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(35, '5120801', 'BFA_ECOBQ - Burkina Faso', 'BFA_ECOBQ', 'Studely', 'AO', 'Burkina Faso', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(36, '5120901', 'CD_BGFI - Congo Brazzaville', 'CD_BGFI', 'Studely', 'AC', 'Congo Brazzaville', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(37, '5120902', 'CD_BGFI_EXPL - Congo Brazzaville', 'CD_BGFI_EXPL', 'Studely', 'AC', 'Congo Brazzaville', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(38, '5120903', 'MUP_MF - Congo Brazzaville', 'MUP_MF', 'Studely', 'AC', 'Congo Brazzaville', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(39, '5121001', 'RD_BGFI - Congo Kinshasa', 'RD_BGFI', 'Studely', 'AC', 'Congo Kinshasa', 'Filiale', 'Local', 'USD', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(40, '5121002', 'RD_BGFI_EURO - Congo Kinshasa', 'RD_BGFI_EURO', 'Studely', 'AC', 'Congo Kinshasa', 'Filiale', 'Local', 'EUR', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(41, '5121101', 'GB_BGFI - Gabon', 'GB_BGFI', 'Studely', 'AC', 'Gabon', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(42, '5121102', 'GB_BGFI_EXPL - Gabon', 'GB_BGFI_EXPL', 'Studely', 'AC', 'Gabon', 'Filiale', 'Local', 'XAF', 0.00, 150.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(43, '5121103', 'SF_GB_ECOBQ - Gabon', 'SF_GB_ECOBQ', 'Studely Finance', 'AC', 'Gabon', 'Filiale', 'Local', 'XAF', 0.00, 210.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(44, '5121201', 'SF_CHD_ECOBAQ - Tchad', 'SF_CHD_ECOBAQ', 'Studely Finance', 'AC', 'Tchad', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(45, '5121202', 'SF_TCHAD_UBA - Tchad', 'SF_TCHAD_UBA', 'Studely Finance', 'AC', 'Tchad', 'Filiale', 'Local', 'XAF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(46, '5121301', 'ML_ECOBQ - Mali', 'ML_ECOBQ', 'Studely', 'AO', 'Mali', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(47, '5121302', 'ML_SCOLARIS FI - Mali', 'ML_SCOLARIS FI', 'Studely', 'AO', 'Mali', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(48, '5121401', 'TGO_ECOBQ - Togo', 'TGO_ECOBQ', 'Studely', 'AO', 'Togo', 'Filiale', 'Local', 'XOF', 800000.00, 74458.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(49, '5121403', 'SF_TG_EcoBQ - Togo', 'SF_TG_EcoBQ', 'Studely Finance', 'AO', 'Togo', 'Filiale', 'Local', 'XOF', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(50, '5121701', 'ALG_BNP - Algérie', 'ALG_BNP', 'Studely', 'AN', 'Algérie', 'Filiale', 'Local', 'DZD', 1000000.00, 712160.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(51, '5121801', 'GUI_ECOBQ - Guinée', 'GUI_ECOBQ', 'Studely', 'AO', 'Guinée', 'Filiale', 'Local', 'GNF', 0.00, 210.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(52, '5121802', 'SF_GUI_EcoBQ - Guinée', 'SF_GUI_EcoBQ', 'Studely Finance', 'AO', 'Guinée', 'Filiale', 'Local', 'GNF', 0.00, 120.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(53, '5121901', 'TN_ATTI - Tunisie', 'TN_ATTI', 'Studely', 'AN', 'Tunisie', 'Filiale', 'Local', 'TND', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(54, '5122001', 'MA_ATTI - Maroc', 'MA_ATTI', 'Studely', 'AN', 'Maroc', 'Filiale', 'Local', 'MAD', 0.00, 0.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0),
+(55, '5122101', 'NG_ECOBQ - Niger', 'NG_ECOBQ', 'Studely', 'AO', 'Niger', 'Filiale', 'Local', 'XOF', 0.00, 140.00, 1, '2026-03-28 23:53:57', '2026-04-13 23:29:37', 0, 0);
 
 -- --------------------------------------------------------
 
@@ -1670,7 +1992,26 @@ INSERT INTO `user_logs` (`id`, `user_id`, `action`, `module`, `entity_type`, `en
 (79, 1, 'create_operation', 'operations', 'operation', 48, 'Création manuelle d’une opération', '2026-04-13 19:07:59'),
 (80, 1, 'execute_pending_debit', 'pending_client_debits', 'pending_client_debit', 1, 'Exécution manuelle d’un débit dû #1', '2026-04-13 21:25:17'),
 (81, 1, 'create_client', 'clients', 'client', 12, 'Création du client 656519872', '2026-04-13 21:42:38'),
-(82, 1, 'create_operation', 'operations', 'operation', 50, 'Création manuelle d’une opération', '2026-04-13 23:29:37');
+(82, 1, 'create_operation', 'operations', 'operation', 50, 'Création manuelle d’une opération', '2026-04-13 23:29:37'),
+(83, 1, 'login', 'auth', 'user', 1, 'Connexion utilisateur', '2026-04-15 17:28:48'),
+(84, 1, 'archive_client', 'clients', 'client', 4, 'Archivage du client CLT0004', '2026-04-17 17:37:08'),
+(85, 1, 'archive_client', 'clients', 'client', 3, 'Archivage du client CLT0003', '2026-04-17 17:37:26'),
+(86, 1, 'restore_client', 'clients', 'client', 3, 'Action client', '2026-04-17 19:06:41'),
+(87, 1, 'restore_client', 'clients', 'client', 4, 'Action client', '2026-04-17 19:07:00'),
+(88, 1, 'archive_client', 'clients', 'client', 2, 'Action client', '2026-04-17 19:07:24'),
+(89, 1, 'restore_client', 'clients', 'client', 2, 'Action client', '2026-04-17 19:15:29'),
+(90, 1, 'archive_client', 'clients', 'client', 9, 'Archivage client CLT058180', '2026-04-17 20:05:49'),
+(91, 1, 'archive_client', 'clients', 'client', 2, 'Archivage client CLT0002', '2026-04-17 20:59:11'),
+(92, 1, 'restore_client_with_balance', 'clients', 'client', 2, 'Réactivation client avec restitution du solde', '2026-04-17 21:35:35'),
+(93, 1, 'archive_client', 'clients', 'client', 10, 'Archivage client 337819647', '2026-04-17 21:54:45'),
+(94, 1, 'create_pending_debit', 'pending_debits', 'client', 12, 'Création d’un débit dû sans exécution immédiate', '2026-04-17 23:37:00'),
+(95, 1, 'create_pending_debit', 'pending_debits', 'client', 12, 'Création d’un débit dû sans exécution immédiate', '2026-04-17 23:42:20'),
+(96, 1, 'login', 'auth', 'user', 1, 'Connexion utilisateur', '2026-04-18 14:09:19'),
+(97, 1, 'login', 'auth', 'user', 1, 'Connexion utilisateur', '2026-04-18 17:13:10'),
+(98, 1, 'logout', 'auth', 'user', 1, 'Déconnexion utilisateur', '2026-04-19 14:48:49'),
+(99, 1, 'login', 'auth', 'user', 1, 'Connexion utilisateur', '2026-04-19 14:48:54'),
+(100, 1, 'logout', 'auth', 'user', 1, 'Déconnexion utilisateur', '2026-04-19 14:59:20'),
+(101, 1, 'login', 'auth', 'user', 1, 'Connexion utilisateur', '2026-04-19 14:59:24');
 
 --
 -- Index pour les tables déchargées
@@ -1853,7 +2194,7 @@ ALTER TABLE `pending_client_debit_logs`
 --
 ALTER TABLE `permissions`
   ADD PRIMARY KEY (`id`),
-  ADD UNIQUE KEY `code` (`code`);
+  ADD UNIQUE KEY `uq_permissions_code` (`code`);
 
 --
 -- Index pour la table `ref_operation_types`
@@ -2050,31 +2391,31 @@ ALTER TABLE `monthly_payment_run_items`
 -- AUTO_INCREMENT pour la table `notifications`
 --
 ALTER TABLE `notifications`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=22;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=24;
 
 --
 -- AUTO_INCREMENT pour la table `operations`
 --
 ALTER TABLE `operations`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=51;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=57;
 
 --
 -- AUTO_INCREMENT pour la table `pending_client_debits`
 --
 ALTER TABLE `pending_client_debits`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
 
 --
 -- AUTO_INCREMENT pour la table `pending_client_debit_logs`
 --
 ALTER TABLE `pending_client_debit_logs`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
 
 --
 -- AUTO_INCREMENT pour la table `permissions`
 --
 ALTER TABLE `permissions`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=734;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=989;
 
 --
 -- AUTO_INCREMENT pour la table `ref_operation_types`
@@ -2134,7 +2475,7 @@ ALTER TABLE `users`
 -- AUTO_INCREMENT pour la table `user_logs`
 --
 ALTER TABLE `user_logs`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=83;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=102;
 
 --
 -- Contraintes pour les tables déchargées
