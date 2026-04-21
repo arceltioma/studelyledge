@@ -337,7 +337,7 @@ if (!function_exists('currentUserCanAll')) {
 if (!function_exists('requirePermission')) {
     function requirePermission(PDO $pdo, string $permissionCode): void
     {
-        if (!currentUserCan($pdo, $permissionCode)) {
+        if (!studelyCanAccess($pdo, $permissionCode)) {
             http_response_code(403);
             exit('Accès refusé.');
         }
@@ -354,70 +354,163 @@ if (!function_exists('studelyAccessMap')) {
     function studelyAccessMap(): array
     {
         return [
+
+            // Dashboard / analytics / search
             'dashboard_view_page' => ['dashboard_view', 'admin_manage'],
             'analytics_view_page' => ['analytics_view', 'dashboard_view', 'admin_manage'],
+            'global_search_view_page' => ['dashboard_view', 'analytics_view', 'admin_manage'],
+            'accounting_balance_audit_page' => ['accounting_balance_audit_view', 'accounting_rules_manage', 'admin_manage'],
 
+            // Clients
             'clients_view_page' => ['clients_view', 'clients_manage', 'admin_manage'],
-            'clients_create_page' => ['clients_create', 'clients_manage', 'admin_manage'],
-            'clients_edit_page' => ['clients_edit', 'clients_manage', 'admin_manage'],
+            'client_view_page' => ['clients_view', 'clients_manage', 'admin_manage'],
+            'client_create_page' => ['clients_create', 'clients_manage', 'admin_manage'],
+            'client_edit_page' => ['clients_edit', 'clients_manage', 'admin_manage'],
             'clients_delete_page' => ['clients_delete', 'clients_manage', 'admin_manage'],
             'clients_archive_page' => ['clients_archive', 'clients_edit', 'clients_manage', 'admin_manage'],
+            'client_accounts_view_page' => ['clients_view', 'clients_manage', 'admin_manage'],
+            'client_account_view_page' => ['clients_view', 'clients_manage', 'admin_manage'],
+            'client_timeline_view_page' => ['clients_view', 'clients_manage', 'admin_manage'],
+            'clients_import_page' => ['clients_import', 'clients_create', 'clients_manage', 'admin_manage'],
 
+            // Operations
             'operations_view_page' => ['operations_view', 'operations_manage', 'admin_manage'],
-            'operations_create_page' => ['operations_create', 'operations_manage', 'admin_manage'],
-            'operations_edit_page' => ['operations_edit', 'operations_manage', 'admin_manage'],
-            'operations_delete_page' => ['operations_delete', 'operations_manage', 'admin_manage'],
-            'operations_validate_page' => ['operations_validate', 'operations_manage', 'admin_manage'],
+            'operation_view_page' => ['operations_view', 'operations_manage', 'admin_manage'],
+            'operation_create_page' => ['operations_create', 'operations_manage', 'admin_manage'],
+            'operation_edit_page' => ['operations_edit', 'operations_manage', 'admin_manage'],
+            'operation_delete_page' => ['operations_delete', 'operations_manage', 'admin_manage'],
+            'operations_monthly_run_page' => ['operations_monthly_run', 'operations_manage', 'admin_manage'],
 
+            // Manual actions
+            'manual_actions_create_page' => ['manual_actions_create', 'operations_create', 'operations_manage', 'admin_manage'],
+
+            // Imports
             'imports_upload_page' => ['imports_upload', 'imports_create', 'imports_manage', 'admin_manage'],
             'imports_preview_page' => ['imports_preview', 'imports_upload', 'imports_create', 'imports_manage', 'admin_manage'],
             'imports_validate_page' => ['imports_validate', 'imports_manage', 'admin_manage'],
+            'imports_validate_batch_page' => ['imports_validate_batch', 'imports_validate', 'imports_manage', 'admin_manage'],
             'imports_journal_page' => ['imports_journal', 'imports_manage', 'admin_manage'],
-            'imports_rejected_page' => ['imports_rejected_manage', 'imports_manage', 'admin_manage'],
+            'imports_mapping_page' => ['imports_mapping_manage', 'imports_manage', 'admin_manage'],
+            'imports_rejected_rows_page' => ['imports_rejected_manage', 'imports_manage', 'admin_manage'],
+            'imports_correct_rejected_row_page' => ['imports_correct_rejected_rows', 'imports_rejected_manage', 'imports_manage', 'admin_manage'],
 
+            // Monthly payments
+            'monthly_runs_list_page' => ['monthly_runs_view', 'monthly_run_execute', 'monthly_payments_validate', 'admin_manage'],
+            'monthly_run_view_page' => ['monthly_runs_view', 'monthly_run_execute', 'monthly_payments_validate', 'admin_manage'],
+            'monthly_run_execute_page' => ['monthly_run_execute', 'monthly_payments_validate', 'admin_manage'],
+            'monthly_run_cancel_page' => ['monthly_run_cancel', 'monthly_run_execute', 'admin_manage'],
+            'monthly_payments_import_page' => ['monthly_payments_import', 'imports_manage', 'admin_manage'],
+            'monthly_payments_preview_page' => ['monthly_payments_import', 'monthly_payments_validate', 'imports_manage', 'admin_manage'],
+            'monthly_payments_validate_page' => ['monthly_payments_validate', 'imports_manage', 'admin_manage'],
+
+            // Pending debits
+            'pending_debits_view_page' => ['pending_debits_view', 'pending_debits_manage', 'admin_manage'],
+            'pending_debit_view_page' => ['pending_debits_view', 'pending_debits_manage', 'admin_manage'],
+            'pending_debit_edit_page' => ['pending_debits_edit', 'pending_debits_manage', 'admin_manage'],
+            'pending_debit_execute_page' => ['pending_debits_execute', 'pending_debits_manage', 'admin_manage'],
+            'pending_debit_cancel_page' => ['pending_debits_cancel', 'pending_debits_manage', 'admin_manage'],
+
+            // Treasury
             'treasury_view_page' => ['treasury_view', 'treasury_manage', 'admin_manage'],
+            'treasury_view_detail_page' => ['treasury_view', 'treasury_manage', 'admin_manage'],
             'treasury_create_page' => ['treasury_create', 'treasury_manage', 'admin_manage'],
             'treasury_edit_page' => ['treasury_edit', 'treasury_manage', 'admin_manage'],
-            'treasury_delete_page' => ['treasury_delete', 'treasury_manage', 'admin_manage'],
+            'treasury_archive_page' => ['treasury_archive', 'treasury_manage', 'admin_manage'],
             'treasury_import_page' => ['treasury_import', 'treasury_manage', 'admin_manage'],
+            'bank_accounts_view_page' => ['treasury_view', 'treasury_manage', 'admin_manage'],
+            'treasury_service_accounts_page' => ['treasury_view', 'service_accounts_view', 'treasury_manage', 'admin_manage'],
 
+            // Service accounts
+            'service_accounts_manage_page' => ['service_accounts_view', 'service_accounts_edit', 'service_accounts_archive', 'admin_manage'],
+            'service_accounts_view_page' => ['service_accounts_view', 'service_accounts_edit', 'service_accounts_archive', 'admin_manage'],
+            'service_accounts_create_page' => ['service_accounts_create', 'service_accounts_edit', 'admin_manage'],
+            'service_accounts_edit_page' => ['service_accounts_edit', 'admin_manage'],
+            'service_accounts_archive_page' => ['service_accounts_archive', 'admin_manage'],
+            'service_accounts_import_page' => ['service_accounts_import', 'service_accounts_edit', 'admin_manage'],
+
+            // Statements
             'statements_view_page' => ['statements_view', 'clients_view', 'admin_manage'],
-            'statements_export_page' => ['statements_export', 'statements_view', 'clients_view', 'admin_manage'],
+            'account_statements_view_page' => ['statements_view', 'clients_view', 'admin_manage'],
+            'client_statement_view_page' => ['statements_view', 'clients_view', 'admin_manage'],
+            'client_profiles_view_page' => ['statements_view', 'clients_view', 'admin_manage'],
+            'bulk_statement_export_page' => ['bulk_statement_export', 'statements_export', 'admin_manage'],
+            'generate_statement_pdf_page' => ['statements_export_single', 'statements_export', 'admin_manage'],
+            'generate_bulk_pdf_page' => ['statements_export_bulk', 'bulk_statement_export', 'statements_export', 'admin_manage'],
 
-            'support_view_page' => ['support_view', 'support_requests_view', 'support_manage', 'support_admin_manage', 'admin_manage'],
-            'support_create_page' => ['support_create', 'support_view', 'support_requests_view', 'support_manage', 'support_admin_manage', 'admin_manage'],
-            'support_admin_page' => ['support_admin_manage', 'support_manage', 'admin_manage'],
+            // Notifications / support
+            'notifications_view_page' => ['notifications_view', 'dashboard_view', 'admin_manage'],
+            'support_requests_view_page' => ['support_requests_view', 'support_manage', 'support_admin_manage', 'admin_manage'],
+            'support_request_create_page' => ['support_request_create', 'support_create', 'support_view', 'admin_manage'],
 
-            'admin_functional_page' => ['admin_functional_view', 'admin_manage'],
-            'services_manage_page' => ['services_manage', 'admin_functional_view', 'admin_manage'],
-            'operation_types_manage_page' => ['operation_types_manage', 'admin_functional_view', 'admin_manage'],
-            'service_accounts_manage_page' => ['service_accounts_view', 'admin_functional_view', 'admin_manage'],
-            'statuses_manage_page' => ['statuses_manage', 'admin_functional_view', 'admin_manage'],
+            // Admin functional
+            'admin_functional_dashboard_view_page' => ['admin_functional_view', 'admin_manage'],
+            'manage_services_page' => ['services_manage', 'admin_functional_view', 'admin_manage'],
+            'create_service_page' => ['services_create', 'services_manage', 'admin_functional_view', 'admin_manage'],
+            'edit_service_page' => ['services_edit', 'services_manage', 'admin_functional_view', 'admin_manage'],
+            'delete_service_page' => ['services_delete', 'services_manage', 'admin_functional_view', 'admin_manage'],
+            'manage_operation_types_page' => ['operation_types_manage', 'admin_functional_view', 'admin_manage'],
+            'create_operation_type_page' => ['operation_types_create', 'operation_types_manage', 'admin_functional_view', 'admin_manage'],
+            'edit_operation_type_page' => ['operation_types_edit', 'operation_types_manage', 'admin_functional_view', 'admin_manage'],
+            'delete_operation_type_page' => ['operation_types_delete', 'operation_types_manage', 'admin_functional_view', 'admin_manage'],
+            'manage_accounts_page' => ['accounts_manage', 'admin_functional_view', 'admin_manage'],
+            'manage_accounting_rules_page' => ['accounting_rules_manage', 'admin_functional_view', 'admin_manage'],
+            'accounting_rule_create_page' => ['accounting_rules_create', 'accounting_rules_manage', 'admin_functional_view', 'admin_manage'],
+            'accounting_rule_edit_page' => ['accounting_rules_edit', 'accounting_rules_manage', 'admin_functional_view', 'admin_manage'],
+            'accounting_rule_delete_page' => ['accounting_rules_delete', 'accounting_rules_manage', 'admin_functional_view', 'admin_manage'],
+            'accounting_rule_view_page' => ['accounting_rules_manage', 'admin_functional_view', 'admin_manage'],
+            'catalogs_manage_page' => ['catalogs_manage', 'admin_functional_view', 'admin_manage'],
 
-            'admin_dashboard_page' => ['admin_dashboard_view', 'admin_manage'],
-            'users_manage_page' => ['users_manage', 'admin_manage'],
-            'roles_manage_page' => ['roles_manage', 'admin_manage'],
-            'permissions_manage_page' => ['permissions_manage', 'admin_manage'],
+            // Admin technique
+            'admin_dashboard_view_page' => ['admin_dashboard_view', 'admin_manage'],
+            'admin_users_manage_page' => ['admin_users_manage', 'users_manage', 'admin_manage'],
+            'user_create_page' => ['users_create', 'users_manage', 'admin_manage'],
+            'user_edit_page' => ['users_edit', 'users_manage', 'admin_manage'],
+            'user_delete_page' => ['users_delete', 'users_manage', 'admin_manage'],
+            'admin_roles_manage_page' => ['admin_roles_manage', 'roles_manage', 'admin_manage'],
+            'roles_view_page' => ['roles_view', 'roles_manage', 'admin_manage'],
+            'access_matrix_manage_page' => ['access_matrix_manage', 'permissions_manage', 'admin_manage'],
             'user_logs_view_page' => ['user_logs_view', 'admin_manage'],
+            'audit_logs_view_page' => ['audit_logs_view', 'admin_manage'],
+            'intelligence_center_view_page' => ['intelligence_center_view', 'admin_manage'],
             'settings_manage_page' => ['settings_manage', 'admin_manage'],
-
-            'service_accounts_import_page' => ['service_accounts_view', 'service_accounts_manage', 'admin_functional_view', 'admin_manage'],
-
-            'pending_debits_view_page' => ['pending_debits_view', 'pending_debits_manage', 'admin_manage'],
-            'pending_debits_edit_page' => ['pending_debits_edit', 'pending_debits_manage', 'admin_manage'],
-            'pending_debits_execute_page' => ['pending_debits_execute', 'pending_debits_manage', 'admin_manage'],
-            'pending_debits_cancel_page' => ['pending_debits_cancel', 'pending_debits_manage', 'admin_manage'],
-
-            'notifications_view_page' => ['dashboard_view', 'admin_manage'],
-            'intelligence_center_page' => ['admin_dashboard_view', 'admin_manage'],
+            'statuses_manage_page' => ['statuses_manage', 'admin_functional_view', 'admin_manage'],
+            'categories_manage_page' => ['categories_manage', 'admin_manage'],
         ];
+    }
+}
+if (!function_exists('studelyResolveAccessCodes')) {
+    function studelyResolveAccessCodes(string $permissionCode): array
+    {
+        $permissionCode = trim($permissionCode);
+        if ($permissionCode === '') {
+            return [];
+        }
+
+        $map = function_exists('studelyAccessMap') ? studelyAccessMap() : [];
+        $resolved = $map[$permissionCode] ?? [$permissionCode];
+
+        $resolved = array_values(array_unique(array_filter(
+            array_map(static fn($v) => is_string($v) ? trim($v) : '', $resolved),
+            static fn($v) => $v !== ''
+        )));
+
+        if (!$resolved) {
+            $resolved = [$permissionCode];
+        }
+
+        return $resolved;
     }
 }
 
 if (!function_exists('studelyCanAccess')) {
     function studelyCanAccess(PDO $pdo, string $permissionCode): bool
     {
-        return currentUserCan($pdo, $permissionCode);
+        $resolvedCodes = studelyResolveAccessCodes($permissionCode);
+        if (!$resolvedCodes) {
+            return false;
+        }
+
+        return currentUserCanAny($pdo, $resolvedCodes);
     }
 }
 
@@ -428,7 +521,6 @@ if (!function_exists('studelyEnforceAccess')) {
             session_start();
         }
 
-        // 1. Vérifier login
         if (!isset($_SESSION['user_id']) || (int)$_SESSION['user_id'] <= 0) {
             header('Location: ' . (defined('APP_URL') ? APP_URL . 'login.php' : '/login.php'));
             exit;
@@ -436,21 +528,26 @@ if (!function_exists('studelyEnforceAccess')) {
 
         $roleId = (int)($_SESSION['role_id'] ?? 0);
 
-        // 2. Super admin bypass
+        // Super admin bypass total
         if ($roleId === 1) {
             return;
         }
 
-        // 3. Vérifier permission
-        if (!currentUserCan($pdo, $permissionCode)) {
-
+        if (!studelyCanAccess($pdo, $permissionCode)) {
             if ($redirect) {
                 header('Location: ' . (defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php?error=access_denied' : '/'));
                 exit;
             }
 
             http_response_code(403);
-            exit('Accès refusé : permission "' . htmlspecialchars($permissionCode) . '" requise.');
+
+            $resolvedCodes = studelyResolveAccessCodes($permissionCode);
+            exit(
+                'Accès refusé : permission "' .
+                htmlspecialchars($permissionCode) .
+                '" requise. Permissions acceptées : ' .
+                htmlspecialchars(implode(', ', $resolvedCodes))
+            );
         }
     }
 }
@@ -463,24 +560,110 @@ if (!function_exists('studelyModulePermissions')) {
             'dashboard' => ['dashboard_view'],
             'analytics' => ['analytics_view'],
 
-            'clients' => ['clients_view', 'clients_create', 'clients_edit', 'clients_delete', 'clients_archive', 'clients_manage'],
-            'operations' => ['operations_view', 'operations_create', 'operations_edit', 'operations_delete', 'operations_validate', 'operations_manage'],
-            'imports' => ['imports_upload', 'imports_create', 'imports_preview', 'imports_validate', 'imports_journal', 'imports_rejected_manage', 'imports_manage'],
-            'treasury' => ['treasury_view', 'treasury_create', 'treasury_edit', 'treasury_delete', 'treasury_import', 'treasury_manage'],
-            'statements' => ['statements_view', 'statements_export'],
+            'clients' => [
+                'clients_view',
+                'clients_create',
+                'clients_edit',
+                'clients_delete',
+                'clients_archive',
+                'clients_import',
+                'clients_manage'
+            ],
 
-            'support' => ['support_view', 'support_requests_view', 'support_create', 'support_manage', 'support_admin_manage'],
+            'operations' => [
+                'operations_view',
+                'operations_create',
+                'operations_edit',
+                'operations_delete',
+                'operations_validate',
+                'operations_monthly_run',
+                'operations_manage'
+            ],
+
+            'imports' => [
+                'imports_upload',
+                'imports_create',
+                'imports_preview',
+                'imports_validate',
+                'imports_validate_batch',
+                'imports_journal',
+                'imports_mapping_manage',
+                'imports_correct_rejected_rows',
+                'imports_rejected_manage',
+                'imports_manage'
+            ],
+
+            'treasury' => [
+                'treasury_view',
+                'treasury_create',
+                'treasury_edit',
+                'treasury_delete',
+                'treasury_archive',
+                'treasury_import',
+                'treasury_manage'
+            ],
+
+            'statements' => [
+                'statements_view',
+                'statements_export',
+                'statements_export_single',
+                'statements_export_bulk',
+                'bulk_statement_export'
+            ],
+
+            'support' => [
+                'support_view',
+                'support_requests_view',
+                'support_create',
+                'support_request_create',
+                'support_manage',
+                'support_admin_manage'
+            ],
 
             'admin_functional' => [
                 'admin_functional_view',
                 'services_manage',
+                'services_create',
+                'services_edit',
+                'services_delete',
                 'operation_types_manage',
+                'operation_types_create',
+                'operation_types_edit',
+                'operation_types_delete',
                 'service_accounts_view',
-                'service_accounts_manage',
-                'statuses_manage'
+                'service_accounts_create',
+                'service_accounts_edit',
+                'service_accounts_archive',
+                'service_accounts_import',
+                'accounting_rules_manage',
+                'accounting_rules_create',
+                'accounting_rules_edit',
+                'accounting_rules_delete',
+                'accounting_balance_audit_view',
+                'catalogs_manage',
+                'statuses_manage',
+                'accounts_manage'
             ],
 
-            'admin' => ['admin_dashboard_view', 'users_manage', 'roles_manage', 'permissions_manage', 'user_logs_view', 'settings_manage', 'admin_manage'],
+            'admin' => [
+                'admin_dashboard_view',
+                'admin_users_manage',
+                'users_manage',
+                'users_create',
+                'users_edit',
+                'users_delete',
+                'admin_roles_manage',
+                'roles_manage',
+                'roles_view',
+                'permissions_manage',
+                'access_matrix_manage',
+                'user_logs_view',
+                'audit_logs_view',
+                'intelligence_center_view',
+                'settings_manage',
+                'categories_manage',
+                'admin_manage'
+            ],
 
             'pending_debits' => [
                 'pending_debits_view',
@@ -490,8 +673,11 @@ if (!function_exists('studelyModulePermissions')) {
                 'pending_debits_cancel'
             ],
 
-            'notifications' => ['dashboard_view', 'admin_manage'],
-            'intelligence' => ['admin_dashboard_view', 'admin_manage'],
+            'notifications' => [
+                'notifications_view',
+                'dashboard_view',
+                'admin_manage'
+            ],
         ];
     }
 }
@@ -8940,21 +9126,23 @@ if (!function_exists('studely_defined_permissions')) {
             'analytics_view_page' => 'Accès aux analyses et tableaux de bord avancés',
             'global_search_view_page' => 'Accès à la recherche globale',
 
-            'clients_view_page' => 'Accès à la liste des clients',
+            'client_view_page' => 'Accès à la liste des clients',
             'client_view_page' => 'Accès à la fiche client',
             'client_create_page' => 'Accès à la création client',
             'client_edit_page' => 'Accès à la modification client',
-            'clients_archive_page' => 'Accès à l’archivage / réactivation client',
-            'clients_delete_page' => 'Accès à la suppression client',
+            'client_archive_page' => 'Accès à l’archivage / réactivation client',
+            'client_delete_page' => 'Accès à la suppression client',
             'client_accounts_view_page' => 'Accès à la liste des comptes clients 411',
             'client_timeline_view_page' => 'Accès à la timeline client',
             'clients_import_page' => 'Accès à l’import des clients',
+            'client_account_view_page' => 'Voir la page détail d’un compte client 411',
+            'client_account_view' => 'Consulter le détail d’un compte client 411',
 
-            'clients_create' => 'Créer un client',
-            'clients_edit' => 'Modifier un client',
-            'clients_archive' => 'Archiver / réactiver un client',
-            'clients_delete' => 'Supprimer un client',
-            'clients_import' => 'Importer des clients',
+            'client_create' => 'Créer un client',
+            'client_edit' => 'Modifier un client',
+            'client_archive' => 'Archiver / réactiver un client',
+            'client_delete' => 'Supprimer un client',
+            'client_import' => 'Importer des clients',
 
             'operations_view_page' => 'Accès à la liste des opérations',
             'operation_view_page' => 'Accès au détail d’une opération',

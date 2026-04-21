@@ -10,7 +10,7 @@ require_once __DIR__ . '/../../config/security.php';
 studelyEnforceCurrentPageAccess($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    studelyEnforceActionAccess($pdo, 'run_monthly_client_operations');
+    studelyEnforceActionAccess($pdo, 'operations_monthly_run');
 }
 
 if (session_status() === PHP_SESSION_NONE) {

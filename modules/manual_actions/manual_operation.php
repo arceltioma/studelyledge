@@ -322,6 +322,87 @@ $pageSubtitle = 'Création moderne, guidée et sécurisée d’une opération ma
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
+<style>
+.manual-family-card {
+    border: 2px solid #e5e7eb;
+    border-radius: 16px;
+    padding: 18px;
+    transition: all 0.2s ease;
+}
+
+.manual-family-card--debit {
+    border-color: #dc2626;
+    box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.08);
+}
+
+.manual-family-card--credit {
+    border-color: #16a34a;
+    box-shadow: 0 0 0 1px rgba(22, 163, 74, 0.08);
+}
+
+.manual-family-options {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+}
+
+.manual-family-option {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-width: 78px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: #fff;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+}
+
+.manual-family-option input[type="radio"] {
+    margin: 0;
+    transform: scale(1.15);
+    accent-color: #2563eb;
+}
+
+.manual-family-option__code {
+    font-weight: 700;
+    line-height: 1;
+    margin: 0;
+}
+
+.manual-family-option--debit {
+    border: 2px solid #dc2626;
+    color: #991b1b;
+    background: #fff5f5;
+}
+
+.manual-family-option--debit input[type="radio"] {
+    accent-color: #dc2626;
+}
+
+.manual-family-option--debit:hover {
+    background: #fee2e2;
+}
+
+.manual-family-option--credit {
+    border: 2px solid #16a34a;
+    color: #166534;
+    background: #f0fdf4;
+}
+
+.manual-family-option--credit input[type="radio"] {
+    accent-color: #16a34a;
+}
+
+.manual-family-option--credit:hover {
+    background: #dcfce7;
+}
+</style>
+
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
 
@@ -396,21 +477,21 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <?= csrf_input() ?>
 
                     <div class="dashboard-grid-2">
-                        <div class="table-card">
+                        <div class="manual-family-card manual-family-card--debit">
                             <h4 class="section-title" style="margin-bottom:14px;">Compte débité</h4>
 
-                            <div class="btn-group" style="margin-bottom:14px; flex-wrap:wrap; gap:12px;">
-                                <label class="badge badge-outline">
+                            <div class="manual-family-options">
+                                <label class="manual-family-option manual-family-option--debit">
                                     <input type="radio" name="debit_family" value="411" <?= $formData['debit_family'] === '411' ? 'checked' : '' ?>>
-                                    <strong style="margin-left:8px;">411</strong>
+                                    <span class="manual-family-option__code">411</span>
                                 </label>
-                                <label class="badge badge-outline">
+                                <label class="manual-family-option manual-family-option--debit">
                                     <input type="radio" name="debit_family" value="512" <?= $formData['debit_family'] === '512' ? 'checked' : '' ?>>
-                                    <strong style="margin-left:8px;">512</strong>
+                                    <span class="manual-family-option__code">512</span>
                                 </label>
-                                <label class="badge badge-outline">
+                                <label class="manual-family-option manual-family-option--debit">
                                     <input type="radio" name="debit_family" value="706" <?= $formData['debit_family'] === '706' ? 'checked' : '' ?>>
-                                    <strong style="margin-left:8px;">706</strong>
+                                    <span class="manual-family-option__code">706</span>
                                 </label>
                             </div>
 
@@ -431,21 +512,21 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             </select>
                         </div>
 
-                        <div class="table-card">
+                        <div class="manual-family-card manual-family-card--credit">
                             <h4 class="section-title" style="margin-bottom:14px;">Compte crédité</h4>
 
-                            <div class="btn-group" style="margin-bottom:14px; flex-wrap:wrap; gap:12px;">
-                                <label class="badge badge-outline">
+                            <div class="manual-family-options">
+                                <label class="manual-family-option manual-family-option--credit">
                                     <input type="radio" name="credit_family" value="411" <?= $formData['credit_family'] === '411' ? 'checked' : '' ?>>
-                                    <strong style="margin-left:8px;">411</strong>
+                                    <span class="manual-family-option__code">411</span>
                                 </label>
-                                <label class="badge badge-outline">
+                                <label class="manual-family-option manual-family-option--credit">
                                     <input type="radio" name="credit_family" value="512" <?= $formData['credit_family'] === '512' ? 'checked' : '' ?>>
-                                    <strong style="margin-left:8px;">512</strong>
+                                    <span class="manual-family-option__code">512</span>
                                 </label>
-                                <label class="badge badge-outline">
+                                <label class="manual-family-option manual-family-option--credit">
                                     <input type="radio" name="credit_family" value="706" <?= $formData['credit_family'] === '706' ? 'checked' : '' ?>>
-                                    <strong style="margin-left:8px;">706</strong>
+                                    <span class="manual-family-option__code">706</span>
                                 </label>
                             </div>
 

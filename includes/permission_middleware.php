@@ -32,6 +32,10 @@ if (!function_exists('pmw_store_intended_url')) {
             return;
         }
 
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+
         $_SESSION['intended_url'] = (string)$_SERVER['REQUEST_URI'];
     }
 }
@@ -39,7 +43,14 @@ if (!function_exists('pmw_store_intended_url')) {
 if (!function_exists('pmw_consume_intended_url')) {
     function pmw_consume_intended_url(?string $default = null): string
     {
-        $url = $_SESSION['intended_url'] ?? $default ?? (defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php' : '/');
+        if (session_status() === PHP_SESSION_NONE) {
+            session_start();
+        }
+
+        $url = $_SESSION['intended_url']
+            ?? $default
+            ?? (defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php' : '/');
+
         unset($_SESSION['intended_url']);
 
         return (string)$url;
@@ -77,12 +88,14 @@ if (!function_exists('enforcePagePermission')) {
     {
         ensureAuthenticated();
 
-        if (currentUserCan($pdo, $permissionCode)) {
+        if (function_exists('studelyCanAccess') && studelyCanAccess($pdo, $permissionCode)) {
             return;
         }
 
         if ($redirectIfUnauthorized) {
-            $target = defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php?error=access_denied' : '/';
+            $target = defined('APP_URL')
+                ? APP_URL . 'modules/dashboard/dashboard.php?error=access_denied'
+                : '/';
             pmw_redirect($target);
         }
 
@@ -96,13 +109,19 @@ if (!function_exists('enforceAnyPermission')) {
         ensureAuthenticated();
 
         foreach ($permissionCodes as $permissionCode) {
-            if (is_string($permissionCode) && $permissionCode !== '' && currentUserCan($pdo, $permissionCode)) {
+            if (!is_string($permissionCode) || trim($permissionCode) === '') {
+                continue;
+            }
+
+            if (function_exists('studelyCanAccess') && studelyCanAccess($pdo, $permissionCode)) {
                 return;
             }
         }
 
         if ($redirectIfUnauthorized) {
-            $target = defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php?error=access_denied' : '/';
+            $target = defined('APP_URL')
+                ? APP_URL . 'modules/dashboard/dashboard.php?error=access_denied'
+                : '/';
             pmw_redirect($target);
         }
 
@@ -116,13 +135,15 @@ if (!function_exists('enforceAllPermissions')) {
         ensureAuthenticated();
 
         foreach ($permissionCodes as $permissionCode) {
-            if (!is_string($permissionCode) || $permissionCode === '') {
+            if (!is_string($permissionCode) || trim($permissionCode) === '') {
                 continue;
             }
 
-            if (!currentUserCan($pdo, $permissionCode)) {
+            if (!(function_exists('studelyCanAccess') && studelyCanAccess($pdo, $permissionCode))) {
                 if ($redirectIfUnauthorized) {
-                    $target = defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php?error=access_denied' : '/';
+                    $target = defined('APP_URL')
+                        ? APP_URL . 'modules/dashboard/dashboard.php?error=access_denied'
+                        : '/';
                     pmw_redirect($target);
                 }
 
@@ -195,8 +216,10 @@ if (!function_exists('studely_page_permission_map')) {
             'modules/clients/client_create.php' => 'client_create_page',
             'modules/clients/client_edit.php' => 'client_edit_page',
             'modules/clients/clients_archive.php' => 'clients_archive_page',
+            'modules/clients/client_delete.php' => 'clients_delete_page',
             'modules/clients/clients_delete.php' => 'clients_delete_page',
             'modules/clients/client_accounts.php' => 'client_accounts_view_page',
+            'modules/clients/client_account_view.php' => 'client_account_view_page',
             'modules/clients/client_timeline.php' => 'client_timeline_view_page',
             'modules/clients/import_clients_csv.php' => 'clients_import_page',
 
@@ -206,7 +229,7 @@ if (!function_exists('studely_page_permission_map')) {
             'modules/operations/operation_create.php' => 'operation_create_page',
             'modules/operations/operation_edit.php' => 'operation_edit_page',
             'modules/operations/operation_delete.php' => 'operation_delete_page',
-            'modules/operations/run_monthly_client_operations.php' => 'run_monthly_client_operations',
+            'modules/operations/run_monthly_client_operations.php' => 'operations_monthly_run_page',
 
             // Manual actions
             'modules/manual_actions/manual_operation.php' => 'manual_actions_create_page',
@@ -231,9 +254,9 @@ if (!function_exists('studely_page_permission_map')) {
             'modules/monthly_payments/monthly_payments_import.php' => 'monthly_payments_import_page',
             'modules/monthly_payments/monthly_payments_preview.php' => 'monthly_payments_preview_page',
             'modules/monthly_payments/monthly_payments_validate.php' => 'monthly_payments_validate_page',
-            'modules/monthly_payments/import_monthly_payments.php' => 'import_monthly_payments_page',
+            'modules/monthly_payments/import_monthly_payments.php' => 'monthly_payments_import_page',
             'modules/monthly_payments/monthly_import_create.php' => 'monthly_payments_import_page',
-            'modules/monthly_payments/monthly_import_preview.php' => 'monthly_import_preview_page',
+            'modules/monthly_payments/monthly_import_preview.php' => 'monthly_payments_preview_page',
             'modules/monthly_payments/monthly_import_validate.php' => 'monthly_payments_validate_page',
             'modules/monthly_payments/monthly_payments_run.php' => 'monthly_run_execute_page',
 
@@ -281,9 +304,11 @@ if (!function_exists('studely_page_permission_map')) {
             // Admin functional
             'modules/admin_functional/dashboard.php' => 'admin_functional_dashboard_view_page',
             'modules/admin_functional/manage_services.php' => 'manage_services_page',
+            'modules/admin_functional/create_service.php' => 'create_service_page',
             'modules/admin_functional/edit_service.php' => 'edit_service_page',
             'modules/admin_functional/delete_service.php' => 'delete_service_page',
             'modules/admin_functional/manage_operation_types.php' => 'manage_operation_types_page',
+            'modules/admin_functional/create_operation_type.php' => 'create_operation_type_page',
             'modules/admin_functional/edit_operation_type.php' => 'edit_operation_type_page',
             'modules/admin_functional/delete_operation_type.php' => 'delete_operation_type_page',
             'modules/admin_functional/manage_accounts.php' => 'manage_accounts_page',
@@ -311,6 +336,7 @@ if (!function_exists('studely_page_permission_map')) {
             'modules/admin/settings.php' => 'settings_manage_page',
             'modules/admin/statuses.php' => 'statuses_manage_page',
             'modules/admin/categories.php' => 'categories_manage_page',
+            'modules/admin/seed_permissions.php' => 'access_matrix_manage_page',
         ];
     }
 }

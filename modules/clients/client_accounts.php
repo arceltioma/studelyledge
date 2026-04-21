@@ -202,6 +202,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 <td>
                                     <div class="btn-group btn-group--compact">
                                         <?php if (!empty($row['client_id'])): ?>
+                                            <a href="<?= e(APP_URL) ?>modules/clients/client_account_view.php?id=<?= (int)$row['client_id'] ?>"class="btn btn-outline btn-sm">Voir</a>
                                             <a href="<?= e(APP_URL) ?>modules/clients/client_view.php?id=<?= (int)$row['client_id'] ?>" class="btn btn-outline btn-sm">Client</a>
                                             <a href="<?= e(APP_URL) ?>modules/clients/client_edit.php?id=<?= (int)$row['client_id'] ?>" class="btn btn-success btn-sm">Modifier</a>
                                         <?php else: ?>

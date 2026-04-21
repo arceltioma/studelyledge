@@ -51,7 +51,8 @@ $groupMainOpen = sidebarGroupOpen([
     '/modules/manual_actions/',
     '/modules/treasury/',
     '/modules/service_accounts/',
-    '/modules/analytics/'
+    '/modules/analytics/',
+    '/modules/search/'
 ], $currentUri);
 
 $groupImportsOpen = sidebarGroupOpen([
@@ -173,6 +174,12 @@ $groupAdminTechnicalOpen = sidebarGroupOpen([
                     <?php if ($can('analytics_view_page')): ?>
                         <a class="sidebar-link <?= sidebarActive('/modules/analytics/', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/analytics/revenue_analysis.php">
                             <span>📈</span><span>Analytics</span>
+                        </a>
+                    <?php endif; ?>
+
+                    <?php if ($can('global_search_view_page')): ?>
+                        <a class="sidebar-link <?= sidebarActive('/modules/search/global_search.php', $currentUri) ?>" href="<?= e(APP_URL) ?>modules/search/global_search.php">
+                            <span>🔎</span><span>Recherche globale</span>
                         </a>
                     <?php endif; ?>
                 </div>
