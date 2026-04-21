@@ -6,10 +6,10 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'manual_actions_delete_page');
-} else {
-    enforcePagePermission($pdo, 'manual_actions_delete');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'monthly_run_cancel');
 }
 
 $runId = (int)($_GET['id'] ?? 0);

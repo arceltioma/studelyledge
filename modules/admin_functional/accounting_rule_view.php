@@ -8,10 +8,6 @@ require_once __DIR__ . '/../../includes/permission_middleware.php';
 
 studelyEnforceCurrentPageAccess($pdo);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    studelyEnforceActionAccess($pdo, 'accounting_rule_view_page');
-}
-
 if (!function_exists('arv_table_name')) {
     function arv_table_name(PDO $pdo, string $preferred, string $fallback): string
     {

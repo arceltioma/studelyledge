@@ -7,10 +7,14 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'treasury_edit_page');
-} else {
-    enforcePagePermission($pdo, 'treasury_edit');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'treasury_edit');
+}
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
 }
 
 $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
@@ -93,6 +97,59 @@ if (!function_exists('sl_treasury_edit_build_preview')) {
     }
 }
 
+if (!function_exists('sl_create_notification_if_possible')) {
+    function sl_create_notification_if_possible(
+        PDO $pdo,
+        string $type,
+        string $message,
+        string $level = 'info',
+        ?string $linkUrl = null,
+        ?string $entityType = null,
+        ?int $entityId = null,
+        ?int $createdBy = null
+    ): void {
+        if (!tableExists($pdo, 'notifications')) {
+            return;
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'type' => $type,
+            'message' => $message,
+            'level' => $level,
+            'link_url' => $linkUrl,
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'created_by' => $createdBy > 0 ? $createdBy : null,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'notifications', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'notifications', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (!$columns) {
+            return;
+        }
+
+        $sql = "INSERT INTO notifications (" . implode(', ', $columns) . ")
+                VALUES (" . implode(', ', $values) . ")";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+    }
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $formData = [
         'account_code' => trim((string)($_POST['account_code'] ?? '')),
@@ -141,6 +198,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($actionMode === 'save') {
+            $pdo->beginTransaction();
+
             $fields = [];
             $params = [];
 
@@ -183,17 +242,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 recomputeAllBalances($pdo);
             }
 
-            if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+            $userId = (int)($_SESSION['user_id'] ?? 0);
+
+            if (function_exists('logUserAction') && $userId > 0) {
                 logUserAction(
                     $pdo,
-                    (int)$_SESSION['user_id'],
+                    $userId,
                     'edit_treasury_account',
                     'treasury',
                     'treasury_account',
                     $id,
-                    'Modification d’un compte de trésorerie'
+                    'Modification du compte de trésorerie ' . $formData['account_code'] . ' - ' . $formData['account_label']
                 );
             }
+
+            sl_create_notification_if_possible(
+                $pdo,
+                'treasury_update',
+                'Compte de trésorerie mis à jour : ' . $formData['account_code'] . ' - ' . $formData['account_label'],
+                'info',
+                APP_URL . 'modules/treasury/treasury_view.php?id=' . $id,
+                'treasury_account',
+                $id,
+                $userId
+            );
+
+            $pdo->commit();
 
             $stmt = $pdo->prepare("SELECT * FROM treasury_accounts WHERE id = ? LIMIT 1");
             $stmt->execute([$id]);
@@ -219,6 +293,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ];
         }
     } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         $errorMessage = $e->getMessage();
         $previewMode = false;
         $previewData = null;

@@ -7,7 +7,11 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-enforcePagePermission($pdo, 'imports_journal');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'import_journal');
+}
 
 $rowId = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
 if ($rowId <= 0) {

@@ -8,9 +8,8 @@ require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
 studelyEnforceCurrentPageAccess($pdo);
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    studelyEnforceActionAccess($pdo, 'clients_archive_page');
+    studelyEnforceActionAccess($pdo, 'clients_archive');
 }
 
 $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
@@ -24,25 +23,38 @@ if (!in_array($action, ['archive', 'restore'], true)) {
     exit('Action invalide.');
 }
 
-$stmt = $pdo->prepare("
-    SELECT
-        c.*,
-        ba.id AS bank_account_id,
-        ba.account_number,
-        ba.account_name,
-        ba.initial_balance,
-        ba.balance AS current_balance_411
-    FROM clients c
-    LEFT JOIN bank_accounts ba
-        ON ba.account_number = c.generated_client_account
-    WHERE c.id = ?
-    LIMIT 1
-");
-$stmt->execute([$id]);
-$client = $stmt->fetch(PDO::FETCH_ASSOC);
+if (!function_exists('sl_get_client_archive_context')) {
+    function sl_get_client_archive_context(PDO $pdo, int $clientId): array
+    {
+        $stmt = $pdo->prepare("
+            SELECT
+                c.*,
+                ba.id AS bank_account_id,
+                ba.account_number,
+                ba.account_name,
+                ba.initial_balance,
+                ba.balance AS current_balance_411
+            FROM clients c
+            LEFT JOIN bank_accounts ba
+                ON ba.account_number = c.generated_client_account
+            WHERE c.id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$clientId]);
+        $client = $stmt->fetch(PDO::FETCH_ASSOC);
 
-if (!$client) {
-    exit('Client introuvable.');
+        if (!$client) {
+            throw new RuntimeException('Client introuvable.');
+        }
+
+        return $client;
+    }
+}
+
+try {
+    $client = sl_get_client_archive_context($pdo, $id);
+} catch (Throwable $e) {
+    exit($e->getMessage());
 }
 
 $errorMessage = '';
@@ -56,15 +68,19 @@ $default512 = function_exists('sl_find_default_archive_treasury_account')
     ? sl_find_default_archive_treasury_account($pdo)
     : null;
 
-$currentBalance411 = (float)($client['current_balance_411'] ?? 0);
+$currentBalance411 = round((float)($client['current_balance_411'] ?? 0), 2);
 $selectedTreasuryId = (int)($_POST['treasury_account_id'] ?? $_GET['treasury_account_id'] ?? ($default512['id'] ?? 0));
-$restoreBalance = (int)($_POST['restore_balance'] ?? 1) === 1;
+$restoreBalance = !isset($_POST['restore_balance']) ? true : ((int)$_POST['restore_balance'] === 1);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
             throw new RuntimeException('Jeton CSRF invalide.');
         }
+
+        // Recharger le client juste avant traitement pour travailler sur l’état le plus frais
+        $client = sl_get_client_archive_context($pdo, $id);
+        $currentBalance411 = round((float)($client['current_balance_411'] ?? 0), 2);
 
         $pdo->beginTransaction();
 
@@ -102,7 +118,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 sl_rebuild_client_balance($pdo, $id);
             }
 
-            if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+            if (function_exists('sl_audit_action_from_result')) {
+                sl_audit_action_from_result(
+                    $pdo,
+                    'archive_client',
+                    'clients',
+                    'client',
+                    $id,
+                    'Archivage client ' . (string)($client['client_code'] ?? $id),
+                    APP_URL . 'modules/clients/client_view.php?id=' . $id
+                );
+            } elseif (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
                 logUserAction(
                     $pdo,
                     (int)$_SESSION['user_id'],
@@ -144,7 +170,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 sl_rebuild_client_balance($pdo, $id);
             }
 
-            if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+            if (function_exists('sl_audit_action_from_result')) {
+                sl_audit_action_from_result(
+                    $pdo,
+                    $restoreBalance ? 'restore_client_with_balance' : 'restore_client_without_balance',
+                    'clients',
+                    'client',
+                    $id,
+                    $restoreBalance
+                        ? 'Réactivation client avec restitution du solde'
+                        : 'Réactivation client sans restitution du solde',
+                    APP_URL . 'modules/clients/client_view.php?id=' . $id
+                );
+            } elseif (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
                 logUserAction(
                     $pdo,
                     (int)$_SESSION['user_id'],
@@ -168,6 +206,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->rollBack();
         }
         $errorMessage = $e->getMessage();
+
+        // Recharger le client pour réafficher l’écran avec des données propres
+        try {
+            $client = sl_get_client_archive_context($pdo, $id);
+            $currentBalance411 = round((float)($client['current_balance_411'] ?? 0), 2);
+        } catch (Throwable $inner) {
+            // On garde le message initial
+        }
     }
 }
 
@@ -178,10 +224,8 @@ $pageSubtitle = $action === 'archive'
 
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
-
 <div class="layout">
     <?php require_once __DIR__ . '/../../includes/sidebar.php'; ?>
-
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
@@ -230,17 +274,14 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <span>Nom</span>
                         <strong><?= e((string)($client['full_name'] ?? '')) ?></strong>
                     </div>
-
                     <div class="sl-data-list__row">
                         <span>Libellé compte</span>
                         <strong><?= e((string)($client['account_name'] ?? '—')) ?></strong>
                     </div>
-
                     <div class="sl-data-list__row">
                         <span>Solde initial</span>
                         <strong><?= e(number_format((float)($client['initial_balance'] ?? 0), 2, ',', ' ')) ?></strong>
                     </div>
-
                     <div class="sl-data-list__row">
                         <span>Solde courant 411</span>
                         <strong><?= e(number_format((float)($client['current_balance_411'] ?? 0), 2, ',', ' ')) ?></strong>
@@ -314,17 +355,14 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <span>Client</span>
                             <strong>Sera passé en archivé</strong>
                         </div>
-
                         <div class="sl-data-list__row">
                             <span>Historique</span>
                             <strong>Une opération ARCHIVE_CLIENT sera créée</strong>
                         </div>
-
                         <div class="sl-data-list__row">
                             <span>Compte 411</span>
                             <strong><?= $currentBalance411 > 0 ? 'Sera soldé à 0' : 'Restera à 0' ?></strong>
                         </div>
-
                         <div class="sl-data-list__row">
                             <span>Compte 512</span>
                             <strong><?= $currentBalance411 > 0 ? 'Sera augmenté' : 'Sans mouvement' ?></strong>
@@ -334,17 +372,14 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <span>Client</span>
                             <strong>Sera réactivé</strong>
                         </div>
-
                         <div class="sl-data-list__row">
                             <span>Historique</span>
                             <strong><?= $restoreBalance ? 'Une opération RESTORE_CLIENT sera créée' : 'Pas de restitution comptable' ?></strong>
                         </div>
-
                         <div class="sl-data-list__row">
                             <span>Compte 411</span>
                             <strong><?= $restoreBalance ? 'Sera recrédité' : 'Restera inchangé' ?></strong>
                         </div>
-
                         <div class="sl-data-list__row">
                             <span>Compte 512</span>
                             <strong><?= $restoreBalance ? 'Sera diminué' : 'Restera inchangé' ?></strong>
@@ -357,5 +392,4 @@ require_once __DIR__ . '/../../includes/document_start.php';
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>
 </div>
-
 <?php require_once __DIR__ . '/../../includes/document_end.php'; ?>

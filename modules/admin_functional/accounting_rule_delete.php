@@ -10,7 +10,7 @@ require_once __DIR__ . '/../../config/security.php';
 studelyEnforceCurrentPageAccess($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    studelyEnforceActionAccess($pdo, 'accounting_rule_delete_page');
+    studelyEnforceActionAccess($pdo, 'accounting_rule_delete');
 }
 
 if (!function_exists('ard_table_name')) {

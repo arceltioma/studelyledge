@@ -8,10 +8,67 @@ require_once __DIR__ . '/../../includes/pending_debits_engine.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'pending_debits_execute_page');
-} else {
-    enforcePagePermission($pdo, 'pending_debits_execute');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'pending_debits_execute');
+}
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+if (!function_exists('sl_create_notification_if_possible')) {
+    function sl_create_notification_if_possible(
+        PDO $pdo,
+        string $type,
+        string $message,
+        string $level = 'info',
+        ?string $linkUrl = null,
+        ?string $entityType = null,
+        ?int $entityId = null,
+        ?int $createdBy = null
+    ): void {
+        if (!tableExists($pdo, 'notifications')) {
+            return;
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'type' => $type,
+            'message' => $message,
+            'level' => $level,
+            'link_url' => $linkUrl,
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'created_by' => $createdBy > 0 ? $createdBy : null,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'notifications', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'notifications', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (!$columns) {
+            return;
+        }
+
+        $sql = "INSERT INTO notifications (" . implode(', ', $columns) . ")
+                VALUES (" . implode(', ', $values) . ")";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+    }
 }
 
 $pendingDebitId = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
@@ -78,29 +135,100 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             sl_assert_client_operation_allowed($pdo, $clientId);
         }
 
+        if (isset($pendingDebit['client_is_active']) && (int)$pendingDebit['client_is_active'] !== 1) {
+            throw new RuntimeException('Le client lié à ce débit dû est archivé ou inactif.');
+        }
+
         $requestedAmount = (float)str_replace(',', '.', $formData['execution_amount']);
         if ($requestedAmount <= 0) {
             throw new RuntimeException('Le montant à initier doit être supérieur à 0.');
         }
 
+        $remainingBefore = (float)($pendingDebit['remaining_amount'] ?? 0);
+        if ($requestedAmount > $remainingBefore) {
+            throw new RuntimeException('Le montant demandé dépasse le restant dû.');
+        }
+
+        $userId = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
+
         $result = sl_execute_pending_client_debit(
             $pdo,
             $pendingDebitId,
             $requestedAmount,
-            isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
+            $userId > 0 ? $userId : null
         );
 
-        if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+        $executedAmount = (float)($result['executed_amount'] ?? 0);
+        $remainingAfter = (float)($result['remaining_amount'] ?? max(0, $remainingBefore - $executedAmount));
+        $newStatus = (string)($result['status'] ?? ($remainingAfter <= 0 ? 'resolved' : ($executedAmount > 0 ? 'partial' : $status)));
+        $operationId = (int)($result['operation_id'] ?? 0);
+
+        if (function_exists('logUserAction') && $userId > 0) {
             logUserAction(
                 $pdo,
-                (int)$_SESSION['user_id'],
+                $userId,
                 'execute_pending_debit',
-                'pending_client_debits',
+                'pending_debits',
                 'pending_client_debit',
                 $pendingDebitId,
-                'Exécution manuelle d’un débit dû #' . $pendingDebitId
+                'Exécution manuelle d’un débit dû #'
+                . $pendingDebitId
+                . ' | montant demandé: ' . number_format($requestedAmount, 2, '.', '')
+                . ' | montant exécuté: ' . number_format($executedAmount, 2, '.', '')
+                . ' | restant après exécution: ' . number_format($remainingAfter, 2, '.', '')
+                . ($operationId > 0 ? ' | opération créée: #' . $operationId : '')
             );
         }
+
+        $clientCode = (string)($pendingDebit['client_code'] ?? '');
+        $clientName = (string)($pendingDebit['full_name'] ?? '');
+        $currencyCode = (string)($pendingDebit['currency_code'] ?? $pendingDebit['client_currency'] ?? 'EUR');
+        $label = (string)($pendingDebit['label'] ?? 'Débit dû');
+
+        if ($executedAmount > 0) {
+            sl_create_notification_if_possible(
+                $pdo,
+                $newStatus === 'resolved' ? 'pending_debit_resolved' : 'pending_debit_executed',
+                'Débit dû exécuté'
+                . ($clientCode !== '' ? ' pour le client ' . $clientCode : '')
+                . ($clientName !== '' ? ' - ' . $clientName : '')
+                . ' | exécuté : ' . number_format($executedAmount, 2, ',', ' ')
+                . ' ' . $currencyCode
+                . ' | restant : ' . number_format($remainingAfter, 2, ',', ' ')
+                . ' ' . $currencyCode
+                . ($label !== '' ? ' | ' . $label : ''),
+                $newStatus === 'resolved' ? 'success' : 'info',
+                APP_URL . 'modules/pending_debits/pending_debit_view.php?id=' . $pendingDebitId,
+                'pending_client_debit',
+                $pendingDebitId,
+                $userId > 0 ? $userId : null
+            );
+        } else {
+            sl_create_notification_if_possible(
+                $pdo,
+                'pending_debit_execution_failed',
+                'Aucune exécution possible pour le débit dû'
+                . ($clientCode !== '' ? ' du client ' . $clientCode : '')
+                . ($clientName !== '' ? ' - ' . $clientName : '')
+                . ' | demandé : ' . number_format($requestedAmount, 2, ',', ' ')
+                . ' ' . $currencyCode
+                . ' | restant : ' . number_format($remainingBefore, 2, ',', ' ')
+                . ' ' . $currencyCode,
+                'warning',
+                APP_URL . 'modules/pending_debits/pending_debit_view.php?id=' . $pendingDebitId,
+                'pending_client_debit',
+                $pendingDebitId,
+                $userId > 0 ? $userId : null
+            );
+        }
+
+        $_SESSION['success_message'] = $executedAmount > 0
+            ? (
+                $newStatus === 'resolved'
+                    ? 'Le débit dû a été entièrement exécuté.'
+                    : 'Le débit dû a été exécuté partiellement avec succès.'
+            )
+            : 'Aucun montant n’a pu être exécuté pour ce débit dû.';
 
         header('Location: ' . APP_URL . 'modules/pending_debits/pending_debit_view.php?id=' . $pendingDebitId . '&executed=1');
         exit;
@@ -181,6 +309,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                 type="number"
                                 step="0.01"
                                 min="0.01"
+                                max="<?= e(number_format((float)($pendingDebit['remaining_amount'] ?? 0), 2, '.', '')) ?>"
                                 name="execution_amount"
                                 value="<?= e($formData['execution_amount']) ?>"
                                 required

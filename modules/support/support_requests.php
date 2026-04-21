@@ -6,7 +6,11 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-studelyEnforceAccess($pdo, 'support_view_page');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'support_request_create');
+}
 
 $requests = tableExists($pdo, 'support_requests')
     ? $pdo->query("

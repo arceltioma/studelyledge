@@ -7,7 +7,7 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-enforcePagePermission($pdo, 'imports_journal');
+studelyEnforceCurrentPageAccess($pdo);
 
 $batchId = (int)($_GET['batch_id'] ?? 0);
 if ($batchId <= 0) {

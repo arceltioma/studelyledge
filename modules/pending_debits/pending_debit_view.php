@@ -6,11 +6,7 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'pending_debits_view_page');
-} else {
-    enforcePagePermission($pdo, 'pending_debits_view');
-}
+studelyEnforceCurrentPageAccess($pdo);
 
 $pendingDebitId = (int)($_GET['id'] ?? 0);
 if ($pendingDebitId <= 0) {

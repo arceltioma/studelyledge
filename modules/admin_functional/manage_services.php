@@ -10,7 +10,7 @@ require_once __DIR__ . '/../../config/security.php';
 studelyEnforceCurrentPageAccess($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    studelyEnforceActionAccess($pdo, 'manage_services_page');
+    studelyEnforceActionAccess($pdo, 'manage_services');
 }
 if (!tableExists($pdo, 'ref_services')) {
     exit('Table ref_services introuvable.');

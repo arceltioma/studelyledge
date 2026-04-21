@@ -7,10 +7,10 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'imports_preview_page');
-} else {
-    enforcePagePermission($pdo, 'imports_preview');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'imports_preview');
 }
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -22,6 +22,70 @@ $pageSubtitle = 'Vérifie et corrige le rapprochement des colonnes avant la pré
 
 const SL_IMPORT_SESSION_KEY = 'studelyledger_operations_import_preview_v3';
 
+if (!function_exists('sl_import_mapping_create_notification')) {
+    function sl_import_mapping_create_notification(
+        PDO $pdo,
+        string $type,
+        string $message,
+        string $level = 'info',
+        ?string $linkUrl = null,
+        ?string $entityType = 'import',
+        ?int $entityId = null,
+        ?int $createdBy = null
+    ): void {
+        if (!tableExists($pdo, 'notifications')) {
+            return;
+        }
+
+        $allowedLevels = ['info', 'success', 'warning', 'danger'];
+        if (!in_array($level, $allowedLevels, true)) {
+            $level = 'info';
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'type' => $type,
+            'message' => $message,
+            'level' => $level,
+            'link_url' => $linkUrl,
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'is_read' => 0,
+            'created_by' => $createdBy,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'notifications', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'notifications', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (columnExists($pdo, 'notifications', 'updated_at')) {
+            $columns[] = 'updated_at';
+            $values[] = 'NULL';
+        }
+
+        if (!$columns) {
+            return;
+        }
+
+        $sql = "INSERT INTO notifications (" . implode(', ', $columns) . ")
+                VALUES (" . implode(', ', $values) . ")";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+    }
+}
+
 if (empty($_SESSION[SL_IMPORT_SESSION_KEY]['raw_rows']) || !is_array($_SESSION[SL_IMPORT_SESSION_KEY]['raw_rows'])) {
     $_SESSION['error_message'] = 'Aucun import en attente.';
     header('Location: ' . APP_URL . 'modules/imports/import_upload.php');
@@ -32,6 +96,7 @@ $importSession = &$_SESSION[SL_IMPORT_SESSION_KEY];
 $fileName = (string)($importSession['file_name'] ?? 'import.csv');
 $rawHeaders = $importSession['raw_headers'] ?? [];
 $suggestedMapping = $importSession['suggested_mapping'] ?? [];
+$userId = (int)($_SESSION['user_id'] ?? 0);
 
 $targetFields = [
     '' => '— Ignorer —',
@@ -95,10 +160,67 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $importSession['final_mapping'] = $sanitized;
         $importSession['rows'] = $mappedRows;
 
+        if (function_exists('logUserAction') && $userId > 0) {
+            logUserAction(
+                $pdo,
+                $userId,
+                'validate_import_mapping',
+                'imports',
+                'import',
+                null,
+                sprintf(
+                    'Validation du mapping import pour %s : %d colonne(s) source, %d champ(s) mappé(s), %d ligne(s) préparée(s)',
+                    $fileName,
+                    count($rawHeaders),
+                    count(array_filter($sanitized, static fn($v) => $v !== '')),
+                    count($mappedRows)
+                )
+            );
+        }
+
+        sl_import_mapping_create_notification(
+            $pdo,
+            'import_mapping_validated',
+            sprintf(
+                'Mapping import validé pour %s : %d colonne(s) mappée(s), %d ligne(s) prêtes pour prévisualisation.',
+                $fileName,
+                count(array_filter($sanitized, static fn($v) => $v !== '')),
+                count($mappedRows)
+            ),
+            'success',
+            APP_URL . 'modules/imports/import_preview.php',
+            'import',
+            null,
+            $userId > 0 ? $userId : null
+        );
+
         header('Location: ' . APP_URL . 'modules/imports/import_preview.php');
         exit;
     } catch (Throwable $e) {
         $errorMessage = $e->getMessage();
+
+        if (function_exists('logUserAction') && $userId > 0) {
+            logUserAction(
+                $pdo,
+                $userId,
+                'validate_import_mapping_failed',
+                'imports',
+                'import',
+                null,
+                'Échec validation mapping import pour ' . $fileName . ' : ' . $errorMessage
+            );
+        }
+
+        sl_import_mapping_create_notification(
+            $pdo,
+            'import_mapping_failed',
+            'Échec du mapping import pour ' . $fileName . ' : ' . $errorMessage,
+            'danger',
+            APP_URL . 'modules/imports/import_mapping.php',
+            'import',
+            null,
+            $userId > 0 ? $userId : null
+        );
     }
 }
 

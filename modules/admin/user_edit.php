@@ -9,6 +9,10 @@ require_once __DIR__ . '/../../config/security.php';
 
 studelyEnforceCurrentPageAccess($pdo);
 
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'users_edit');
+}
+
 if (!function_exists('aue_get_roles')) {
     function aue_get_roles(PDO $pdo): array
     {

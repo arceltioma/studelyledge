@@ -10,7 +10,7 @@ require_once __DIR__ . '/../../config/security.php';
 studelyEnforceCurrentPageAccess($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    studelyEnforceActionAccess($pdo, 'delete_operation_type_page');
+    studelyEnforceActionAccess($pdo, 'delete_operation_type');
 }
 $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
 if ($id <= 0) {

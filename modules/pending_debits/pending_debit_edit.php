@@ -5,11 +5,69 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
+require_once __DIR__ . '/../../config/security.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'pending_debits_edit_page', 'pending_debits_edit');
-} else {
-    enforcePagePermission($pdo, 'pending_debits_edit');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'pending_debits_edit');
+}
+
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+if (!function_exists('sl_create_notification_if_possible')) {
+    function sl_create_notification_if_possible(
+        PDO $pdo,
+        string $type,
+        string $message,
+        string $level = 'info',
+        ?string $linkUrl = null,
+        ?string $entityType = null,
+        ?int $entityId = null,
+        ?int $createdBy = null
+    ): void {
+        if (!tableExists($pdo, 'notifications')) {
+            return;
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'type' => $type,
+            'message' => $message,
+            'level' => $level,
+            'link_url' => $linkUrl,
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'created_by' => $createdBy > 0 ? $createdBy : null,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'notifications', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'notifications', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (!$columns) {
+            return;
+        }
+
+        $sql = "INSERT INTO notifications (" . implode(', ', $columns) . ")
+                VALUES (" . implode(', ', $values) . ")";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+    }
 }
 
 $id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
@@ -32,19 +90,48 @@ if (!$item) {
 }
 
 $error = '';
+$successMessage = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $remainingAmount = (float)str_replace(',', '.', (string)($_POST['remaining_amount'] ?? '0'));
-    $priorityLevel = trim((string)($_POST['priority_level'] ?? 'normal'));
-    $notes = trim((string)($_POST['notes'] ?? ''));
-    $status = trim((string)($_POST['status'] ?? 'pending'));
+    try {
+        if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
+            throw new RuntimeException('Jeton CSRF invalide.');
+        }
 
-    if ($remainingAmount < 0) {
-        $error = 'Le montant restant dû ne peut pas être négatif.';
-    } else {
-        $oldStatus = (string)$item['status'];
-        $newExecuted = max(0, (float)$item['initial_amount'] - $remainingAmount);
+        $remainingAmount = (float)str_replace(',', '.', (string)($_POST['remaining_amount'] ?? '0'));
+        $priorityLevel = trim((string)($_POST['priority_level'] ?? 'normal'));
+        $notes = trim((string)($_POST['notes'] ?? ''));
+        $status = trim((string)($_POST['status'] ?? 'pending'));
+
+        $allowedStatuses = ['pending', 'partial', 'ready', 'resolved', 'cancelled'];
+        $allowedPriorities = ['normal', 'high'];
+
+        if ($remainingAmount < 0) {
+            throw new RuntimeException('Le montant restant dû ne peut pas être négatif.');
+        }
+
+        if (!in_array($status, $allowedStatuses, true)) {
+            throw new RuntimeException('Statut invalide.');
+        }
+
+        if (!in_array($priorityLevel, $allowedPriorities, true)) {
+            throw new RuntimeException('Niveau de priorité invalide.');
+        }
+
+        $oldStatus = (string)($item['status'] ?? 'pending');
+        $initialAmount = (float)($item['initial_amount'] ?? 0);
+        $oldRemaining = (float)($item['remaining_amount'] ?? 0);
+        $oldExecuted = (float)($item['executed_amount'] ?? 0);
+        $clientCode = (string)($item['client_code'] ?? '');
+        $clientName = (string)($item['full_name'] ?? '');
+        $label = (string)($item['label'] ?? 'Débit dû');
+        $userId = (int)($_SESSION['user_id'] ?? 0);
+
+        $newExecuted = max(0, $initialAmount - $remainingAmount);
         $newStatus = $remainingAmount <= 0 ? 'resolved' : $status;
+        $resolvedAtSql = $remainingAmount <= 0 ? 'NOW()' : 'NULL';
+
+        $pdo->beginTransaction();
 
         $stmtUpdate = $pdo->prepare("
             UPDATE pending_client_debits
@@ -53,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 priority_level = ?,
                 notes = ?,
                 status = ?,
-                resolved_at = " . ($remainingAmount <= 0 ? "NOW()" : "NULL") . ",
+                resolved_at = {$resolvedAtSql},
                 updated_at = NOW()
             WHERE id = ?
         ");
@@ -66,19 +153,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $id
         ]);
 
-        sl_create_pending_client_debit_log(
+        if (function_exists('sl_create_pending_client_debit_log')) {
+            sl_create_pending_client_debit_log(
+                $pdo,
+                $id,
+                'edit',
+                $oldStatus,
+                $newStatus,
+                $remainingAmount,
+                'Modification manuelle du débit dû',
+                $userId
+            );
+        }
+
+        if (function_exists('logUserAction') && $userId > 0) {
+            logUserAction(
+                $pdo,
+                $userId,
+                'edit_pending_debit',
+                'pending_debits',
+                'pending_client_debit',
+                $id,
+                'Modification du débit dû #' . $id
+                . ($clientCode !== '' ? ' | client: ' . $clientCode : '')
+                . ' | ancien statut: ' . $oldStatus
+                . ' | nouveau statut: ' . $newStatus
+                . ' | ancien restant: ' . number_format($oldRemaining, 2, '.', '')
+                . ' | nouveau restant: ' . number_format($remainingAmount, 2, '.', '')
+                . ' | ancien exécuté: ' . number_format($oldExecuted, 2, '.', '')
+                . ' | nouvel exécuté: ' . number_format($newExecuted, 2, '.', '')
+            );
+        }
+
+        $notificationMessage = 'Débit dû modifié'
+            . ($clientCode !== '' ? ' pour le client ' . $clientCode : '')
+            . ($clientName !== '' ? ' - ' . $clientName : '')
+            . ' | statut : ' . $newStatus
+            . ' | restant : ' . number_format($remainingAmount, 2, ',', ' ')
+            . ' | exécuté : ' . number_format($newExecuted, 2, ',', ' ')
+            . ($label !== '' ? ' | ' . $label : '');
+
+        sl_create_notification_if_possible(
             $pdo,
+            $newStatus === 'resolved' ? 'pending_debit_resolved_manual' : 'pending_debit_updated',
+            $notificationMessage,
+            $newStatus === 'resolved' ? 'success' : 'info',
+            APP_URL . 'modules/pending_debits/pending_debit_view.php?id=' . $id,
+            'pending_client_debit',
             $id,
-            'edit',
-            $oldStatus,
-            $newStatus,
-            $remainingAmount,
-            'Modification manuelle du débit dû',
-            (int)($_SESSION['user_id'] ?? 0)
+            $userId
         );
+
+        $pdo->commit();
+
+        $_SESSION['success_message'] = $newStatus === 'resolved'
+            ? 'Le débit dû a été mis à jour et marqué comme résolu.'
+            : 'Le débit dû a été mis à jour avec succès.';
 
         header('Location: ' . APP_URL . 'modules/pending_debits/pending_debit_view.php?id=' . $id);
         exit;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        $error = $e->getMessage();
     }
 }
 
@@ -97,18 +235,35 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <div class="alert alert-danger"><?= e($error) ?></div>
             <?php endif; ?>
 
+            <?php if ($successMessage !== ''): ?>
+                <div class="alert alert-success"><?= e($successMessage) ?></div>
+            <?php endif; ?>
+
             <form method="post">
+                <?= csrf_input() ?>
                 <input type="hidden" name="id" value="<?= (int)$id ?>">
 
                 <div class="dashboard-grid-2">
                     <div>
                         <label>Client</label>
-                        <input type="text" class="form-control" value="<?= e((string)$item['client_code'] . ' - ' . (string)$item['full_name']) ?>" disabled>
+                        <input
+                            type="text"
+                            class="form-control"
+                            value="<?= e((string)$item['client_code'] . ' - ' . (string)$item['full_name']) ?>"
+                            disabled
+                        >
                     </div>
 
                     <div>
                         <label>Montant restant dû</label>
-                        <input type="number" step="0.01" name="remaining_amount" class="form-control" value="<?= e((string)$item['remaining_amount']) ?>" required>
+                        <input
+                            type="number"
+                            step="0.01"
+                            name="remaining_amount"
+                            class="form-control"
+                            value="<?= e((string)$item['remaining_amount']) ?>"
+                            required
+                        >
                     </div>
 
                     <div>

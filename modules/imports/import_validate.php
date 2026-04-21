@@ -7,10 +7,10 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'imports_validate_page');
-} else {
-    enforcePagePermission($pdo, 'imports_validate');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'imports_validate');
 }
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -24,6 +24,70 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 
 if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
     exit('Jeton CSRF invalide.');
+}
+
+if (!function_exists('sl_import_validate_create_notification')) {
+    function sl_import_validate_create_notification(
+        PDO $pdo,
+        string $type,
+        string $message,
+        string $level = 'info',
+        ?string $linkUrl = null,
+        ?string $entityType = 'import',
+        ?int $entityId = null,
+        ?int $createdBy = null
+    ): void {
+        if (!tableExists($pdo, 'notifications')) {
+            return;
+        }
+
+        $allowedLevels = ['info', 'success', 'warning', 'danger'];
+        if (!in_array($level, $allowedLevels, true)) {
+            $level = 'info';
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'type' => $type,
+            'message' => $message,
+            'level' => $level,
+            'link_url' => $linkUrl,
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'is_read' => 0,
+            'created_by' => $createdBy,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'notifications', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'notifications', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (columnExists($pdo, 'notifications', 'updated_at')) {
+            $columns[] = 'updated_at';
+            $values[] = 'NULL';
+        }
+
+        if (!$columns) {
+            return;
+        }
+
+        $sql = "INSERT INTO notifications (" . implode(', ', $columns) . ")
+                VALUES (" . implode(', ', $values) . ")";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+    }
 }
 
 if (!function_exists('sl_import_find_by_code')) {
@@ -134,6 +198,7 @@ $clients = tableExists($pdo, 'clients')
 $importedCount = 0;
 $rejectedCount = 0;
 $report = [];
+$userId = (int)($_SESSION['user_id'] ?? 0);
 
 try {
     $pdo->beginTransaction();
@@ -227,10 +292,10 @@ try {
 
             $operationId = createOperationWithAccountingV2($pdo, $payload);
 
-            if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+            if (function_exists('logUserAction') && $userId > 0) {
                 logUserAction(
                     $pdo,
-                    (int)$_SESSION['user_id'],
+                    $userId,
                     'import_operation',
                     'imports',
                     'operation',
@@ -256,7 +321,39 @@ try {
         }
     }
 
+    if (function_exists('logUserAction') && $userId > 0) {
+        logUserAction(
+            $pdo,
+            $userId,
+            'validate_import_batch',
+            'imports',
+            'import',
+            null,
+            sprintf(
+                'Validation import terminée : %d ligne(s) importée(s), %d rejetée(s), %d sélectionnée(s)',
+                $importedCount,
+                $rejectedCount,
+                count($selectedRows)
+            )
+        );
+    }
+
     $pdo->commit();
+
+    sl_import_validate_create_notification(
+        $pdo,
+        'import_validation',
+        sprintf(
+            'Validation import terminée : %d ligne(s) importée(s), %d rejetée(s)',
+            $importedCount,
+            $rejectedCount
+        ),
+        $rejectedCount > 0 ? 'warning' : 'success',
+        APP_URL . 'modules/imports/import_journal.php',
+        'import',
+        null,
+        $userId > 0 ? $userId : null
+    );
 
     $_SESSION['import_validate_flash'] = [
         'type' => $rejectedCount > 0 ? 'warning' : 'success',
@@ -273,6 +370,29 @@ try {
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }
+
+    if (function_exists('logUserAction') && $userId > 0) {
+        logUserAction(
+            $pdo,
+            $userId,
+            'validate_import_batch_failed',
+            'imports',
+            'import',
+            null,
+            'Erreur pendant la validation de l’import : ' . $e->getMessage()
+        );
+    }
+
+    sl_import_validate_create_notification(
+        $pdo,
+        'import_validation_failed',
+        'Erreur pendant la validation de l’import : ' . $e->getMessage(),
+        'danger',
+        APP_URL . 'modules/imports/import_preview.php',
+        'import',
+        null,
+        $userId > 0 ? $userId : null
+    );
 
     $_SESSION['import_validate_flash'] = [
         'type' => 'error',

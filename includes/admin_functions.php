@@ -964,6 +964,296 @@ if (!function_exists('sl_normalize_code')) {
         return trim((string)$value, '_');
     }
 }
+if (!function_exists('sl_manual_assert_account_is_active')) {
+    function sl_manual_assert_account_is_active(PDO $pdo, string $accountCode): void
+    {
+        $accountCode = trim($accountCode);
+        if ($accountCode === '') {
+            throw new RuntimeException('Compte vide.');
+        }
+
+        $family = sl_manual_account_family_from_code($accountCode);
+        if ($family === '') {
+            throw new RuntimeException('Famille de compte invalide : ' . $accountCode);
+        }
+
+        $config = sl_manual_balance_config_for_family($pdo, $family);
+
+        if (empty($config['table']) || empty($config['code_column'])) {
+            throw new RuntimeException('Configuration de compte introuvable pour ' . $accountCode);
+        }
+
+        $sql = "SELECT {$config['id_column']}";
+
+        if (!empty($config['active_column'])) {
+            $sql .= ", COALESCE({$config['active_column']},1) AS is_active";
+        } else {
+            $sql .= ", 1 AS is_active";
+        }
+
+        $sql .= "
+            FROM {$config['table']}
+            WHERE {$config['code_column']} = ?
+            LIMIT 1
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$accountCode]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$row) {
+            throw new RuntimeException('Compte introuvable : ' . $accountCode);
+        }
+
+        if ((int)($row['is_active'] ?? 1) !== 1) {
+            throw new RuntimeException('Compte archivé ou inactif : ' . $accountCode);
+        }
+    }
+}
+
+if (!function_exists('sl_manual_get_account_current_balance')) {
+    function sl_manual_get_account_current_balance(PDO $pdo, string $accountCode): array
+    {
+        $accountCode = trim($accountCode);
+        if ($accountCode === '') {
+            throw new RuntimeException('Compte vide.');
+        }
+
+        $family = sl_manual_account_family_from_code($accountCode);
+        if ($family === '') {
+            throw new RuntimeException('Famille de compte invalide : ' . $accountCode);
+        }
+
+        $config = sl_manual_balance_config_for_family($pdo, $family);
+
+        if (
+            empty($config['table']) ||
+            empty($config['code_column']) ||
+            empty($config['balance_column'])
+        ) {
+            throw new RuntimeException(
+                'Impossible de lire le solde du compte ' . $accountCode . ' : colonne de solde introuvable.'
+            );
+        }
+
+        $sql = "
+            SELECT
+                {$config['balance_column']} AS current_balance
+            FROM {$config['table']}
+            WHERE {$config['code_column']} = ?
+            LIMIT 1
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$accountCode]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$row) {
+            throw new RuntimeException('Compte introuvable pour lecture du solde : ' . $accountCode);
+        }
+
+        return [
+            'balance' => (float)($row['current_balance'] ?? 0),
+            'type' => $family,
+            'account_code' => $accountCode,
+            'table' => $config['table'],
+            'balance_column' => $config['balance_column'],
+        ];
+    }
+}
+if (!function_exists('sl_manual_apply_balance_delta')) {
+    function sl_manual_apply_balance_delta(PDO $pdo, string $accountCode, float $delta): void
+    {
+        $accountCode = trim($accountCode);
+        if ($accountCode === '') {
+            throw new RuntimeException('Compte vide.');
+        }
+
+        $family = sl_manual_account_family_from_code($accountCode);
+        if ($family === '') {
+            throw new RuntimeException('Famille de compte invalide : ' . $accountCode);
+        }
+
+        $config = sl_manual_balance_config_for_family($pdo, $family);
+
+        if (
+            empty($config['table']) ||
+            empty($config['code_column']) ||
+            empty($config['balance_column'])
+        ) {
+            throw new RuntimeException(
+                'Impossible de mettre à jour le solde du compte ' . $accountCode . ' : configuration introuvable.'
+            );
+        }
+
+        $setParts = [
+            "{$config['balance_column']} = COALESCE({$config['balance_column']}, 0) + ?"
+        ];
+        $params = [$delta];
+
+        if (!empty($config['updated_at_column'])) {
+            $setParts[] = "{$config['updated_at_column']} = NOW()";
+        }
+
+        $params[] = $accountCode;
+
+        $sql = "
+            UPDATE {$config['table']}
+            SET " . implode(', ', $setParts) . "
+            WHERE {$config['code_column']} = ?
+            LIMIT 1
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+
+        if ($stmt->rowCount() <= 0) {
+            throw new RuntimeException('Impossible de mettre à jour le solde du compte ' . $accountCode);
+        }
+    }
+}
+if (!function_exists('sl_manual_insert_operation')) {
+    function sl_manual_insert_operation(PDO $pdo, array $data): int
+    {
+        if (!function_exists('tableExists') || !tableExists($pdo, 'operations')) {
+            throw new RuntimeException('Table operations introuvable.');
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $candidateValues = [
+            'client_id' => $data['client_id'] ?? null,
+            'operation_date' => $data['operation_date'] ?? null,
+            'amount' => $data['amount'] ?? null,
+            'currency_code' => $data['currency_code'] ?? 'EUR',
+            'label' => $data['label'] ?? null,
+            'reference' => $data['reference'] ?? null,
+            'notes' => $data['notes'] ?? null,
+            'source_type' => $data['source_type'] ?? 'manual',
+            'operation_kind' => $data['operation_kind'] ?? 'manual',
+            'source_account_code' => $data['source_account_code'] ?? null,
+            'destination_account_code' => $data['destination_account_code'] ?? null,
+            'debit_account_code' => $data['source_account_code'] ?? null,
+            'credit_account_code' => $data['destination_account_code'] ?? null,
+            'manual_debit_account_code' => $data['source_account_code'] ?? null,
+            'manual_credit_account_code' => $data['destination_account_code'] ?? null,
+            'operation_type' => $data['operation_type'] ?? null,
+            'service_type' => $data['service_type'] ?? null,
+            'operation_type_code' => $data['operation_type'] ?? null,
+            'service_code' => $data['service_type'] ?? null,
+            'created_by' => $data['created_by'] ?? ($_SESSION['user_id'] ?? null),
+        ];
+
+        foreach ($candidateValues as $column => $value) {
+            if (function_exists('columnExists') && columnExists($pdo, 'operations', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (function_exists('columnExists') && columnExists($pdo, 'operations', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (!$columns) {
+            throw new RuntimeException('Aucune colonne exploitable trouvée dans operations.');
+        }
+
+        $sql = "
+            INSERT INTO operations (" . implode(', ', $columns) . ")
+            VALUES (" . implode(', ', $values) . ")
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+
+        return (int)$pdo->lastInsertId();
+    }
+}
+if (!function_exists('sl_manual_create_pending_debit_for_insufficient_411')) {
+    function sl_manual_create_pending_debit_for_insufficient_411(
+        PDO $pdo,
+        string $clientAccountCode,
+        float $missingAmount
+    ): ?int {
+        if ($missingAmount <= 0) {
+            return null;
+        }
+
+        if (!function_exists('tableExists') || !tableExists($pdo, 'pending_debits')) {
+            if (tableExists($pdo, 'pending_client_debits')) {
+                $stmtClient = $pdo->prepare("
+                    SELECT id
+                    FROM clients
+                    WHERE generated_client_account = ?
+                    LIMIT 1
+                ");
+                $stmtClient->execute([$clientAccountCode]);
+                $clientId = (int)$stmtClient->fetchColumn();
+
+                if ($clientId <= 0) {
+                    throw new RuntimeException('Impossible de rattacher le débit dû au compte client ' . $clientAccountCode);
+                }
+
+                $columns = [];
+                $values = [];
+                $params = [];
+
+                $candidateValues = [
+                    'client_id' => $clientId,
+                    'initial_amount' => $missingAmount,
+                    'remaining_amount' => $missingAmount,
+                    'executed_amount' => 0,
+                    'status' => 'pending',
+                    'currency_code' => 'EUR',
+                    'created_by' => $_SESSION['user_id'] ?? null,
+                ];
+
+                foreach ($candidateValues as $column => $value) {
+                    if (columnExists($pdo, 'pending_client_debits', $column)) {
+                        $columns[] = $column;
+                        $values[] = '?';
+                        $params[] = $value;
+                    }
+                }
+
+                if (columnExists($pdo, 'pending_client_debits', 'created_at')) {
+                    $columns[] = 'created_at';
+                    $values[] = 'NOW()';
+                }
+
+                $sql = "
+                    INSERT INTO pending_client_debits (" . implode(', ', $columns) . ")
+                    VALUES (" . implode(', ', $values) . ")
+                ";
+
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
+
+                return (int)$pdo->lastInsertId();
+            }
+
+            throw new RuntimeException('Aucune table de débits dus disponible.');
+        }
+
+        $stmt = $pdo->prepare("
+            INSERT INTO pending_debits (
+                client_code,
+                amount,
+                status,
+                created_at
+            ) VALUES (?, ?, 'pending', NOW())
+        ");
+        $stmt->execute([$clientAccountCode, $missingAmount]);
+
+        return (int)$pdo->lastInsertId();
+    }
+}
+
 
 if (!function_exists('sl_operation_service_map')) {
     function sl_operation_service_map(): array
@@ -8181,61 +8471,9 @@ if (!function_exists('sl_restore_client_balance_from_archive')) {
 
         $clientId = (int)($client['id'] ?? 0);
         $client411 = trim((string)($client['generated_client_account'] ?? ''));
+
         if ($clientId <= 0 || $client411 === '') {
             throw new RuntimeException('Compte 411 client introuvable.');
-        }
-
-        $stmtLastArchive = $pdo->prepare("
-            SELECT *
-            FROM operations
-            WHERE client_id = ?
-              AND operation_type_code = 'ARCHIVE_CLIENT'
-            ORDER BY id DESC
-            LIMIT 1
-        ");
-        $stmtLastArchive->execute([$clientId]);
-        $archiveOp = $stmtLastArchive->fetch(PDO::FETCH_ASSOC);
-
-        if (!$archiveOp) {
-            return [
-                'restored_amount' => 0.0,
-                'treasury_account_id' => 0,
-                'treasury_account_code' => null,
-            ];
-        }
-
-        $amount = round((float)($archiveOp['amount'] ?? 0), 2);
-        if ($amount <= 0) {
-            return [
-                'restored_amount' => 0.0,
-                'treasury_account_id' => 0,
-                'treasury_account_code' => null,
-            ];
-        }
-
-        $treasuryCode = trim((string)($archiveOp['debit_account_code'] ?? ''));
-        if ($treasuryCode === '') {
-            throw new RuntimeException('Compte 512 source introuvable sur l’archive précédente.');
-        }
-
-        $stmt512 = $pdo->prepare("
-            SELECT id, account_code, account_label, current_balance
-            FROM treasury_accounts
-            WHERE account_code = ?
-            LIMIT 1
-        ");
-        $stmt512->execute([$treasuryCode]);
-        $treasury = $stmt512->fetch(PDO::FETCH_ASSOC);
-
-        if (!$treasury) {
-            throw new RuntimeException('Compte 512 source introuvable.');
-        }
-
-        $treasuryId = (int)($treasury['id'] ?? 0);
-        $current512 = (float)($treasury['current_balance'] ?? 0);
-
-        if ($current512 < $amount) {
-            throw new RuntimeException('Le compte 512 source ne dispose pas d’un solde suffisant pour restaurer le client.');
         }
 
         $stmt411 = $pdo->prepare("
@@ -8251,24 +8489,117 @@ if (!function_exists('sl_restore_client_balance_from_archive')) {
             throw new RuntimeException('Compte bancaire 411 introuvable.');
         }
 
-        $currencyCode = (string)($archiveOp['currency_code'] ?? 'EUR');
+        $archiveAmount = null;
+        $treasuryId = 0;
+        $treasuryCode = '';
+
+        if (
+            array_key_exists('archived_balance_amount', $client)
+            && array_key_exists('archived_balance_512_account_id', $client)
+            && array_key_exists('archived_balance_512_account_code', $client)
+        ) {
+            $archiveAmount = round((float)($client['archived_balance_amount'] ?? 0), 2);
+            $treasuryId = (int)($client['archived_balance_512_account_id'] ?? 0);
+            $treasuryCode = trim((string)($client['archived_balance_512_account_code'] ?? ''));
+        }
+
+        if ($archiveAmount === null || $archiveAmount <= 0 || $treasuryId <= 0 || $treasuryCode === '') {
+            $stmtLastArchive = $pdo->prepare("
+                SELECT *
+                FROM operations
+                WHERE client_id = ?
+                  AND operation_type_code = 'ARCHIVE_CLIENT'
+                ORDER BY id DESC
+                LIMIT 1
+            ");
+            $stmtLastArchive->execute([$clientId]);
+            $archiveOp = $stmtLastArchive->fetch(PDO::FETCH_ASSOC);
+
+            if (!$archiveOp) {
+                return [
+                    'restored_amount' => 0.0,
+                    'treasury_account_id' => 0,
+                    'treasury_account_code' => null,
+                ];
+            }
+
+            $archiveAmount = round((float)($archiveOp['amount'] ?? 0), 2);
+            $treasuryCode = trim((string)($archiveOp['credit_account_code'] ?? ''));
+        }
+
+        if ($archiveAmount <= 0) {
+            return [
+                'restored_amount' => 0.0,
+                'treasury_account_id' => 0,
+                'treasury_account_code' => null,
+            ];
+        }
+
+        if ($treasuryCode === '') {
+            throw new RuntimeException('Compte 512 source introuvable sur l’archive précédente.');
+        }
+
+        if ($treasuryId > 0) {
+            $stmt512 = $pdo->prepare("
+                SELECT id, account_code, account_label, current_balance, currency_code, is_active
+                FROM treasury_accounts
+                WHERE id = ?
+                LIMIT 1
+            ");
+            $stmt512->execute([$treasuryId]);
+            $treasury = $stmt512->fetch(PDO::FETCH_ASSOC);
+
+            if (!$treasury) {
+                throw new RuntimeException('Compte 512 source introuvable.');
+            }
+        } else {
+            $stmt512 = $pdo->prepare("
+                SELECT id, account_code, account_label, current_balance, currency_code, is_active
+                FROM treasury_accounts
+                WHERE account_code = ?
+                LIMIT 1
+            ");
+            $stmt512->execute([$treasuryCode]);
+            $treasury = $stmt512->fetch(PDO::FETCH_ASSOC);
+
+            if (!$treasury) {
+                throw new RuntimeException('Compte 512 source introuvable.');
+            }
+
+            $treasuryId = (int)($treasury['id'] ?? 0);
+        }
+
+        if ((int)($treasury['is_active'] ?? 1) !== 1) {
+            throw new RuntimeException('Le compte 512 source est inactif.');
+        }
+
+        $current512 = round((float)($treasury['current_balance'] ?? 0), 2);
+        if ($current512 < $archiveAmount) {
+            throw new RuntimeException('Le compte 512 source ne dispose pas d’un solde suffisant pour restaurer le client.');
+        }
+
+        $treasuryCode = trim((string)($treasury['account_code'] ?? ''));
+        $currencyCode = trim((string)($treasury['currency_code'] ?? 'EUR'));
 
         $operationColumns = [];
         $operationValues = [];
         $operationParams = [];
 
         $operationMap = [
-            'operation_date' => date('Y-m-d'),
-            'client_id' => $clientId,
-            'operation_type_code' => 'RESTORE_CLIENT',
-            'amount' => $amount,
-            'currency_code' => $currencyCode,
-            'debit_account_code' => $treasuryCode,
-            'credit_account_code' => $client411,
-            'linked_treasury_account_code' => $treasuryCode,
-            'label' => 'Réactivation client - restitution 512 vers 411',
-            'description' => 'Réactivation client avec restitution du solde archivé',
-            'created_by' => $userId > 0 ? $userId : null,
+            'client_id'              => $clientId,
+            'bank_account_id'        => (int)($bankAccount['id'] ?? 0),
+            'linked_bank_account_id' => $treasuryId,
+            'operation_date'         => date('Y-m-d'),
+            'operation_type_code'    => 'RESTORE_CLIENT',
+            'label'                  => 'Réactivation client - restitution 512 vers 411',
+            'amount'                 => $archiveAmount,
+            'currency_code'          => $currencyCode,
+            'source_type'            => 'client_restore',
+            'debit_account_code'     => $treasuryCode, // source
+            'credit_account_code'    => $client411,    // destination
+            'is_manual_accounting'   => 0,
+            'notes'                  => 'Réactivation client avec restitution du solde archivé',
+            'created_by'             => $userId > 0 ? $userId : null,
         ];
 
         foreach ($operationMap as $column => $value) {
@@ -8289,7 +8620,7 @@ if (!function_exists('sl_restore_client_balance_from_archive')) {
             $operationValues[] = 'NOW()';
         }
 
-        if ($operationColumns) {
+        if (!empty($operationColumns)) {
             $sqlInsertOp = "
                 INSERT INTO operations (" . implode(', ', $operationColumns) . ")
                 VALUES (" . implode(', ', $operationValues) . ")
@@ -8300,30 +8631,54 @@ if (!function_exists('sl_restore_client_balance_from_archive')) {
 
         $stmtUpdate411 = $pdo->prepare("
             UPDATE bank_accounts
-            SET balance = COALESCE(balance, 0) + ?
+            SET balance = COALESCE(balance, 0) + ?,
+                updated_at = NOW()
             WHERE account_number = ?
         ");
-        $stmtUpdate411->execute([$amount, $client411]);
+        $stmtUpdate411->execute([$archiveAmount, $client411]);
 
         $stmtUpdate512 = $pdo->prepare("
             UPDATE treasury_accounts
-            SET current_balance = COALESCE(current_balance, 0) - ?
+            SET current_balance = COALESCE(current_balance, 0) - ?,
+                updated_at = NOW()
             WHERE id = ?
         ");
-        $stmtUpdate512->execute([$amount, $treasuryId]);
+        $stmtUpdate512->execute([$archiveAmount, $treasuryId]);
 
-        if (columnExists($pdo, 'clients', 'updated_at')) {
-            $stmtClientUpdate = $pdo->prepare("UPDATE clients SET updated_at = NOW() WHERE id = ?");
+        if (
+            columnExists($pdo, 'clients', 'archived_balance_amount')
+            && columnExists($pdo, 'clients', 'archived_balance_512_account_id')
+            && columnExists($pdo, 'clients', 'archived_balance_512_account_code')
+            && columnExists($pdo, 'clients', 'archived_balance_transferred_at')
+        ) {
+            $stmtClientResetArchive = $pdo->prepare("
+                UPDATE clients
+                SET archived_balance_amount = NULL,
+                    archived_balance_512_account_id = NULL,
+                    archived_balance_512_account_code = NULL,
+                    archived_balance_transferred_at = NULL,
+                    updated_at = NOW()
+                WHERE id = ?
+            ");
+            $stmtClientResetArchive->execute([$clientId]);
+        } elseif (columnExists($pdo, 'clients', 'updated_at')) {
+            $stmtClientUpdate = $pdo->prepare("
+                UPDATE clients
+                SET updated_at = NOW()
+                WHERE id = ?
+            ");
             $stmtClientUpdate->execute([$clientId]);
         }
 
         return [
-            'restored_amount' => $amount,
+            'restored_amount' => $archiveAmount,
             'treasury_account_id' => $treasuryId,
             'treasury_account_code' => $treasuryCode,
         ];
     }
 }
+
+
 if (!function_exists('sl_rebuild_client_balance')) {
     function sl_rebuild_client_balance(PDO $pdo, int $clientId): void
     {
@@ -8387,6 +8742,7 @@ if (!function_exists('sl_archive_client_balance_to_treasury')) {
 
         $clientId = (int)($client['id'] ?? 0);
         $client411 = trim((string)($client['generated_client_account'] ?? ''));
+
         if ($clientId <= 0 || $client411 === '') {
             throw new RuntimeException('Compte 411 client introuvable.');
         }
@@ -8404,7 +8760,8 @@ if (!function_exists('sl_archive_client_balance_to_treasury')) {
             throw new RuntimeException('Compte bancaire 411 introuvable.');
         }
 
-        $current411 = (float)($bankAccount['balance'] ?? 0);
+        $current411 = round((float)($bankAccount['balance'] ?? 0), 2);
+
         if ($current411 <= 0) {
             return [
                 'moved_amount' => 0.0,
@@ -8414,7 +8771,7 @@ if (!function_exists('sl_archive_client_balance_to_treasury')) {
         }
 
         $stmt512 = $pdo->prepare("
-            SELECT id, account_code, account_label, current_balance
+            SELECT id, account_code, account_label, current_balance, currency_code, is_active
             FROM treasury_accounts
             WHERE id = ?
             LIMIT 1
@@ -8426,18 +8783,17 @@ if (!function_exists('sl_archive_client_balance_to_treasury')) {
             throw new RuntimeException('Compte 512 de destination introuvable.');
         }
 
-        $amount = round($current411, 2);
+        if ((int)($treasury['is_active'] ?? 1) !== 1) {
+            throw new RuntimeException('Le compte 512 sélectionné est inactif.');
+        }
+
+        $amount = $current411;
+        $treasuryId = (int)($treasury['id'] ?? 0);
         $treasuryCode = trim((string)($treasury['account_code'] ?? ''));
+        $currencyCode = trim((string)($treasury['currency_code'] ?? 'EUR'));
 
         if ($treasuryCode === '') {
             throw new RuntimeException('Le compte 512 sélectionné n’a pas de code comptable.');
-        }
-
-        $currencyCode = 'EUR';
-        if (tableExists($pdo, 'treasury_accounts') && columnExists($pdo, 'treasury_accounts', 'currency_code')) {
-            $stmtCurrency = $pdo->prepare("SELECT currency_code FROM treasury_accounts WHERE id = ? LIMIT 1");
-            $stmtCurrency->execute([$treasuryAccountId]);
-            $currencyCode = (string)($stmtCurrency->fetchColumn() ?: 'EUR');
         }
 
         $operationColumns = [];
@@ -8445,17 +8801,20 @@ if (!function_exists('sl_archive_client_balance_to_treasury')) {
         $operationParams = [];
 
         $operationMap = [
-            'operation_date' => date('Y-m-d'),
-            'client_id' => $clientId,
-            'operation_type_code' => 'ARCHIVE_CLIENT',
-            'amount' => $amount,
-            'currency_code' => $currencyCode,
-            'debit_account_code' => $client411,
-            'credit_account_code' => $treasuryCode,
-            'linked_treasury_account_code' => $treasuryCode,
-            'label' => 'Archivage client - transfert 411 vers 512',
-            'description' => 'Archivage client avec transfert du solde 411 vers 512',
-            'created_by' => $userId > 0 ? $userId : null,
+            'client_id'              => $clientId,
+            'bank_account_id'        => (int)($bankAccount['id'] ?? 0),
+            'linked_bank_account_id' => $treasuryId,
+            'operation_date'         => date('Y-m-d'),
+            'operation_type_code'    => 'ARCHIVE_CLIENT',
+            'label'                  => 'Archivage client - transfert 411 vers 512',
+            'amount'                 => $amount,
+            'currency_code'          => $currencyCode,
+            'source_type'            => 'client_archive',
+            'debit_account_code'     => $client411,    // source
+            'credit_account_code'    => $treasuryCode, // destination
+            'is_manual_accounting'   => 0,
+            'notes'                  => 'Archivage client avec transfert du solde 411 vers 512',
+            'created_by'             => $userId > 0 ? $userId : null,
         ];
 
         foreach ($operationMap as $column => $value) {
@@ -8476,7 +8835,7 @@ if (!function_exists('sl_archive_client_balance_to_treasury')) {
             $operationValues[] = 'NOW()';
         }
 
-        if ($operationColumns) {
+        if (!empty($operationColumns)) {
             $sqlInsertOp = "
                 INSERT INTO operations (" . implode(', ', $operationColumns) . ")
                 VALUES (" . implode(', ', $operationValues) . ")
@@ -8487,30 +8846,58 @@ if (!function_exists('sl_archive_client_balance_to_treasury')) {
 
         $stmtUpdate411 = $pdo->prepare("
             UPDATE bank_accounts
-            SET balance = 0
+            SET balance = 0,
+                updated_at = NOW()
             WHERE account_number = ?
         ");
         $stmtUpdate411->execute([$client411]);
 
         $stmtUpdate512 = $pdo->prepare("
             UPDATE treasury_accounts
-            SET current_balance = COALESCE(current_balance, 0) + ?
+            SET current_balance = COALESCE(current_balance, 0) + ?,
+                updated_at = NOW()
             WHERE id = ?
         ");
-        $stmtUpdate512->execute([$amount, $treasuryAccountId]);
+        $stmtUpdate512->execute([$amount, $treasuryId]);
 
-        if (columnExists($pdo, 'clients', 'updated_at')) {
-            $stmtClientUpdate = $pdo->prepare("UPDATE clients SET updated_at = NOW() WHERE id = ?");
+        if (
+            columnExists($pdo, 'clients', 'archived_balance_amount')
+            && columnExists($pdo, 'clients', 'archived_balance_512_account_id')
+            && columnExists($pdo, 'clients', 'archived_balance_512_account_code')
+            && columnExists($pdo, 'clients', 'archived_balance_transferred_at')
+        ) {
+            $stmtClientArchiveData = $pdo->prepare("
+                UPDATE clients
+                SET archived_balance_amount = ?,
+                    archived_balance_512_account_id = ?,
+                    archived_balance_512_account_code = ?,
+                    archived_balance_transferred_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = ?
+            ");
+            $stmtClientArchiveData->execute([
+                $amount,
+                $treasuryId,
+                $treasuryCode,
+                $clientId,
+            ]);
+        } elseif (columnExists($pdo, 'clients', 'updated_at')) {
+            $stmtClientUpdate = $pdo->prepare("
+                UPDATE clients
+                SET updated_at = NOW()
+                WHERE id = ?
+            ");
             $stmtClientUpdate->execute([$clientId]);
         }
 
         return [
             'moved_amount' => $amount,
-            'treasury_account_id' => $treasuryAccountId,
+            'treasury_account_id' => $treasuryId,
             'treasury_account_code' => $treasuryCode,
         ];
     }
 }
+
 if (!function_exists('sl_assert_client_operation_allowed')) {
     function sl_assert_client_operation_allowed(PDO $pdo, int $clientId): void
     {
@@ -8971,37 +9358,281 @@ if (!function_exists('sl_audit_action_from_result')) {
         PDO $pdo,
         string $action,
         string $module,
-        ?string $entityType,
+        string $entityType,
         ?int $entityId,
-        array $context = [],
-        ?string $link = null,
-        ?int $targetUserId = null,
-        bool $forceNotify = false
+        $details = null,
+        ?string $link = null
     ): void {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
-        }
-
         $userId = (int)($_SESSION['user_id'] ?? 0);
+
         if ($userId <= 0) {
             return;
         }
 
-        sl_audit_and_notify_action(
-            $pdo,
-            $userId,
-            $action,
-            $module,
-            $entityType,
-            $entityId,
-            $context,
-            null,
-            null,
-            null,
-            $link,
-            $targetUserId,
-            $forceNotify
-        );
+        if (is_array($details)) {
+            $details = json_encode($details, JSON_UNESCAPED_UNICODE);
+        } elseif ($details !== null) {
+            $details = (string)$details;
+        }
+
+        if (function_exists('logUserAction')) {
+            logUserAction(
+                $pdo,
+                $userId,
+                $action,
+                $module,
+                $entityType,
+                $entityId,
+                $details
+            );
+        }
+
+        if (function_exists('createNotification')) {
+            createNotification(
+                $pdo,
+                $action,
+                '[' . $module . '] ' . ($details !== null && $details !== '' ? $details : $action),
+                'success',
+                $link,
+                $entityType,
+                $entityId,
+                $userId
+            );
+        }
     }
 }
 
+if (!function_exists('sl_manual_best_existing_column')) {
+    function sl_manual_best_existing_column(PDO $pdo, string $table, array $candidates): ?string
+    {
+        foreach ($candidates as $candidate) {
+            if (function_exists('columnExists') && columnExists($pdo, $table, $candidate)) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('sl_manual_account_family_from_code')) {
+    function sl_manual_account_family_from_code(string $accountCode): string
+    {
+        $accountCode = trim($accountCode);
+
+        if (str_starts_with($accountCode, '411')) {
+            return '411';
+        }
+
+        if (str_starts_with($accountCode, '512')) {
+            return '512';
+        }
+
+        if (str_starts_with($accountCode, '706')) {
+            return '706';
+        }
+
+        return '';
+    }
+}
+if (!function_exists('sl_manual_execute_operation')) {
+    function sl_manual_execute_operation(PDO $pdo, array $payload): array
+    {
+        $sourceAccountCode = trim((string)($payload['source_account_code'] ?? ''));
+        $destinationAccountCode = trim((string)($payload['destination_account_code'] ?? ''));
+        $amount = (float)($payload['amount'] ?? 0);
+        $operationDate = trim((string)($payload['operation_date'] ?? date('Y-m-d')));
+        $reference = trim((string)($payload['reference'] ?? ''));
+        $operationType = trim((string)($payload['operation_type'] ?? ''));
+        $serviceType = trim((string)($payload['service_type'] ?? ''));
+        $label = trim((string)($payload['label'] ?? ''));
+        $notes = trim((string)($payload['notes'] ?? ''));
+
+        if ($sourceAccountCode === '' || $destinationAccountCode === '') {
+            throw new RuntimeException('Le compte débité et le compte crédité sont obligatoires.');
+        }
+
+        if ($sourceAccountCode === $destinationAccountCode) {
+            throw new RuntimeException('Le compte débité doit être différent du compte crédité.');
+        }
+
+        if ($amount <= 0) {
+            throw new RuntimeException('Montant invalide.');
+        }
+
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $operationDate)) {
+            throw new RuntimeException('Date invalide.');
+        }
+
+        sl_manual_assert_account_is_active($pdo, $sourceAccountCode);
+        sl_manual_assert_account_is_active($pdo, $destinationAccountCode);
+
+        $sourceData = sl_manual_get_account_current_balance($pdo, $sourceAccountCode);
+        $destinationData = sl_manual_get_account_current_balance($pdo, $destinationAccountCode);
+
+        $sourceBalance = (float)($sourceData['balance'] ?? 0);
+        $sourceType = (string)($sourceData['type'] ?? '');
+        $destinationType = (string)($destinationData['type'] ?? '');
+
+        $executableAmount = $amount;
+        $pendingAmount = 0.0;
+        $pendingDebitId = null;
+
+        if ($sourceBalance < $amount) {
+            if ($sourceType === '411') {
+                $executableAmount = max(0, $sourceBalance);
+                $pendingAmount = round($amount - $executableAmount, 2);
+            } else {
+                throw new RuntimeException('Solde insuffisant sur le compte débité ' . $sourceAccountCode . '.');
+            }
+        }
+
+        $linkedClientId = null;
+        if ($sourceType === '411') {
+            $stmtClient = $pdo->prepare("
+                SELECT id
+                FROM clients
+                WHERE generated_client_account = ?
+                LIMIT 1
+            ");
+            $stmtClient->execute([$sourceAccountCode]);
+            $linkedClientId = (int)$stmtClient->fetchColumn();
+        } elseif ($destinationType === '411') {
+            $stmtClient = $pdo->prepare("
+                SELECT id
+                FROM clients
+                WHERE generated_client_account = ?
+                LIMIT 1
+            ");
+            $stmtClient->execute([$destinationAccountCode]);
+            $linkedClientId = (int)$stmtClient->fetchColumn();
+        }
+
+        $operationId = null;
+
+        if ($executableAmount > 0) {
+            $finalLabel = $label !== ''
+                ? $label
+                : trim($operationType . ' - ' . $serviceType . ' - ' . $sourceAccountCode . ' → ' . $destinationAccountCode);
+
+            $operationId = sl_manual_insert_operation($pdo, [
+                'client_id' => $linkedClientId > 0 ? $linkedClientId : null,
+                'operation_date' => $operationDate,
+                'amount' => $executableAmount,
+                'currency_code' => 'EUR',
+                'label' => $finalLabel,
+                'reference' => $reference,
+                'notes' => $notes !== '' ? $notes : null,
+                'source_type' => 'manual',
+                'operation_kind' => 'manual',
+                'source_account_code' => $sourceAccountCode,
+                'destination_account_code' => $destinationAccountCode,
+                'operation_type' => $operationType,
+                'service_type' => $serviceType,
+                'created_by' => $_SESSION['user_id'] ?? null,
+            ]);
+
+            sl_manual_apply_balance_delta($pdo, $sourceAccountCode, -$executableAmount);
+            sl_manual_apply_balance_delta($pdo, $destinationAccountCode, $executableAmount);
+        }
+
+        if ($pendingAmount > 0 && $sourceType === '411') {
+            $pendingDebitId = sl_manual_create_pending_debit_for_insufficient_411(
+                $pdo,
+                $sourceAccountCode,
+                $pendingAmount
+            );
+        }
+
+        sl_audit_action_from_result(
+            $pdo,
+            'manual_operation_create',
+            'manual_actions',
+            'operation',
+            $operationId,
+            [
+                'reference' => $reference,
+                'amount_requested' => $amount,
+                'amount_executable' => $executableAmount,
+                'amount_pending' => $pendingAmount,
+                'source_account_code' => $sourceAccountCode,
+                'destination_account_code' => $destinationAccountCode,
+                'source_type' => $sourceType,
+                'destination_type' => $destinationType,
+                'operation_type' => $operationType,
+                'service_type' => $serviceType,
+                'pending_debit_id' => $pendingDebitId,
+            ],
+            $operationId
+                ? APP_URL . 'modules/operations/operation_view.php?id=' . $operationId
+                : APP_URL . 'modules/pending_debits/pending_debits_list.php'
+        );
+
+        return [
+            'operation_id' => $operationId,
+            'pending_debit_id' => $pendingDebitId,
+            'source_type' => $sourceType,
+            'destination_type' => $destinationType,
+            'requested_amount' => $amount,
+            'executable_amount' => $executableAmount,
+            'pending_amount' => $pendingAmount,
+            'source_balance' => $sourceBalance,
+            'status' => 'success',
+        ];
+    }
+}
+
+if (!function_exists('sl_manual_balance_config_for_family')) {
+    function sl_manual_balance_config_for_family(PDO $pdo, string $family): array
+    {
+        return match ($family) {
+            '411' => [
+                'table' => 'bank_accounts',
+                'code_column' => 'account_number',
+                'id_column' => 'id',
+                'active_column' => (function_exists('columnExists') && columnExists($pdo, 'bank_accounts', 'is_active')) ? 'is_active' : null,
+                'balance_column' => sl_manual_best_existing_column($pdo, 'bank_accounts', [
+                    'balance',
+                    'current_balance',
+                    'solde',
+                ]),
+                'updated_at_column' => (function_exists('columnExists') && columnExists($pdo, 'bank_accounts', 'updated_at')) ? 'updated_at' : null,
+            ],
+
+            '512' => [
+                'table' => 'treasury_accounts',
+                'code_column' => 'account_code',
+                'id_column' => 'id',
+                'active_column' => (function_exists('columnExists') && columnExists($pdo, 'treasury_accounts', 'is_active')) ? 'is_active' : null,
+                'balance_column' => sl_manual_best_existing_column($pdo, 'treasury_accounts', [
+                    'current_balance',
+                    'balance',
+                    'solde',
+                ]),
+                'updated_at_column' => (function_exists('columnExists') && columnExists($pdo, 'treasury_accounts', 'updated_at')) ? 'updated_at' : null,
+            ],
+
+            '706' => [
+                'table' => 'service_accounts',
+                'code_column' => 'account_code',
+                'id_column' => 'id',
+                'active_column' => (function_exists('columnExists') && columnExists($pdo, 'service_accounts', 'is_active')) ? 'is_active' : null,
+                'balance_column' => sl_manual_best_existing_column($pdo, 'service_accounts', [
+                    'current_balance',
+                    'balance',
+                    'solde',
+                ]),
+                'updated_at_column' => (function_exists('columnExists') && columnExists($pdo, 'service_accounts', 'updated_at')) ? 'updated_at' : null,
+            ],
+
+            default => [
+                'table' => null,
+                'code_column' => null,
+                'id_column' => null,
+                'active_column' => null,
+                'balance_column' => null,
+                'updated_at_column' => null,
+            ],
+        };
+    }
+}

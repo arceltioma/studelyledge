@@ -6,11 +6,7 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'statements_view_page');
-} else {
-    enforcePagePermission($pdo, 'clients_view');
-}
+studelyEnforceCurrentPageAccess($pdo);
 
 $clientId = (int)($_GET['client_id'] ?? 0);
 $dateFrom = trim((string)($_GET['date_from'] ?? ''));

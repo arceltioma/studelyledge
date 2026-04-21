@@ -11,10 +11,10 @@ require_once __DIR__ . '/../../includes/rules_engine.php';
 require_once __DIR__ . '/../../includes/anomaly_engine.php';
 require_once __DIR__ . '/../../includes/import_mapper.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'imports_preview_page');
-} else {
-    enforcePagePermission($pdo, 'imports_preview');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'imports_preview');
 }
 
 if (session_status() === PHP_SESSION_NONE) {

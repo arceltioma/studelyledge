@@ -6,11 +6,7 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'operations_view_page');
-} else {
-    enforcePagePermission($pdo, 'operations_view');
-}
+studelyEnforceCurrentPageAccess($pdo);
 
 $pageTitle = 'Liste des opérations';
 $pageSubtitle = 'Suivi consolidé des opérations comptables';

@@ -6,11 +6,7 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'service_accounts_manage_page');
-} else {
-    enforcePagePermission($pdo, 'service_accounts_view');
-}
+studelyEnforceCurrentPageAccess($pdo);
 
 if (!tableExists($pdo, 'service_accounts')) {
     exit('Table service_accounts introuvable.');

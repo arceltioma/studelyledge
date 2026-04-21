@@ -10,7 +10,7 @@ require_once __DIR__ . '/../../config/security.php';
 studelyEnforceCurrentPageAccess($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    studelyEnforceActionAccess($pdo, 'rebuild_balances_page');
+    studelyEnforceActionAccess($pdo, 'rebuild_balances');
 }
 function rebuildAllBalances(PDO $pdo): array
 {

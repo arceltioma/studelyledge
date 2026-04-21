@@ -10,7 +10,7 @@ require_once __DIR__ . '/../../config/security.php';
 studelyEnforceCurrentPageAccess($pdo);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    studelyEnforceActionAccess($pdo, 'manage_operation_types_page');
+    studelyEnforceActionAccess($pdo, 'manage_operation_types');
 }
 
 if (!tableExists($pdo, 'ref_operation_types')) {

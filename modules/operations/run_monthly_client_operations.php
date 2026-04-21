@@ -7,14 +7,67 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'operations_create_page');
-} else {
-    enforcePagePermission($pdo, 'operations_create');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'run_monthly_client_operations');
 }
 
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
+}
+
+if (!function_exists('sl_create_notification_if_possible')) {
+    function sl_create_notification_if_possible(
+        PDO $pdo,
+        string $type,
+        string $message,
+        string $level = 'info',
+        ?string $linkUrl = null,
+        ?string $entityType = null,
+        ?int $entityId = null,
+        ?int $createdBy = null
+    ): void {
+        if (!tableExists($pdo, 'notifications')) {
+            return;
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'type' => $type,
+            'message' => $message,
+            'level' => $level,
+            'link_url' => $linkUrl,
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'created_by' => $createdBy > 0 ? $createdBy : null,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'notifications', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'notifications', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (!$columns) {
+            return;
+        }
+
+        $sql = "INSERT INTO notifications (" . implode(', ', $columns) . ")
+                VALUES (" . implode(', ', $values) . ")";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+    }
 }
 
 $pageTitle = 'Génération des mensualités clients';
@@ -29,16 +82,121 @@ $report = null;
 $successMessage = '';
 $errorMessage = '';
 
+if (isset($_SESSION['success_message']) && $_SESSION['success_message'] !== '') {
+    $successMessage = (string)$_SESSION['success_message'];
+    unset($_SESSION['success_message']);
+}
+
+if (isset($_SESSION['error_message']) && $_SESSION['error_message'] !== '') {
+    $errorMessage = (string)$_SESSION['error_message'];
+    unset($_SESSION['error_message']);
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         if (!verify_csrf_token($_POST['_csrf_token'] ?? null)) {
             throw new RuntimeException('Jeton CSRF invalide.');
         }
 
-        $report = sl_run_monthly_client_operations($pdo, $runDate, (int)($_SESSION['user_id'] ?? 0));
-        $successMessage = 'Traitement terminé : ' . (int)$report['created'] . ' mensualité(s) créée(s).';
+        $userId = (int)($_SESSION['user_id'] ?? 0);
+
+        $report = sl_run_monthly_client_operations($pdo, $runDate, $userId);
+
+        $createdCount = (int)($report['created'] ?? 0);
+        $processedCount = (int)($report['processed'] ?? 0);
+        $skippedCount = (int)($report['skipped'] ?? 0);
+        $errorsCount = count($report['errors'] ?? []);
+
+        $successMessage = 'Traitement terminé : ' . $createdCount . ' mensualité(s) créée(s).';
+
+        if (function_exists('logUserAction') && $userId > 0) {
+            logUserAction(
+                $pdo,
+                $userId,
+                'execute_monthly_run',
+                'monthly_payments',
+                'monthly_payment_run',
+                isset($report['run_id']) ? (int)$report['run_id'] : null,
+                'Lancement manuel des mensualités clients'
+                . ' | date: ' . $runDate
+                . ' | analysés: ' . $processedCount
+                . ' | créées: ' . $createdCount
+                . ' | ignorées: ' . $skippedCount
+                . ' | erreurs: ' . $errorsCount
+            );
+        }
+
+        sl_create_notification_if_possible(
+            $pdo,
+            $errorsCount > 0 ? 'monthly_run_executed_with_errors' : 'monthly_run_executed',
+            'Traitement des mensualités clients exécuté'
+            . ' | date : ' . $runDate
+            . ' | analysés : ' . $processedCount
+            . ' | créées : ' . $createdCount
+            . ' | ignorées : ' . $skippedCount
+            . ' | erreurs : ' . $errorsCount,
+            $errorsCount > 0 ? 'warning' : 'success',
+            APP_URL . 'modules/operations/run_monthly_client_operations.php?run_date=' . urlencode($runDate),
+            'monthly_payment_run',
+            isset($report['run_id']) ? (int)$report['run_id'] : null,
+            $userId > 0 ? $userId : null
+        );
+
+        if ($errorsCount > 0 && !empty($report['errors'])) {
+            foreach ($report['errors'] as $item) {
+                $clientCode = (string)($item['client_code'] ?? '');
+                $clientId = (int)($item['client_id'] ?? 0);
+                $message = (string)($item['message'] ?? 'Erreur inconnue');
+
+                sl_create_notification_if_possible(
+                    $pdo,
+                    'monthly_run_item_error',
+                    'Erreur génération mensualité'
+                    . ($clientCode !== '' ? ' | client : ' . $clientCode : '')
+                    . ($clientId > 0 ? ' (#' . $clientId . ')' : '')
+                    . ' | date : ' . $runDate
+                    . ' | ' . $message,
+                    'warning',
+                    APP_URL . 'modules/operations/run_monthly_client_operations.php?run_date=' . urlencode($runDate),
+                    'monthly_payment_run',
+                    isset($report['run_id']) ? (int)$report['run_id'] : null,
+                    $userId > 0 ? $userId : null
+                );
+            }
+        }
+
+        $_SESSION['success_message'] = $successMessage;
     } catch (Throwable $e) {
         $errorMessage = $e->getMessage();
+
+        if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+            logUserAction(
+                $pdo,
+                (int)$_SESSION['user_id'],
+                'execute_monthly_run_failed',
+                'monthly_payments',
+                'monthly_payment_run',
+                null,
+                'Échec du lancement manuel des mensualités clients'
+                . ' | date: ' . $runDate
+                . ' | erreur: ' . $errorMessage
+            );
+        }
+
+        sl_create_notification_if_possible(
+            $pdo,
+            'monthly_run_execution_failed',
+            'Échec du traitement des mensualités clients'
+            . ' | date : ' . $runDate
+            . ' | erreur : ' . $errorMessage,
+            'danger',
+            APP_URL . 'modules/operations/run_monthly_client_operations.php?run_date=' . urlencode($runDate),
+            'monthly_payment_run',
+            null,
+            isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null
+        );
+
+        $_SESSION['error_message'] = $errorMessage;
     }
 }
 
@@ -87,10 +245,10 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                 <?php if (is_array($report)): ?>
                     <div class="sl-data-list">
-                        <div class="sl-data-list__row"><span>Date</span><strong><?= e((string)$report['run_date']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Clients analysés</span><strong><?= (int)$report['processed'] ?></strong></div>
-                        <div class="sl-data-list__row"><span>Mensualités créées</span><strong><?= (int)$report['created'] ?></strong></div>
-                        <div class="sl-data-list__row"><span>Lignes ignorées</span><strong><?= (int)$report['skipped'] ?></strong></div>
+                        <div class="sl-data-list__row"><span>Date</span><strong><?= e((string)($report['run_date'] ?? $runDate)) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Clients analysés</span><strong><?= (int)($report['processed'] ?? 0) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Mensualités créées</span><strong><?= (int)($report['created'] ?? 0) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Lignes ignorées</span><strong><?= (int)($report['skipped'] ?? 0) ?></strong></div>
                         <div class="sl-data-list__row"><span>Erreurs</span><strong><?= count($report['errors'] ?? []) ?></strong></div>
                     </div>
 

@@ -7,10 +7,10 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'imports_upload_page');
-} else {
-    enforcePagePermission($pdo, 'imports_upload');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'imports_upload');
 }
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -221,6 +221,67 @@ if (!function_exists('sl_import_ai_read_xlsx_raw')) {
     }
 }
 
+if (!function_exists('sl_import_upload_create_notification')) {
+    function sl_import_upload_create_notification(
+        PDO $pdo,
+        string $message,
+        string $level = 'success',
+        ?string $linkUrl = null,
+        ?int $createdBy = null
+    ): void {
+        if (!tableExists($pdo, 'notifications')) {
+            return;
+        }
+
+        $allowedLevels = ['info', 'success', 'warning', 'danger'];
+        if (!in_array($level, $allowedLevels, true)) {
+            $level = 'info';
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'type' => 'import_upload',
+            'message' => $message,
+            'level' => $level,
+            'link_url' => $linkUrl,
+            'entity_type' => 'import',
+            'entity_id' => null,
+            'is_read' => 0,
+            'created_by' => $createdBy,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'notifications', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'notifications', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (columnExists($pdo, 'notifications', 'updated_at')) {
+            $columns[] = 'updated_at';
+            $values[] = 'NULL';
+        }
+
+        if (!$columns) {
+            return;
+        }
+
+        $sql = "INSERT INTO notifications (" . implode(', ', $columns) . ")
+                VALUES (" . implode(', ', $values) . ")";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+    }
+}
+
 $errorMessage = '';
 $previewData = null;
 
@@ -289,6 +350,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'mapped_count' => count(array_filter($suggestedMapping)),
             'sample_rows' => array_slice($parsed['rows'], 0, 5),
         ];
+
+        $userId = (int)($_SESSION['user_id'] ?? 0);
+        $details = sprintf(
+            'Prévisualisation import : %s | format=%s | colonnes=%d | lignes=%d | mapping_auto=%d',
+            $originalName,
+            strtoupper($extension),
+            count($parsed['headers']),
+            count($parsed['rows']),
+            count(array_filter($suggestedMapping))
+        );
+
+        if (function_exists('logUserAction') && $userId > 0) {
+            logUserAction(
+                $pdo,
+                $userId,
+                'upload_import_preview',
+                'imports',
+                'import',
+                null,
+                $details
+            );
+        }
+
+        sl_import_upload_create_notification(
+            $pdo,
+            sprintf(
+                'Prévisualisation import prête : %s (%d lignes, %d colonnes)',
+                $originalName,
+                count($parsed['rows']),
+                count($parsed['headers'])
+            ),
+            'success',
+            APP_URL . 'modules/imports/import_mapping.php',
+            $userId > 0 ? $userId : null
+        );
 
         $actionMode = trim((string)($_POST['action_mode'] ?? 'preview'));
         if ($actionMode === 'save') {

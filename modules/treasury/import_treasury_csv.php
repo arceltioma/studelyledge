@@ -7,10 +7,10 @@ require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'treasury_import_page');
-} else {
-    enforcePagePermission($pdo, 'treasury_import');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'treasury_import');
 }
 
 if (session_status() === PHP_SESSION_NONE) {
@@ -23,12 +23,77 @@ $pageSubtitle = 'Prévisualisation avant validation des comptes 512 à importer'
 $successMessage = '';
 $errorMessage = '';
 $sessionKey = 'treasury_import_preview_v2';
+$userId = (int)($_SESSION['user_id'] ?? 0);
 
 $currencies = function_exists('sl_get_currency_options')
     ? sl_get_currency_options($pdo)
     : [['code' => 'EUR', 'label' => 'Euro']];
 
 $currencyCodes = array_map(static fn($item) => (string)($item['code'] ?? ''), $currencies);
+
+if (!function_exists('sl_treasury_import_create_notification')) {
+    function sl_treasury_import_create_notification(
+        PDO $pdo,
+        string $type,
+        string $message,
+        string $level = 'info',
+        ?string $linkUrl = null,
+        ?string $entityType = 'treasury_import',
+        ?int $entityId = null,
+        ?int $createdBy = null
+    ): void {
+        if (!tableExists($pdo, 'notifications')) {
+            return;
+        }
+
+        $allowedLevels = ['info', 'success', 'warning', 'danger'];
+        if (!in_array($level, $allowedLevels, true)) {
+            $level = 'info';
+        }
+
+        $columns = [];
+        $values = [];
+        $params = [];
+
+        $map = [
+            'type' => $type,
+            'message' => $message,
+            'level' => $level,
+            'link_url' => $linkUrl,
+            'entity_type' => $entityType,
+            'entity_id' => $entityId,
+            'is_read' => 0,
+            'created_by' => $createdBy,
+        ];
+
+        foreach ($map as $column => $value) {
+            if (columnExists($pdo, 'notifications', $column)) {
+                $columns[] = $column;
+                $values[] = '?';
+                $params[] = $value;
+            }
+        }
+
+        if (columnExists($pdo, 'notifications', 'created_at')) {
+            $columns[] = 'created_at';
+            $values[] = 'NOW()';
+        }
+
+        if (columnExists($pdo, 'notifications', 'updated_at')) {
+            $columns[] = 'updated_at';
+            $values[] = 'NULL';
+        }
+
+        if (!$columns) {
+            return;
+        }
+
+        $sql = "INSERT INTO notifications (" . implode(', ', $columns) . ")
+                VALUES (" . implode(', ', $values) . ")";
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+    }
+}
 
 if (!function_exists('sl_treasury_import_norm')) {
     function sl_treasury_import_norm(string $v): string
@@ -235,10 +300,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'rows' => $previewRows,
                 'file_name' => (string)($_FILES['file']['name'] ?? 'import.csv'),
             ];
+
+            $okCount = count(array_filter($previewRows, static fn($r) => ($r['status'] ?? '') === 'ok'));
+            $duplicateCount = count(array_filter($previewRows, static fn($r) => ($r['status'] ?? '') === 'duplicate'));
+            $errorCount = count(array_filter($previewRows, static fn($r) => ($r['status'] ?? '') === 'error'));
+            $fileName = (string)($_FILES['file']['name'] ?? 'import.csv');
+
+            if (function_exists('logUserAction') && $userId > 0) {
+                logUserAction(
+                    $pdo,
+                    $userId,
+                    'preview_treasury_import',
+                    'treasury',
+                    'treasury_import',
+                    null,
+                    sprintf(
+                        'Prévisualisation import trésorerie %s : %d ligne(s), %d prête(s), %d doublon(s), %d erreur(s)',
+                        $fileName,
+                        count($previewRows),
+                        $okCount,
+                        $duplicateCount,
+                        $errorCount
+                    )
+                );
+            }
+
+            sl_treasury_import_create_notification(
+                $pdo,
+                'treasury_import_preview',
+                sprintf(
+                    'Prévisualisation import trésorerie %s : %d ligne(s), %d prête(s), %d doublon(s), %d erreur(s).',
+                    $fileName,
+                    count($previewRows),
+                    $okCount,
+                    $duplicateCount,
+                    $errorCount
+                ),
+                $errorCount > 0 ? 'warning' : 'info',
+                APP_URL . 'modules/treasury/import_treasury_csv.php',
+                'treasury_import',
+                null,
+                $userId > 0 ? $userId : null
+            );
         }
 
         if ($actionMode === 'confirm_import') {
             $previewRows = $_SESSION[$sessionKey]['rows'] ?? [];
+            $sessionFileName = (string)($_SESSION[$sessionKey]['file_name'] ?? 'import.csv');
+
             if (!$previewRows || !is_array($previewRows)) {
                 throw new RuntimeException('Aucune prévisualisation en attente.');
             }
@@ -248,6 +357,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $imported = 0;
             $duplicates = 0;
             $errors = 0;
+            $createdAccountIds = [];
 
             foreach ($previewRows as $row) {
                 if (($row['status'] ?? '') === 'duplicate') {
@@ -298,10 +408,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $sql = "INSERT INTO treasury_accounts (" . implode(',', $columns) . ") VALUES (" . implode(',', $values) . ")";
                 $pdo->prepare($sql)->execute($params);
+
+                $createdId = (int)$pdo->lastInsertId();
+                if ($createdId > 0) {
+                    $createdAccountIds[] = $createdId;
+                }
+
                 $imported++;
             }
 
             $pdo->commit();
+
+            if (function_exists('logUserAction') && $userId > 0) {
+                logUserAction(
+                    $pdo,
+                    $userId,
+                    'confirm_treasury_import',
+                    'treasury',
+                    'treasury_import',
+                    null,
+                    sprintf(
+                        'Import trésorerie confirmé %s : %d compte(s) importé(s), %d doublon(s), %d ligne(s) ignorée(s)',
+                        $sessionFileName,
+                        $imported,
+                        $duplicates,
+                        $errors
+                    )
+                );
+            }
+
+            sl_treasury_import_create_notification(
+                $pdo,
+                'treasury_import_confirmed',
+                sprintf(
+                    'Import trésorerie confirmé pour %s : %d compte(s) importé(s), %d doublon(s), %d ligne(s) ignorée(s).',
+                    $sessionFileName,
+                    $imported,
+                    $duplicates,
+                    $errors
+                ),
+                'success',
+                APP_URL . 'modules/treasury/index.php',
+                'treasury_import',
+                null,
+                $userId > 0 ? $userId : null
+            );
 
             unset($_SESSION[$sessionKey]);
             $previewRows = [];
@@ -310,14 +461,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($actionMode === 'cancel_preview') {
+            $sessionFileName = (string)($_SESSION[$sessionKey]['file_name'] ?? 'import.csv');
+            $previewCount = count($_SESSION[$sessionKey]['rows'] ?? []);
+
             unset($_SESSION[$sessionKey]);
             $previewRows = [];
+
+            if (function_exists('logUserAction') && $userId > 0) {
+                logUserAction(
+                    $pdo,
+                    $userId,
+                    'cancel_treasury_import_preview',
+                    'treasury',
+                    'treasury_import',
+                    null,
+                    sprintf(
+                        'Annulation de la prévisualisation import trésorerie %s (%d ligne(s) supprimée(s) de la session)',
+                        $sessionFileName,
+                        $previewCount
+                    )
+                );
+            }
+
+            sl_treasury_import_create_notification(
+                $pdo,
+                'treasury_import_preview_cancelled',
+                sprintf(
+                    'Prévisualisation d’import trésorerie annulée pour %s.',
+                    $sessionFileName
+                ),
+                'info',
+                APP_URL . 'modules/treasury/import_treasury_csv.php',
+                'treasury_import',
+                null,
+                $userId > 0 ? $userId : null
+            );
         }
     } catch (Throwable $e) {
         if ($pdo->inTransaction()) {
             $pdo->rollBack();
         }
+
         $errorMessage = $e->getMessage();
+
+        if (function_exists('logUserAction') && $userId > 0) {
+            logUserAction(
+                $pdo,
+                $userId,
+                'treasury_import_failed',
+                'treasury',
+                'treasury_import',
+                null,
+                'Échec import trésorerie : ' . $errorMessage
+            );
+        }
+
+        sl_treasury_import_create_notification(
+            $pdo,
+            'treasury_import_failed',
+            'Échec import trésorerie : ' . $errorMessage,
+            'danger',
+            APP_URL . 'modules/treasury/import.php',
+            'treasury_import',
+            null,
+            $userId > 0 ? $userId : null
+        );
     }
 }
 

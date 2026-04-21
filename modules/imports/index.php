@@ -6,11 +6,7 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'imports_upload_page');
-} else {
-    enforcePagePermission($pdo, 'imports_upload');
-}
+studelyEnforceCurrentPageAccess($pdo);
 
 $pageTitle = 'Hub Import';
 $pageSubtitle = 'Point d’entrée centralisé des imports opérations, clients, comptes internes et comptes de service';

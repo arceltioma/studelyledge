@@ -206,7 +206,7 @@ if (!function_exists('studely_page_permission_map')) {
             'modules/operations/operation_create.php' => 'operation_create_page',
             'modules/operations/operation_edit.php' => 'operation_edit_page',
             'modules/operations/operation_delete.php' => 'operation_delete_page',
-            'modules/operations/run_monthly_client_operations.php' => 'operations_monthly_run_page',
+            'modules/operations/run_monthly_client_operations.php' => 'run_monthly_client_operations',
 
             // Manual actions
             'modules/manual_actions/manual_operation.php' => 'manual_actions_create_page',
@@ -231,9 +231,9 @@ if (!function_exists('studely_page_permission_map')) {
             'modules/monthly_payments/monthly_payments_import.php' => 'monthly_payments_import_page',
             'modules/monthly_payments/monthly_payments_preview.php' => 'monthly_payments_preview_page',
             'modules/monthly_payments/monthly_payments_validate.php' => 'monthly_payments_validate_page',
-            'modules/monthly_payments/import_monthly_payments.php' => 'monthly_payments_import_page',
+            'modules/monthly_payments/import_monthly_payments.php' => 'import_monthly_payments_page',
             'modules/monthly_payments/monthly_import_create.php' => 'monthly_payments_import_page',
-            'modules/monthly_payments/monthly_import_preview.php' => 'monthly_payments_preview_page',
+            'modules/monthly_payments/monthly_import_preview.php' => 'monthly_import_preview_page',
             'modules/monthly_payments/monthly_import_validate.php' => 'monthly_payments_validate_page',
             'modules/monthly_payments/monthly_payments_run.php' => 'monthly_run_execute_page',
 

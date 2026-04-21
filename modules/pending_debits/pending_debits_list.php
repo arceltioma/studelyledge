@@ -6,11 +6,7 @@ require_once __DIR__ . '/../../includes/auth_check.php';
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'pending_debits_view_page');
-} else {
-    enforcePagePermission($pdo, 'pending_debits_view');
-}
+studelyEnforceCurrentPageAccess($pdo);
 
 if (!tableExists($pdo, 'pending_client_debits')) {
     exit('Table pending_client_debits introuvable.');

@@ -19,10 +19,10 @@ require_once __DIR__ . '/../../vendor/autoload.php';
 use Dompdf\Dompdf;
 use Dompdf\Options;
 
-if (function_exists('studelyEnforceAccess')) {
-    studelyEnforceAccess($pdo, 'statements_export_page');
-} else {
-    enforcePagePermission($pdo, 'clients_view');
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'generate_bulk_pdf');
 }
 
 if (session_status() === PHP_SESSION_NONE) {

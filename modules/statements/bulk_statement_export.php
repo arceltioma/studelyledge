@@ -8,7 +8,11 @@ require_once __DIR__ . '/../../includes/permission_middleware.php';
 require_once __DIR__ . '/../../config/security.php';
 
 $pagePermission = 'statements_export_bulk';
-enforcePagePermission($pdo, $pagePermission);
+studelyEnforceCurrentPageAccess($pdo);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    studelyEnforceActionAccess($pdo, 'bulk_statement_export');
+}
 
 $countries = $pdo->query("
     SELECT DISTINCT country_destination

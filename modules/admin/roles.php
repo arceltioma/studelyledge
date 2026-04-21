@@ -9,7 +9,7 @@ require_once __DIR__ . '/../../config/security.php';
 
 studelyEnforceCurrentPageAccess($pdo);
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    studelyEnforceActionAccess($pdo, 'roles_view_page');
+    studelyEnforceActionAccess($pdo, 'roles_view');
 }
 
 if (!function_exists('ar_fetch_roles')) {

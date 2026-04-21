@@ -5,7 +5,7 @@ $pdo = getPDO();
 require_once __DIR__ . '/../../includes/admin_functions.php';
 require_once __DIR__ . '/../../includes/permission_middleware.php';
 
-enforcePagePermission($pdo, 'treasury_view');
+studelyEnforceCurrentPageAccess($pdo);
 
 $search = trim($_GET['search'] ?? '');
 $country = trim($_GET['country'] ?? '');
