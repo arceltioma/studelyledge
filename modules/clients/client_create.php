@@ -14,7 +14,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 $pageTitle = 'Créer un client';
-$pageSubtitle = 'Création complète d’une fiche client avec compte 411, rattachement 512, mensualité et prévisualisation';
+$pageSubtitle = 'Création complète d’une fiche client avec compte 411, rattachement 512, mensualité, frais initiaux et prévisualisation';
 
 if (!function_exists('sl_client_fetch_treasury_accounts')) {
     function sl_client_fetch_treasury_accounts(PDO $pdo): array
@@ -26,6 +26,24 @@ if (!function_exists('sl_client_fetch_treasury_accounts')) {
         $stmt = $pdo->query("
             SELECT id, account_code, account_label, currency_code
             FROM treasury_accounts
+            WHERE COALESCE(is_active,1) = 1
+            ORDER BY account_code ASC
+        ");
+
+        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+
+if (!function_exists('sl_client_fetch_service_accounts_706')) {
+    function sl_client_fetch_service_accounts_706(PDO $pdo): array
+    {
+        if (!tableExists($pdo, 'service_accounts')) {
+            return [];
+        }
+
+        $stmt = $pdo->query("
+            SELECT id, account_code, account_label
+            FROM service_accounts
             WHERE COALESCE(is_active,1) = 1
             ORDER BY account_code ASC
         ");
@@ -62,7 +80,7 @@ if (!function_exists('sl_generate_next_client_code')) {
     function sl_generate_next_client_code(PDO $pdo): string
     {
         if (function_exists('generateClientCode')) {
-            return (string) generateClientCode($pdo);
+            return (string)generateClientCode($pdo);
         }
 
         $stmt = $pdo->query("
@@ -72,14 +90,121 @@ if (!function_exists('sl_generate_next_client_code')) {
             ORDER BY id DESC
             LIMIT 1
         ");
-        $lastCode = (string) ($stmt->fetchColumn() ?: '');
+        $lastCode = (string)($stmt->fetchColumn() ?: '');
 
         if (preg_match('/CLT(\d+)/', $lastCode, $m)) {
-            $next = ((int) $m[1]) + 1;
-            return 'CLT' . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+            $next = ((int)$m[1]) + 1;
+            return 'CLT' . str_pad((string)$next, 4, '0', STR_PAD_LEFT);
         }
 
         return 'CLT0001';
+    }
+}
+
+if (!function_exists('sl_client_detect_service_default_amount_column')) {
+    function sl_client_detect_service_default_amount_column(PDO $pdo): ?string
+    {
+        if (!tableExists($pdo, 'ref_services')) {
+            return null;
+        }
+
+        foreach (['default_amount', 'amount', 'default_price', 'unit_price'] as $column) {
+            if (columnExists($pdo, 'ref_services', $column)) {
+                return $column;
+            }
+        }
+
+        return null;
+    }
+}
+
+if (!function_exists('sl_client_fetch_fee_services')) {
+    function sl_client_fetch_fee_services(PDO $pdo): array
+    {
+        if (!tableExists($pdo, 'ref_services')) {
+            return [];
+        }
+
+        $amountColumn = sl_client_detect_service_default_amount_column($pdo);
+        $amountSql = $amountColumn !== null ? "COALESCE(rs.`{$amountColumn}`, 0)" : "0";
+
+        $hasOpTypes = tableExists($pdo, 'ref_operation_types');
+
+        $sql = "
+            SELECT
+                rs.id,
+                rs.code,
+                rs.label,
+                rs.operation_type_id,
+                {$amountSql} AS default_amount
+                " . ($hasOpTypes ? ", rot.code AS operation_type_code, rot.label AS operation_type_label" : ", NULL AS operation_type_code, NULL AS operation_type_label") . "
+            FROM ref_services rs
+            " . ($hasOpTypes ? "LEFT JOIN ref_operation_types rot ON rot.id = rs.operation_type_id" : "") . "
+            WHERE COALESCE(rs.is_active,1) = 1
+            ORDER BY rs.label ASC
+        ";
+
+        return $pdo->query($sql)->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+}
+
+if (!function_exists('sl_client_parse_selected_fees')) {
+    function sl_client_parse_selected_fees(array $post, array $feeServices): array
+    {
+        $selectedFlags = $post['fee_selected'] ?? [];
+        $amountInputs = $post['fee_amount'] ?? [];
+        $serviceAccountInputs = $post['fee_service_account_code'] ?? [];
+        $serviceCodeInputs = $post['fee_service_code'] ?? [];
+        $serviceLabelInputs = $post['fee_service_label'] ?? [];
+        $operationTypeCodeInputs = $post['fee_operation_type_code'] ?? [];
+        $operationTypeLabelInputs = $post['fee_operation_type_label'] ?? [];
+        $operationTypeIdInputs = $post['fee_operation_type_id'] ?? [];
+
+        $byId = [];
+        foreach ($feeServices as $service) {
+            $byId[(int)($service['id'] ?? 0)] = $service;
+        }
+
+        $selectedFees = [];
+
+        foreach ($byId as $serviceId => $service) {
+            $isChecked = isset($selectedFlags[$serviceId]);
+            $amountRaw = (string)($amountInputs[$serviceId] ?? ($service['default_amount'] ?? '0'));
+            $amount = (float)str_replace(',', '.', $amountRaw);
+            $destinationAccountCode = trim((string)($serviceAccountInputs[$serviceId] ?? ''));
+
+            if (!$isChecked) {
+                continue;
+            }
+
+            if ($amount <= 0) {
+                continue;
+            }
+
+            $selectedFees[] = [
+                'service_id' => $serviceId,
+                'service_code' => trim((string)($serviceCodeInputs[$serviceId] ?? ($service['code'] ?? ''))),
+                'service_label' => trim((string)($serviceLabelInputs[$serviceId] ?? ($service['label'] ?? ''))),
+                'operation_type_id' => (int)($operationTypeIdInputs[$serviceId] ?? ($service['operation_type_id'] ?? 0)),
+                'operation_type_code' => trim((string)($operationTypeCodeInputs[$serviceId] ?? ($service['operation_type_code'] ?? 'FRAIS_SERVICE'))),
+                'operation_type_label' => trim((string)($operationTypeLabelInputs[$serviceId] ?? ($service['operation_type_label'] ?? ''))),
+                'amount' => $amount,
+                'destination_account_code' => $destinationAccountCode,
+            ];
+        }
+
+        return $selectedFees;
+    }
+}
+
+if (!function_exists('sl_client_total_selected_fees')) {
+    function sl_client_total_selected_fees(array $fees): float
+    {
+        $total = 0.0;
+        foreach ($fees as $fee) {
+            $total += (float)($fee['amount'] ?? 0);
+        }
+        return round($total, 2);
     }
 }
 
@@ -133,7 +258,7 @@ if (!function_exists('sl_create_or_link_client_bank_account')) {
             }
 
             if ($fields) {
-                $params[] = (int) $existing['id'];
+                $params[] = (int)$existing['id'];
                 $stmt = $pdo->prepare("
                     UPDATE bank_accounts
                     SET " . implode(', ', $fields) . "
@@ -142,7 +267,7 @@ if (!function_exists('sl_create_or_link_client_bank_account')) {
                 $stmt->execute($params);
             }
 
-            $bankAccountId = (int) $existing['id'];
+            $bankAccountId = (int)$existing['id'];
         } else {
             $columns = [];
             $values = [];
@@ -181,7 +306,7 @@ if (!function_exists('sl_create_or_link_client_bank_account')) {
                 VALUES (" . implode(', ', $values) . ")
             ");
             $stmt->execute($params);
-            $bankAccountId = (int) $pdo->lastInsertId();
+            $bankAccountId = (int)$pdo->lastInsertId();
         }
 
         if (tableExists($pdo, 'client_bank_accounts')) {
@@ -207,8 +332,33 @@ if (!function_exists('sl_create_or_link_client_bank_account')) {
     }
 }
 
+if (!function_exists('sl_client_create_operation_helper')) {
+    function sl_client_create_operation_helper(PDO $pdo, array $payload): int
+    {
+        if (function_exists('createOperationWithAccountingV2')) {
+            $result = createOperationWithAccountingV2($pdo, $payload);
+            if (is_array($result)) {
+                return (int)($result['operation_id'] ?? 0);
+            }
+            return (int)$result;
+        }
+
+        if (function_exists('createOperationWithAccounting')) {
+            $result = createOperationWithAccounting($pdo, $payload);
+            if (is_array($result)) {
+                return (int)($result['operation_id'] ?? 0);
+            }
+            return (int)$result;
+        }
+
+        throw new RuntimeException('Le helper createOperationWithAccountingV2() ou createOperationWithAccounting() est introuvable.');
+    }
+}
+
 $treasuryAccounts = sl_client_fetch_treasury_accounts($pdo);
+$serviceAccounts706 = sl_client_fetch_service_accounts_706($pdo);
 $currencies = sl_client_fetch_currencies($pdo);
+$feeServices = sl_client_fetch_fee_services($pdo);
 
 $clientTypes = function_exists('studely_client_types') ? studely_client_types() : [];
 $originCountries = function_exists('studely_origin_countries') ? studely_origin_countries() : [];
@@ -248,36 +398,42 @@ $formData = [
 ];
 
 $previewMode = false;
+$selectedFees = [];
+$totalSelectedFees = 0.0;
+$projectedBalance = 0.0;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $formData = [
-        'client_code' => trim((string) ($_POST['client_code'] ?? $defaultClientCode)),
-        'first_name' => trim((string) ($_POST['first_name'] ?? '')),
-        'last_name' => trim((string) ($_POST['last_name'] ?? '')),
-        'email' => trim((string) ($_POST['email'] ?? '')),
-        'phone' => trim((string) ($_POST['phone'] ?? '')),
-        'postal_address' => trim((string) ($_POST['postal_address'] ?? '')),
-        'passport_number' => trim((string) ($_POST['passport_number'] ?? '')),
-        'passport_issue_country' => trim((string) ($_POST['passport_issue_country'] ?? '')),
-        'passport_issue_date' => trim((string) ($_POST['passport_issue_date'] ?? '')),
-        'passport_expiry_date' => trim((string) ($_POST['passport_expiry_date'] ?? '')),
-        'client_type' => trim((string) ($_POST['client_type'] ?? '')),
-        'country_origin' => trim((string) ($_POST['country_origin'] ?? '')),
-        'country_destination' => trim((string) ($_POST['country_destination'] ?? '')),
-        'country_commercial' => trim((string) ($_POST['country_commercial'] ?? '')),
-        'currency' => trim((string) ($_POST['currency'] ?? 'EUR')),
-        'generated_client_account' => trim((string) ($_POST['generated_client_account'] ?? '')),
-        'initial_balance' => trim((string) ($_POST['initial_balance'] ?? '0')),
-        'balance' => trim((string) ($_POST['balance'] ?? '0')),
-        'initial_treasury_account_id' => ($_POST['initial_treasury_account_id'] ?? '') !== '' ? (int) $_POST['initial_treasury_account_id'] : '',
-        'monthly_amount' => trim((string) ($_POST['monthly_amount'] ?? '0')),
-        'monthly_treasury_account_id' => ($_POST['monthly_treasury_account_id'] ?? '') !== '' ? (int) $_POST['monthly_treasury_account_id'] : '',
-        'monthly_day' => trim((string) ($_POST['monthly_day'] ?? '26')),
+        'client_code' => trim((string)($_POST['client_code'] ?? $defaultClientCode)),
+        'first_name' => trim((string)($_POST['first_name'] ?? '')),
+        'last_name' => trim((string)($_POST['last_name'] ?? '')),
+        'email' => trim((string)($_POST['email'] ?? '')),
+        'phone' => trim((string)($_POST['phone'] ?? '')),
+        'postal_address' => trim((string)($_POST['postal_address'] ?? '')),
+        'passport_number' => trim((string)($_POST['passport_number'] ?? '')),
+        'passport_issue_country' => trim((string)($_POST['passport_issue_country'] ?? '')),
+        'passport_issue_date' => trim((string)($_POST['passport_issue_date'] ?? '')),
+        'passport_expiry_date' => trim((string)($_POST['passport_expiry_date'] ?? '')),
+        'client_type' => trim((string)($_POST['client_type'] ?? '')),
+        'country_origin' => trim((string)($_POST['country_origin'] ?? '')),
+        'country_destination' => trim((string)($_POST['country_destination'] ?? '')),
+        'country_commercial' => trim((string)($_POST['country_commercial'] ?? '')),
+        'currency' => trim((string)($_POST['currency'] ?? 'EUR')),
+        'generated_client_account' => trim((string)($_POST['generated_client_account'] ?? '')),
+        'initial_balance' => trim((string)($_POST['initial_balance'] ?? '0')),
+        'balance' => trim((string)($_POST['balance'] ?? '0')),
+        'initial_treasury_account_id' => ($_POST['initial_treasury_account_id'] ?? '') !== '' ? (int)$_POST['initial_treasury_account_id'] : '',
+        'monthly_amount' => trim((string)($_POST['monthly_amount'] ?? '0')),
+        'monthly_treasury_account_id' => ($_POST['monthly_treasury_account_id'] ?? '') !== '' ? (int)$_POST['monthly_treasury_account_id'] : '',
+        'monthly_day' => trim((string)($_POST['monthly_day'] ?? '26')),
         'monthly_enabled' => isset($_POST['monthly_enabled']) ? 1 : 0,
         'is_active' => isset($_POST['is_active']) ? 1 : 0,
     ];
 
-    $actionMode = trim((string) ($_POST['action_mode'] ?? 'preview'));
+    $selectedFees = sl_client_parse_selected_fees($_POST, $feeServices);
+    $totalSelectedFees = sl_client_total_selected_fees($selectedFees);
+
+    $actionMode = trim((string)($_POST['action_mode'] ?? 'preview'));
     $previewMode = true;
 
     try {
@@ -309,6 +465,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Le compte 411 doit commencer par 411.');
         }
 
+        foreach ($selectedFees as $fee) {
+            if (trim((string)($fee['destination_account_code'] ?? '')) === '') {
+                throw new RuntimeException('Chaque frais sélectionné doit avoir un compte 706 de destination.');
+            }
+        }
+
         if (
             $formData['passport_issue_date'] !== ''
             && $formData['passport_expiry_date'] !== ''
@@ -317,14 +479,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('La date d’expiration du passport doit être postérieure à sa date de délivrance.');
         }
 
-        $initialBalance = (float) str_replace(',', '.', $formData['initial_balance']);
-
-        // Solde courant toujours initialisé au solde initial
+        $initialBalance = (float)str_replace(',', '.', $formData['initial_balance']);
         $balance = $initialBalance;
-        $formData['balance'] = (string) $initialBalance;
+        $formData['balance'] = (string)$balance;
+        $projectedBalance = round($balance - $totalSelectedFees, 2);
 
-        $monthlyAmount = (float) str_replace(',', '.', $formData['monthly_amount']);
-        $monthlyDay = (int) $formData['monthly_day'];
+        $monthlyAmount = (float)str_replace(',', '.', $formData['monthly_amount']);
+        $monthlyDay = (int)$formData['monthly_day'];
 
         if ($monthlyAmount < 0) {
             throw new RuntimeException('La mensualité ne peut pas être négative.');
@@ -334,20 +495,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Le jour de mensualité doit être compris entre 1 et 31.');
         }
 
-        // Mensualité active autorisée même sans compte 512 mensualité
-        if ((int) $formData['monthly_enabled'] === 1 && $monthlyAmount <= 0) {
+        if ((int)$formData['monthly_enabled'] === 1 && $monthlyAmount <= 0) {
             throw new RuntimeException('La mensualité doit être supérieure à 0 pour être activée.');
         }
 
         $stmtCheckCode = $pdo->prepare("SELECT COUNT(*) FROM clients WHERE client_code = ?");
         $stmtCheckCode->execute([$formData['client_code']]);
-        if ((int) $stmtCheckCode->fetchColumn() > 0) {
+        if ((int)$stmtCheckCode->fetchColumn() > 0) {
             throw new RuntimeException('Ce code client existe déjà.');
         }
 
         $stmtCheck411 = $pdo->prepare("SELECT COUNT(*) FROM clients WHERE generated_client_account = ?");
         $stmtCheck411->execute([$formData['generated_client_account']]);
-        if ((int) $stmtCheck411->fetchColumn() > 0) {
+        if ((int)$stmtCheck411->fetchColumn() > 0) {
             throw new RuntimeException('Ce compte 411 existe déjà dans les clients.');
         }
 
@@ -378,11 +538,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'country_commercial' => $formData['country_commercial'],
                 'currency' => $formData['currency'] !== '' ? $formData['currency'] : 'EUR',
                 'generated_client_account' => $formData['generated_client_account'],
-                'initial_treasury_account_id' => $formData['initial_treasury_account_id'] !== '' ? (int) $formData['initial_treasury_account_id'] : null,
+                'initial_treasury_account_id' => $formData['initial_treasury_account_id'] !== '' ? (int)$formData['initial_treasury_account_id'] : null,
                 'monthly_amount' => $monthlyAmount,
-                'monthly_treasury_account_id' => $formData['monthly_treasury_account_id'] !== '' ? (int) $formData['monthly_treasury_account_id'] : null,
+                'monthly_treasury_account_id' => $formData['monthly_treasury_account_id'] !== '' ? (int)$formData['monthly_treasury_account_id'] : null,
                 'monthly_day' => $monthlyDay,
-                'monthly_enabled' => (int) $formData['monthly_enabled'],
+                'monthly_enabled' => (int)$formData['monthly_enabled'],
                 'is_active' => $formData['is_active'],
             ];
 
@@ -409,7 +569,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ");
             $stmt->execute($params);
 
-            $newId = (int) $pdo->lastInsertId();
+            $newId = (int)$pdo->lastInsertId();
 
             sl_create_or_link_client_bank_account(
                 $pdo,
@@ -423,15 +583,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $formData['is_active']
             );
 
+            $feeResult = sl_client_apply_selected_fees(
+                $pdo,
+                $newId,
+                $formData['client_code'],
+                $fullName,
+                $formData['currency'],
+                $formData['generated_client_account'],
+                $selectedFees
+            );
+
             if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
                 logUserAction(
                     $pdo,
-                    (int) $_SESSION['user_id'],
+                    (int)$_SESSION['user_id'],
                     'create_client',
                     'clients',
                     'client',
                     $newId,
-                    'Création du client ' . $formData['client_code']
+                    'Création du client ' . $formData['client_code'] . ' avec ' . (int)$feeResult['count'] . ' frais initiaux'
                 );
             }
 
@@ -439,19 +609,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 createNotification(
                     $pdo,
                     'client_create',
-                    'Client créé : ' . $formData['client_code'] . ' - ' . $fullName,
+                    'Client créé : ' . $formData['client_code'] . ' - ' . $fullName . ' | Frais appliqués : ' . number_format((float)$feeResult['total'], 2, ',', ' ') . ' ' . $formData['currency'],
                     'success',
                     APP_URL . 'modules/clients/client_view.php?id=' . $newId,
                     'client',
                     $newId,
-                    (int) $_SESSION['user_id']
+                    (int)$_SESSION['user_id']
                 );
             }
 
             $pdo->commit();
 
-            $successMessage = 'Client créé avec succès.';
+            $successMessage = 'Client créé avec succès. Frais appliqués : ' . number_format((float)$feeResult['total'], 2, ',', ' ') . ' ' . $formData['currency'] . '.';
             $newCode = sl_generate_next_client_code($pdo);
+
             $formData = [
                 'client_code' => $newCode,
                 'first_name' => '',
@@ -478,6 +649,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'monthly_enabled' => 0,
                 'is_active' => 1,
             ];
+
+            $selectedFees = [];
+            $totalSelectedFees = 0.0;
+            $projectedBalance = 0.0;
             $previewMode = false;
         }
     } catch (Throwable $e) {
@@ -496,8 +671,156 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
-        <?php if ($successMessage !== ''): ?><div class="success"><?= e($successMessage) ?></div><?php endif; ?>
-        <?php if ($errorMessage !== ''): ?><div class="error"><?= e($errorMessage) ?></div><?php endif; ?>
+        <style>
+            .sl-toggle-stack {
+                display: grid;
+                gap: 12px;
+                margin-top: 16px;
+            }
+            .sl-toggle-card {
+                position: relative;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 14px;
+                padding: 14px 16px;
+                border-radius: 16px;
+                background: #fff;
+                border: 1px solid rgba(148, 163, 184, 0.18);
+                box-shadow: 0 8px 18px rgba(15, 23, 42, 0.04);
+            }
+            .sl-toggle-card--monthly { border-left: 4px solid #4f46e5; }
+            .sl-toggle-card--active { border-left: 4px solid #059669; }
+            .sl-toggle-card__content { min-width: 0; }
+            .sl-toggle-card__title {
+                display: block;
+                font-size: 14px;
+                font-weight: 800;
+                color: #0f172a;
+                margin-bottom: 3px;
+            }
+            .sl-toggle-card__desc {
+                display: block;
+                font-size: 12px;
+                color: #64748b;
+                line-height: 1.4;
+            }
+            .sl-toggle-card__right {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                flex-shrink: 0;
+            }
+            .sl-toggle-badge {
+                min-width: 44px;
+                text-align: center;
+                padding: 5px 10px;
+                border-radius: 999px;
+                font-size: 11px;
+                font-weight: 800;
+                letter-spacing: .04em;
+                text-transform: uppercase;
+            }
+            .sl-toggle-badge.is-on {
+                background: rgba(16, 185, 129, 0.12);
+                color: #047857;
+            }
+            .sl-toggle-badge.is-off {
+                background: rgba(148, 163, 184, 0.14);
+                color: #475569;
+            }
+            .sl-switch {
+                position: relative;
+                display: inline-flex;
+                width: 46px;
+                height: 26px;
+            }
+            .sl-switch input {
+                opacity: 0;
+                width: 0;
+                height: 0;
+            }
+            .sl-switch__slider {
+                position: absolute;
+                inset: 0;
+                cursor: pointer;
+                border-radius: 999px;
+                background: #cbd5e1;
+                transition: .2s ease;
+            }
+            .sl-switch__slider:before {
+                content: "";
+                position: absolute;
+                width: 20px;
+                height: 20px;
+                left: 3px;
+                top: 3px;
+                border-radius: 50%;
+                background: #fff;
+                box-shadow: 0 2px 6px rgba(15, 23, 42, 0.18);
+                transition: .2s ease;
+            }
+            .sl-switch input:checked + .sl-switch__slider {
+                background: #10b981;
+            }
+            .sl-switch input:checked + .sl-switch__slider:before {
+                transform: translateX(20px);
+            }
+            .sl-fees-table .sl-fee-check input[type="checkbox"] {
+                width: 16px;
+                height: 16px;
+                margin: 0;
+                accent-color: #4f46e5;
+                cursor: pointer;
+                transform: scale(0.95);
+            }
+            .sl-fees-table td, .sl-fees-table th {
+                vertical-align: middle;
+            }
+            .sl-fee-service-cell {
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+            .sl-fee-service-code {
+                font-size: 11px;
+                font-weight: 700;
+                color: #64748b;
+                text-transform: uppercase;
+                letter-spacing: .04em;
+            }
+            .sl-fee-service-label {
+                font-size: 14px;
+                font-weight: 700;
+                color: #0f172a;
+            }
+            .sl-fee-type-badge {
+                display: inline-flex;
+                align-items: center;
+                padding: 5px 10px;
+                border-radius: 999px;
+                background: rgba(79, 70, 229, 0.08);
+                color: #4338ca;
+                font-size: 12px;
+                font-weight: 700;
+            }
+            .sl-fee-amount-input, .sl-fee-account-select {
+                min-width: 180px;
+            }
+            .sl-fee-account-select.is-disabled,
+            .sl-fee-amount-input.is-disabled {
+                opacity: .55;
+                background: #f8fafc;
+            }
+        </style>
+
+        <?php if ($successMessage !== ''): ?>
+            <div class="success"><?= e($successMessage) ?></div>
+        <?php endif; ?>
+
+        <?php if ($errorMessage !== ''): ?>
+            <div class="error"><?= e($errorMessage) ?></div>
+        <?php endif; ?>
 
         <div class="dashboard-grid-2">
             <div class="form-card">
@@ -539,8 +862,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <label>Devise</label>
                             <select name="currency" required>
                                 <?php foreach ($currencies as $currency): ?>
-                                    <option value="<?= e((string) $currency['code']) ?>" <?= (string) $formData['currency'] === (string) $currency['code'] ? 'selected' : '' ?>>
-                                        <?= e((string) $currency['code'] . ' - ' . (string) $currency['label']) ?>
+                                    <option value="<?= e((string)$currency['code']) ?>" <?= (string)$formData['currency'] === (string)$currency['code'] ? 'selected' : '' ?>>
+                                        <?= e((string)$currency['code'] . ' - ' . (string)$currency['label']) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -641,8 +964,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <select name="initial_treasury_account_id">
                                 <option value="">Aucun</option>
                                 <?php foreach ($treasuryAccounts as $account): ?>
-                                    <option value="<?= (int) $account['id'] ?>" <?= (string) $formData['initial_treasury_account_id'] === (string) $account['id'] ? 'selected' : '' ?>>
-                                        <?= e(($account['account_code'] ?? '') . ' - ' . ($account['account_label'] ?? '')) ?>
+                                    <option value="<?= (int)$account['id'] ?>" <?= (string)$formData['initial_treasury_account_id'] === (string)$account['id'] ? 'selected' : '' ?>>
+                                        <?= e((string)($account['account_code'] ?? '') . ' - ' . (string)($account['account_label'] ?? '')) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -658,8 +981,8 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <select name="monthly_treasury_account_id">
                                 <option value="">Aucun</option>
                                 <?php foreach ($treasuryAccounts as $account): ?>
-                                    <option value="<?= (int) $account['id'] ?>" <?= (string) $formData['monthly_treasury_account_id'] === (string) $account['id'] ? 'selected' : '' ?>>
-                                        <?= e(($account['account_code'] ?? '') . ' - ' . ($account['account_label'] ?? '')) ?>
+                                    <option value="<?= (int)$account['id'] ?>" <?= (string)$formData['monthly_treasury_account_id'] === (string)$account['id'] ? 'selected' : '' ?>>
+                                        <?= e((string)($account['account_code'] ?? '') . ' - ' . (string)($account['account_label'] ?? '')) ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -671,16 +994,157 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         </div>
                     </div>
 
-                    <div style="margin-top:16px; display:grid; gap:12px;">
-                        <label style="display:flex; align-items:center; gap:10px;">
-                            <input type="checkbox" name="monthly_enabled" value="1" <?= (int) $formData['monthly_enabled'] === 1 ? 'checked' : '' ?>>
-                            Mensualité active
-                        </label>
+                    <div class="card" style="margin-top:20px;">
+                        <h3>Frais complémentaires à appliquer maintenant</h3>
 
-                        <label style="display:flex; align-items:center; gap:10px;">
-                            <input type="checkbox" name="is_active" value="1" <?= (int) $formData['is_active'] === 1 ? 'checked' : '' ?>>
-                            Client actif
-                        </label>
+                        <div class="table-responsive">
+                            <table class="modern-table sl-fees-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width:70px;">OK</th>
+                                        <th>Service</th>
+                                        <th>Type d’opération</th>
+                                        <th>Compte 706 crédité</th>
+                                        <th style="width:170px;">Montant</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php if (!$feeServices): ?>
+                                        <tr>
+                                            <td colspan="5">Aucun service disponible pour les frais.</td>
+                                        </tr>
+                                    <?php else: ?>
+                                        <?php
+                                        $selectedFeeMap = [];
+                                        foreach ($selectedFees as $fee) {
+                                            $selectedFeeMap[(int)$fee['service_id']] = $fee;
+                                        }
+                                        ?>
+                                        <?php foreach ($feeServices as $service): ?>
+                                            <?php
+                                            $serviceId = (int)($service['id'] ?? 0);
+                                            $isChecked = isset($selectedFeeMap[$serviceId]);
+                                            $amountValue = $isChecked
+                                                ? (string)$selectedFeeMap[$serviceId]['amount']
+                                                : (string)(float)($service['default_amount'] ?? 0);
+                                            $selected706 = $isChecked
+                                                ? (string)($selectedFeeMap[$serviceId]['destination_account_code'] ?? '')
+                                                : '';
+
+                                            $serviceCode = (string)($service['code'] ?? '');
+                                            $serviceLabel = (string)($service['label'] ?? '');
+                                            $operationTypeId = (int)($service['operation_type_id'] ?? 0);
+                                            $operationTypeCode = (string)($service['operation_type_code'] ?? 'FRAIS_SERVICE');
+                                            $operationTypeLabel = (string)($service['operation_type_label'] ?? '');
+                                            ?>
+                                            <tr class="sl-fee-row" data-service-id="<?= $serviceId ?>">
+                                                <td>
+                                                    <input
+                                                        type="checkbox"
+                                                        name="fee_selected[<?= $serviceId ?>]"
+                                                        value="1"
+                                                        class="sl-fee-selector"
+                                                        data-service-id="<?= $serviceId ?>"
+                                                        <?= $isChecked ? 'checked' : '' ?>
+                                                    >
+
+                                                    <input type="hidden" name="fee_service_code[<?= $serviceId ?>]" value="<?= e($serviceCode) ?>">
+                                                    <input type="hidden" name="fee_service_label[<?= $serviceId ?>]" value="<?= e($serviceLabel) ?>">
+                                                    <input type="hidden" name="fee_operation_type_id[<?= $serviceId ?>]" value="<?= (int)$operationTypeId ?>">
+                                                    <input type="hidden" name="fee_operation_type_code[<?= $serviceId ?>]" value="<?= e($operationTypeCode) ?>">
+                                                    <input type="hidden" name="fee_operation_type_label[<?= $serviceId ?>]" value="<?= e($operationTypeLabel) ?>">
+                                                </td>
+
+                                                <td>
+                                                    <div class="sl-fee-service-cell">
+                                                        <span class="sl-fee-service-code"><?= e($serviceCode) ?></span>
+                                                        <span class="sl-fee-service-label"><?= e($serviceLabel) ?></span>
+                                                    </div>
+                                                </td>
+
+                                                <td>
+                                                    <span class="sl-fee-type-badge">
+                                                        <?= e($operationTypeLabel !== '' ? $operationTypeLabel : $operationTypeCode) ?>
+                                                    </span>
+                                                </td>
+
+                                                <td>
+                                                    <select
+                                                        name="fee_service_account_code[<?= $serviceId ?>]"
+                                                        class="sl-fee-account-select"
+                                                        data-service-id="<?= $serviceId ?>"
+                                                        data-service-code="<?= e($serviceCode) ?>"
+                                                        data-service-label="<?= e($serviceLabel) ?>"
+                                                    >
+                                                        <option value="">Choisir un compte 706</option>
+                                                        <?php foreach ($serviceAccounts706 as $account706): ?>
+                                                            <?php
+                                                            $accountCode706 = (string)($account706['account_code'] ?? '');
+                                                            $accountLabel706 = (string)($account706['account_label'] ?? '');
+                                                            $search706 = mb_strtolower($accountCode706 . ' ' . $accountLabel706, 'UTF-8');
+                                                            ?>
+                                                            <option
+                                                                value="<?= e($accountCode706) ?>"
+                                                                data-search="<?= e($search706) ?>"
+                                                                <?= $selected706 === $accountCode706 ? 'selected' : '' ?>
+                                                            >
+                                                                <?= e($accountCode706 . ' - ' . $accountLabel706) ?>
+                                                            </option>
+                                                        <?php endforeach; ?>
+                                                    </select>
+                                                </td>
+
+                                                <td>
+                                                    <input
+                                                        type="number"
+                                                        step="0.01"
+                                                        min="0"
+                                                        name="fee_amount[<?= $serviceId ?>]"
+                                                        value="<?= e($amountValue) ?>"
+                                                        class="sl-fee-amount-input"
+                                                        data-service-id="<?= $serviceId ?>"
+                                                    >
+                                                </td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    <?php endif; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="sl-toggle-stack">
+                        <div class="sl-toggle-card sl-toggle-card--monthly">
+                            <div class="sl-toggle-card__content">
+                                <span class="sl-toggle-card__title">Mensualité active</span>
+                                <span class="sl-toggle-card__desc">Autorise la génération automatique des mensualités.</span>
+                            </div>
+                            <div class="sl-toggle-card__right">
+                                <span class="sl-toggle-badge <?= (int)$formData['monthly_enabled'] === 1 ? 'is-on' : 'is-off' ?>">
+                                    <?= (int)$formData['monthly_enabled'] === 1 ? 'ON' : 'OFF' ?>
+                                </span>
+                                <label class="sl-switch">
+                                    <input type="checkbox" name="monthly_enabled" value="1" <?= (int)$formData['monthly_enabled'] === 1 ? 'checked' : '' ?>>
+                                    <span class="sl-switch__slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="sl-toggle-card sl-toggle-card--active">
+                            <div class="sl-toggle-card__content">
+                                <span class="sl-toggle-card__title">Client actif</span>
+                                <span class="sl-toggle-card__desc">Autorise le client dans les flux et traitements automatiques.</span>
+                            </div>
+                            <div class="sl-toggle-card__right">
+                                <span class="sl-toggle-badge <?= (int)$formData['is_active'] === 1 ? 'is-on' : 'is-off' ?>">
+                                    <?= (int)$formData['is_active'] === 1 ? 'ON' : 'OFF' ?>
+                                </span>
+                                <label class="sl-switch">
+                                    <input type="checkbox" name="is_active" value="1" <?= (int)$formData['is_active'] === 1 ? 'checked' : '' ?>>
+                                    <span class="sl-switch__slider"></span>
+                                </label>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="btn-group" style="margin-top:20px;">
@@ -698,27 +1162,45 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <div class="sl-data-list">
                         <div class="sl-data-list__row"><span>Code client</span><strong><?= e($formData['client_code']) ?></strong></div>
                         <div class="sl-data-list__row"><span>Nom complet</span><strong><?= e(trim($formData['first_name'] . ' ' . $formData['last_name'])) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Email</span><strong><?= e($formData['email'] !== '' ? $formData['email'] : '—') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Téléphone</span><strong><?= e($formData['phone'] !== '' ? $formData['phone'] : '—') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Type client</span><strong><?= e($formData['client_type'] !== '' ? $formData['client_type'] : '—') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Devise</span><strong><?= e($formData['currency']) ?></strong></div>
                         <div class="sl-data-list__row"><span>Compte 411</span><strong><?= e($formData['generated_client_account']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Solde initial</span><strong><?= e(number_format((float) $formData['initial_balance'], 2, ',', ' ')) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Solde courant</span><strong><?= e(number_format((float) $formData['balance'], 2, ',', ' ')) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Pays commercial</span><strong><?= e($formData['country_commercial'] !== '' ? $formData['country_commercial'] : '—') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Compte 512 principal</span><strong><?= e((string) $formData['initial_treasury_account_id'] !== '' ? (string) $formData['initial_treasury_account_id'] : '—') ?></strong></div>
-                        <div class="sl-data-list__row"><span>Mensualité</span><strong><?= e(number_format((float) $formData['monthly_amount'], 2, ',', ' ')) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Compte 512 mensualité</span><strong><?= e((string) $formData['monthly_treasury_account_id'] !== '' ? (string) $formData['monthly_treasury_account_id'] : '—') ?></strong></div>
+                        <div class="sl-data-list__row"><span>Solde initial</span><strong><?= e(number_format((float)$formData['initial_balance'], 2, ',', ' ')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Solde courant actuel</span><strong><?= e(number_format((float)$formData['balance'], 2, ',', ' ')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Total frais complémentaires</span><strong><?= e(number_format($totalSelectedFees, 2, ',', ' ')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Solde projeté après frais</span><strong><?= e(number_format($projectedBalance, 2, ',', ' ')) ?></strong></div>
+                        <div class="sl-data-list__row"><span>Mensualité</span><strong><?= e(number_format((float)$formData['monthly_amount'], 2, ',', ' ')) ?></strong></div>
                         <div class="sl-data-list__row"><span>Jour mensualité</span><strong><?= e($formData['monthly_day']) ?></strong></div>
-                        <div class="sl-data-list__row"><span>Mensualité active</span><strong><?= (int) $formData['monthly_enabled'] === 1 ? 'Oui' : 'Non' ?></strong></div>
                     </div>
 
-                    <div class="dashboard-note" style="margin-top:16px;">
-                        Vérifie les informations client, le compte 411, le compte 512 principal et les paramètres de mensualité avant création définitive.
-                    </div>
+                    <?php if ($selectedFees): ?>
+                        <div class="card" style="margin-top:16px;">
+                            <h4>Détail des frais complémentaires</h4>
+                            <div class="table-responsive">
+                                <table class="modern-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Service</th>
+                                            <th>Type</th>
+                                            <th>706 crédité</th>
+                                            <th>Montant</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($selectedFees as $fee): ?>
+                                            <tr>
+                                                <td><?= e((string)$fee['service_label']) ?></td>
+                                                <td><?= e((string)($fee['operation_type_label'] !== '' ? $fee['operation_type_label'] : $fee['operation_type_code'])) ?></td>
+                                                <td><?= e((string)$fee['destination_account_code']) ?></td>
+                                                <td><?= e(number_format((float)$fee['amount'], 2, ',', ' ')) ?></td>
+                                            </tr>
+                                        <?php endforeach; ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    <?php endif; ?>
                 <?php else: ?>
                     <div class="dashboard-note">
-                        Utilise le bouton <strong>Prévisualiser</strong> pour contrôler la fiche avant création définitive.
+                        Utilise le bouton <strong>Prévisualiser</strong> pour vérifier la fiche et les frais avant création définitive.
                     </div>
                 <?php endif; ?>
             </div>
@@ -749,9 +1231,106 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 const syncBalance = function () {
                     balanceInput.value = initialBalanceInput.value;
                 };
-
                 initialBalanceInput.addEventListener('input', syncBalance);
                 syncBalance();
+            }
+
+            function normalize(str) {
+                return (str || '')
+                    .toString()
+                    .toLowerCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '');
+            }
+
+            function filter706Options(select, serviceCode, serviceLabel) {
+                const normalizedCode = normalize(serviceCode);
+                const normalizedLabel = normalize(serviceLabel);
+                let visibleCount = 0;
+
+                Array.from(select.options).forEach(function (option, index) {
+                    if (index === 0) {
+                        option.hidden = false;
+                        return;
+                    }
+
+                    const text = normalize(option.getAttribute('data-search') || option.textContent || '');
+                    const visible =
+                        (normalizedCode !== '' && text.includes(normalizedCode)) ||
+                        (normalizedLabel !== '' && text.includes(normalizedLabel));
+
+                    option.hidden = !visible;
+                    if (visible) {
+                        visibleCount++;
+                    }
+                });
+
+                if (visibleCount === 0) {
+                    Array.from(select.options).forEach(function (option) {
+                        option.hidden = false;
+                    });
+                }
+
+                const current = select.options[select.selectedIndex];
+                if (current && current.hidden) {
+                    select.value = '';
+                }
+            }
+
+            function syncFeeRow(serviceId) {
+                const checkbox = document.querySelector('.sl-fee-selector[data-service-id="' + serviceId + '"]');
+                const amountInput = document.querySelector('.sl-fee-amount-input[data-service-id="' + serviceId + '"]');
+                const accountSelect = document.querySelector('.sl-fee-account-select[data-service-id="' + serviceId + '"]');
+                const serviceCodeInput = document.querySelector('input[name="fee_service_code[' + serviceId + ']"]');
+                const serviceLabelInput = document.querySelector('input[name="fee_service_label[' + serviceId + ']"]');
+
+                if (!checkbox) return;
+
+                const checked = checkbox.checked;
+                const serviceCode = serviceCodeInput ? serviceCodeInput.value : '';
+                const serviceLabel = serviceLabelInput ? serviceLabelInput.value : '';
+
+                if (amountInput) {
+                    amountInput.readOnly = !checked;
+                    amountInput.classList.toggle('is-disabled', !checked);
+                    if (!checked) {
+                        amountInput.value = '0';
+                    }
+                }
+
+                if (accountSelect) {
+                    accountSelect.classList.toggle('is-disabled', !checked);
+                    filter706Options(accountSelect, serviceCode, serviceLabel);
+
+                    if (!checked) {
+                        accountSelect.value = '';
+                    }
+                }
+            }
+
+            document.querySelectorAll('.sl-fee-selector').forEach(function (checkbox) {
+                const serviceId = checkbox.getAttribute('data-service-id');
+                syncFeeRow(serviceId);
+
+                checkbox.addEventListener('change', function () {
+                    syncFeeRow(serviceId);
+                });
+            });
+
+            const form = document.querySelector('form');
+            if (form) {
+                form.addEventListener('submit', function () {
+                    document.querySelectorAll('.sl-fee-selector').forEach(function (checkbox) {
+                        const serviceId = checkbox.getAttribute('data-service-id');
+                        const amountInput = document.querySelector('.sl-fee-amount-input[data-service-id="' + serviceId + '"]');
+                        const accountSelect = document.querySelector('.sl-fee-account-select[data-service-id="' + serviceId + '"]');
+
+                        if (!checkbox.checked) {
+                            if (amountInput) amountInput.value = '0';
+                            if (accountSelect) accountSelect.value = '';
+                        }
+                    });
+                });
             }
         });
         </script>

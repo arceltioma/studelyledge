@@ -20,6 +20,7 @@ $showIndicators = isset($_GET['show_indicators']) ? 1 : 0;
 $showPendingDebits = isset($_GET['show_pending_debits']) ? 1 : 0;
 $showLowBalances = isset($_GET['show_low_balances']) ? 1 : 0;
 $showPendingDebitsHistory = isset($_GET['show_pending_debits_history']) ? 1 : 0;
+$showOperationsPeriod = isset($_GET['show_operations_period']) ? 1 : 0;
 
 $dashboard = function_exists('sl_dashboard_get_global_kpis')
     ? sl_dashboard_get_global_kpis($pdo, $filters)
@@ -50,6 +51,124 @@ $pendingDebitsHistoryRows = $dashboard['pending_debits_history_rows'] ?? [];
 $lowBalanceRows = function_exists('sl_dashboard_get_low_balance_clients')
     ? sl_dashboard_get_low_balance_clients($pdo, 1000, 12)
     : [];
+
+if (!function_exists('sl_dashboard_resolve_client_bank_balance_join_sql')) {
+    function sl_dashboard_resolve_client_bank_balance_join_sql(PDO $pdo): ?string
+    {
+        $hasClients = function_exists('tableExists') && tableExists($pdo, 'clients');
+        $hasBankAccounts = function_exists('tableExists') && tableExists($pdo, 'bank_accounts');
+
+        if (!$hasClients || !$hasBankAccounts) {
+            return null;
+        }
+
+        $bankBalanceColumn = null;
+        foreach (['balance', 'current_balance'] as $candidate) {
+            if (function_exists('columnExists') && columnExists($pdo, 'bank_accounts', $candidate)) {
+                $bankBalanceColumn = $candidate;
+                break;
+            }
+        }
+
+        if ($bankBalanceColumn === null) {
+            return null;
+        }
+
+        $joins = [];
+        $balanceExpr = "COALESCE(ba.`{$bankBalanceColumn}`, 0)";
+
+        if (
+            function_exists('tableExists') && tableExists($pdo, 'client_bank_accounts')
+            && function_exists('columnExists') && columnExists($pdo, 'client_bank_accounts', 'client_id')
+            && function_exists('columnExists') && columnExists($pdo, 'client_bank_accounts', 'bank_account_id')
+            && function_exists('columnExists') && columnExists($pdo, 'bank_accounts', 'id')
+        ) {
+            $joins[] = "LEFT JOIN client_bank_accounts cba ON cba.client_id = c.id";
+            $joins[] = "LEFT JOIN bank_accounts ba ON ba.id = cba.bank_account_id";
+        } elseif (
+            function_exists('columnExists') && columnExists($pdo, 'clients', 'generated_client_account')
+            && function_exists('columnExists') && columnExists($pdo, 'bank_accounts', 'account_number')
+        ) {
+            $joins[] = "LEFT JOIN bank_accounts ba ON ba.account_number = c.generated_client_account";
+        } else {
+            return null;
+        }
+
+        return json_encode([
+            'joins' => implode("\n", $joins),
+            'balance_expr' => $balanceExpr,
+        ], JSON_UNESCAPED_UNICODE);
+    }
+}
+
+if (!function_exists('sl_dashboard_get_clients_411_non_positive_count')) {
+    function sl_dashboard_get_clients_411_non_positive_count(PDO $pdo): int
+    {
+        $json = sl_dashboard_resolve_client_bank_balance_join_sql($pdo);
+        if ($json === null) {
+            return 0;
+        }
+
+        $data = json_decode($json, true);
+        if (!is_array($data)) {
+            return 0;
+        }
+
+        $joins = (string)($data['joins'] ?? '');
+        $balanceExpr = (string)($data['balance_expr'] ?? '0');
+
+        $sql = "
+            SELECT COUNT(DISTINCT c.id)
+            FROM clients c
+            {$joins}
+            WHERE COALESCE(c.is_active, 1) = 1
+              AND {$balanceExpr} <= 0
+        ";
+
+        return (int)$pdo->query($sql)->fetchColumn();
+    }
+}
+
+if (!function_exists('sl_dashboard_get_clients_last_transfer_count')) {
+    function sl_dashboard_get_clients_last_transfer_count(PDO $pdo): int
+    {
+        $json = sl_dashboard_resolve_client_bank_balance_join_sql($pdo);
+        if ($json === null) {
+            return 0;
+        }
+
+        $data = json_decode($json, true);
+        if (!is_array($data)) {
+            return 0;
+        }
+
+        $joins = (string)($data['joins'] ?? '');
+        $balanceExpr = (string)($data['balance_expr'] ?? '0');
+
+        if (
+            !function_exists('columnExists')
+            || !columnExists($pdo, 'clients', 'monthly_amount')
+            || !columnExists($pdo, 'clients', 'monthly_enabled')
+        ) {
+            return 0;
+        }
+
+        $sql = "
+            SELECT COUNT(DISTINCT c.id)
+            FROM clients c
+            {$joins}
+            WHERE COALESCE(c.is_active, 1) = 1
+              AND COALESCE(c.monthly_enabled, 0) = 1
+              AND COALESCE(c.monthly_amount, 0) > 0
+              AND {$balanceExpr} <= COALESCE(c.monthly_amount, 0)
+        ";
+
+        return (int)$pdo->query($sql)->fetchColumn();
+    }
+}
+
+$clients411NonPositiveCount = sl_dashboard_get_clients_411_non_positive_count($pdo);
+$clientsLastTransferCount = sl_dashboard_get_clients_last_transfer_count($pdo);
 
 $pageTitle = 'Dashboard';
 $pageSubtitle = 'Vue consolidée des indicateurs clients, opérations, comptes 411 / 512 / 706 et débits dus.';
@@ -86,6 +205,11 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <div>
                         <label>Affichages complémentaires</label>
                         <div class="sl-check-grid">
+                            <label class="sl-check-item">
+                                <input type="checkbox" name="show_operations_period" value="1" <?= $showOperationsPeriod ? 'checked' : '' ?>>
+                                <span>Opérations période</span>
+                            </label>
+
                             <label class="sl-check-item">
                                 <input type="checkbox" name="show_types" value="1" <?= $showTypes ? 'checked' : '' ?>>
                                 <span>Types d’opérations</span>
@@ -125,79 +249,73 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 </form>
             </div>
 
-<div class="sl-kpi-grid">
-    <div class="sl-kpi-card is-info">
-        <div class="sl-kpi-label">Solde 411</div>
-        <div class="sl-kpi-value"><?= number_format((float)($balances['accounts_411'] ?? 0), 2, ',', ' ') ?></div>
-        <div class="sl-kpi-sub">Comptes clients</div>
-    </div>
+            <div class="sl-kpi-grid">
+                <div class="sl-kpi-card is-info">
+                    <div class="sl-kpi-label">Solde 411</div>
+                    <div class="sl-kpi-value"><?= number_format((float)($balances['accounts_411'] ?? 0), 2, ',', ' ') ?></div>
+                    <div class="sl-kpi-sub">Comptes clients</div>
+                </div>
 
-    <div class="sl-kpi-card is-dark">
-        <div class="sl-kpi-label">Solde 512</div>
-        <div class="sl-kpi-value"><?= number_format((float)($balances['accounts_512'] ?? 0), 2, ',', ' ') ?></div>
-        <div class="sl-kpi-sub">Trésorerie</div>
-    </div>
+                <div class="sl-kpi-card is-dark">
+                    <div class="sl-kpi-label">Solde 512</div>
+                    <div class="sl-kpi-value"><?= number_format((float)($balances['accounts_512'] ?? 0), 2, ',', ' ') ?></div>
+                    <div class="sl-kpi-sub">Trésorerie</div>
+                </div>
 
-    <div class="sl-kpi-card is-success">
-        <div class="sl-kpi-label">Solde 706</div>
-        <div class="sl-kpi-value"><?= number_format((float)($balances['accounts_706'] ?? 0), 2, ',', ' ') ?></div>
-        <div class="sl-kpi-sub">Produits / services</div>
-    </div>
+                <div class="sl-kpi-card is-success">
+                    <div class="sl-kpi-label">Solde 706</div>
+                    <div class="sl-kpi-value"><?= number_format((float)($balances['accounts_706'] ?? 0), 2, ',', ' ') ?></div>
+                    <div class="sl-kpi-sub">Produits / services</div>
+                </div>
 
-    <div class="sl-kpi-card is-violet">
-        <div class="sl-kpi-label">Total global</div>
-        <div class="sl-kpi-value"><?= number_format((float)($balances['global_total'] ?? 0), 2, ',', ' ') ?></div>
-        <div class="sl-kpi-sub">411 + 512 + 706</div>
-    </div>
+                <div class="sl-kpi-card is-success">
+                    <div class="sl-kpi-label">Étudiants actifs</div>
+                    <div class="sl-kpi-value"><?= (int)($students['active'] ?? 0) ?></div>
+                    <div class="sl-kpi-sub">Dossiers en cours</div>
+                </div>
 
-    <div class="sl-kpi-card is-success">
-        <div class="sl-kpi-label">Étudiants actifs</div>
-        <div class="sl-kpi-value"><?= (int)($students['active'] ?? 0) ?></div>
-        <div class="sl-kpi-sub">Dossiers en cours</div>
-    </div>
+                <div class="sl-kpi-card is-danger">
+                    <div class="sl-kpi-label">Étudiants inactifs</div>
+                    <div class="sl-kpi-value"><?= (int)($students['inactive'] ?? 0) ?></div>
+                    <div class="sl-kpi-sub">Archivés / inactifs</div>
+                </div>
 
-    <div class="sl-kpi-card is-danger">
-        <div class="sl-kpi-label">Étudiants inactifs</div>
-        <div class="sl-kpi-value"><?= (int)($students['inactive'] ?? 0) ?></div>
-        <div class="sl-kpi-sub">Archivés / inactifs</div>
-    </div>
+                <div class="sl-kpi-card is-warning">
+                    <div class="sl-kpi-label">Mensualités restantes</div>
+                    <div class="sl-kpi-value"><?= number_format((float)($monthly['remaining_current_month'] ?? 0), 2, ',', ' ') ?></div>
+                    <div class="sl-kpi-sub">À faire ce mois</div>
+                </div>
 
-    <div class="sl-kpi-card is-warning">
-        <div class="sl-kpi-label">Mensualités restantes</div>
-        <div class="sl-kpi-value"><?= number_format((float)($monthly['remaining_current_month'] ?? 0), 2, ',', ' ') ?></div>
-        <div class="sl-kpi-sub">À faire ce mois</div>
-    </div>
+                <div class="sl-kpi-card is-success">
+                    <div class="sl-kpi-label">Mensualités effectuées</div>
+                    <div class="sl-kpi-value"><?= number_format((float)($monthly['done_current_month'] ?? 0), 2, ',', ' ') ?></div>
+                    <div class="sl-kpi-sub">Déjà passées</div>
+                </div>
 
-    <div class="sl-kpi-card is-success">
-        <div class="sl-kpi-label">Mensualités effectuées</div>
-        <div class="sl-kpi-value"><?= number_format((float)($monthly['done_current_month'] ?? 0), 2, ',', ' ') ?></div>
-        <div class="sl-kpi-sub">Déjà passées</div>
-    </div>
+                <div class="sl-kpi-card is-warning">
+                    <div class="sl-kpi-label">Débits dus ouverts</div>
+                    <div class="sl-kpi-value"><?= (int)($pendingDebits['count'] ?? 0) ?></div>
+                    <div class="sl-kpi-sub"><?= number_format((float)($pendingDebits['amount'] ?? 0), 2, ',', ' ') ?></div>
+                </div>
 
-    <div class="sl-kpi-card is-info">
-        <div class="sl-kpi-label">Opérations période</div>
-        <div class="sl-kpi-value"><?= (int)($operations['count'] ?? 0) ?></div>
-        <div class="sl-kpi-sub"><?= number_format((float)($operations['amount'] ?? 0), 2, ',', ' ') ?></div>
-    </div>
+                <div class="sl-kpi-card is-dark">
+                    <div class="sl-kpi-label">Mensualités actives</div>
+                    <div class="sl-kpi-value"><?= (int)($extraCounters['monthly_active_count'] ?? 0) ?></div>
+                    <div class="sl-kpi-sub">Clients mensualisés</div>
+                </div>
 
-    <div class="sl-kpi-card is-warning">
-        <div class="sl-kpi-label">Débits dus ouverts</div>
-        <div class="sl-kpi-value"><?= (int)($pendingDebits['count'] ?? 0) ?></div>
-        <div class="sl-kpi-sub"><?= number_format((float)($pendingDebits['amount'] ?? 0), 2, ',', ' ') ?></div>
-    </div>
+                <div class="sl-kpi-card is-danger">
+                    <div class="sl-kpi-label">Clients 411 <= 0</div>
+                    <div class="sl-kpi-value"><?= (int)$clients411NonPositiveCount ?></div>
+                    <div class="sl-kpi-sub">Solde nul ou négatif</div>
+                </div>
 
-    <div class="sl-kpi-card is-dark">
-        <div class="sl-kpi-label">Mensualités actives</div>
-        <div class="sl-kpi-value"><?= (int)($extraCounters['monthly_active_count'] ?? 0) ?></div>
-        <div class="sl-kpi-sub">Clients mensualisés</div>
-    </div>
-
-    <div class="sl-kpi-card is-danger">
-        <div class="sl-kpi-label">Clients solde bas</div>
-        <div class="sl-kpi-value"><?= (int)($lowBalance['count'] ?? 0) ?></div>
-        <div class="sl-kpi-sub">411 &lt; 1 000</div>
-    </div>
-</div>
+                <div class="sl-kpi-card is-warning">
+                    <div class="sl-kpi-label">Dernier virement proche</div>
+                    <div class="sl-kpi-value"><?= (int)$clientsLastTransferCount ?></div>
+                    <div class="sl-kpi-sub">Solde 411 <= mensualité</div>
+                </div>
+            </div>
 
             <div class="sl-dashboard-grid-2">
                 <div class="sl-panel">
@@ -287,12 +405,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
                     <div class="sl-mini-list" style="margin-top:16px;">
                         <div class="sl-mini-row">
-                            <span>Clients sous seuil 411</span>
-                            <strong><?= (int)($lowBalance['count'] ?? 0) ?></strong>
+                            <span>Clients 411 <= 0</span>
+                            <strong><?= (int)$clients411NonPositiveCount ?></strong>
                         </div>
                         <div class="sl-mini-row">
-                            <span>Total global 411 + 512 + 706</span>
-                            <strong><?= number_format((float)($balances['global_total'] ?? 0), 2, ',', ' ') ?></strong>
+                            <span>Dernier virement proche</span>
+                            <strong><?= (int)$clientsLastTransferCount ?></strong>
                         </div>
                         <div class="sl-mini-row">
                             <span>Débits dus ouverts</span>
@@ -301,6 +419,28 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     </div>
                 </div>
             </div>
+
+            <?php if ($showOperationsPeriod): ?>
+                <div class="sl-panel">
+                    <div class="sl-panel-head">
+                        <div>
+                            <h3>Opérations sur la période</h3>
+                            <p>Volume et montant des opérations sur l’intervalle sélectionné.</p>
+                        </div>
+                    </div>
+
+                    <div class="sl-mini-list">
+                        <div class="sl-mini-row">
+                            <span>Nombre d’opérations</span>
+                            <strong><?= (int)($operations['count'] ?? 0) ?></strong>
+                        </div>
+                        <div class="sl-mini-row">
+                            <span>Montant cumulé</span>
+                            <strong><?= number_format((float)($operations['amount'] ?? 0), 2, ',', ' ') ?></strong>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
 
             <?php if ($showLowBalances): ?>
                 <div class="sl-panel">

@@ -220,6 +220,54 @@ if (!function_exists('aam_sort_permissions_for_display')) {
     }
 }
 
+if (!function_exists('aam_permissions_by_id')) {
+    function aam_permissions_by_id(array $permissions): array
+    {
+        $map = [];
+        foreach ($permissions as $permission) {
+            $id = (int)($permission['id'] ?? 0);
+            if ($id > 0) {
+                $map[$id] = $permission;
+            }
+        }
+        return $map;
+    }
+}
+
+if (!function_exists('aam_permission_codes_from_ids')) {
+    function aam_permission_codes_from_ids(array $permissionMapById, array $ids): array
+    {
+        $codes = [];
+
+        foreach ($ids as $id) {
+            $id = (int)$id;
+            if ($id > 0 && isset($permissionMapById[$id])) {
+                $code = trim((string)($permissionMapById[$id]['code'] ?? ''));
+                if ($code !== '') {
+                    $codes[] = $code;
+                }
+            }
+        }
+
+        $codes = array_values(array_unique($codes));
+        sort($codes);
+
+        return $codes;
+    }
+}
+
+if (!function_exists('aam_compact_codes_for_log')) {
+    function aam_compact_codes_for_log(array $codes): string
+    {
+        $codes = array_values(array_filter(array_map('trim', $codes), static fn($v) => $v !== ''));
+        if (!$codes) {
+            return 'aucune';
+        }
+
+        return implode(', ', $codes);
+    }
+}
+
 $successMessage = '';
 $errorMessage = '';
 $previewMode = false;
@@ -227,6 +275,7 @@ $previewData = null;
 
 $roles = aam_fetch_roles($pdo);
 $permissions = aam_fetch_permissions($pdo);
+$permissionsById = aam_permissions_by_id($permissions);
 
 $selectedRoleId = (int)($_GET['role_id'] ?? $_POST['role_id'] ?? 0);
 if ($selectedRoleId <= 0 && !empty($roles)) {
@@ -260,10 +309,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['form_action'])) {
             array_unique(
                 array_filter(
                     array_map('intval', $_POST['permission_ids'] ?? []),
-                    fn ($v) => $v > 0
+                    static fn($v) => $v > 0
                 )
             )
         );
+        sort($formPermissionIds);
 
         $action = (string)($_POST['form_action'] ?? '');
 
@@ -284,6 +334,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['form_action'])) {
                 throw new RuntimeException('Table role_permissions introuvable.');
             }
 
+            $oldPermissionIds = aam_fetch_current_permission_ids($pdo, $selectedRoleId);
+            sort($oldPermissionIds);
+
+            $addedIds = array_values(array_diff($formPermissionIds, $oldPermissionIds));
+            $removedIds = array_values(array_diff($oldPermissionIds, $formPermissionIds));
+
+            $addedCodes = aam_permission_codes_from_ids($permissionsById, $addedIds);
+            $removedCodes = aam_permission_codes_from_ids($permissionsById, $removedIds);
+            $finalCodes = aam_permission_codes_from_ids($permissionsById, $formPermissionIds);
+
+            $roleLabelForLog = trim((string)($selectedRole['label'] ?? ''));
+            $roleCodeForLog = trim((string)($selectedRole['code'] ?? ''));
+
+            $logDescription = 'Mise à jour de la matrice d’accès du rôle '
+                . ($roleLabelForLog !== '' ? $roleLabelForLog : ('#' . $selectedRoleId))
+                . ($roleCodeForLog !== '' ? ' (' . $roleCodeForLog . ')' : '')
+                . '. Ajouts: [' . aam_compact_codes_for_log($addedCodes) . ']'
+                . '. Retraits: [' . aam_compact_codes_for_log($removedCodes) . ']'
+                . '. Total final: ' . count($finalCodes) . '.';
+
             $pdo->beginTransaction();
 
             $stmtDelete = $pdo->prepare("DELETE FROM role_permissions WHERE role_id = ?");
@@ -300,7 +370,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['form_action'])) {
                 }
             }
 
-            if (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
+            if (function_exists('sl_audit_and_notify_action')) {
+                sl_audit_and_notify_action(
+                    $pdo,
+                    (int)($_SESSION['user_id'] ?? 0),
+                    'update_access_matrix',
+                    'admin',
+                    'role',
+                    $selectedRoleId,
+                    $logDescription,
+                    'access_matrix_updated',
+                    'La matrice d’accès du rôle '
+                        . ($roleLabelForLog !== '' ? $roleLabelForLog : ('#' . $selectedRoleId))
+                        . ($roleCodeForLog !== '' ? ' (' . $roleCodeForLog . ')' : '')
+                        . ' a été mise à jour. '
+                        . count($addedCodes) . ' permission(s) ajoutée(s), '
+                        . count($removedCodes) . ' retirée(s).',
+                    'success',
+                    APP_URL . 'modules/admin/access_matrix.php?role_id=' . $selectedRoleId,
+                    null,
+                    true
+                );
+            } elseif (function_exists('sl_audit_action_from_result')) {
+                sl_audit_action_from_result(
+                    $pdo,
+                    'update_access_matrix',
+                    'admin',
+                    'role',
+                    $selectedRoleId,
+                    $logDescription,
+                    APP_URL . 'modules/admin/access_matrix.php?role_id=' . $selectedRoleId
+                );
+            } elseif (function_exists('logUserAction') && isset($_SESSION['user_id'])) {
                 logUserAction(
                     $pdo,
                     (int)$_SESSION['user_id'],
@@ -308,7 +409,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['form_action'])) {
                     'admin',
                     'role',
                     $selectedRoleId,
-                    'Mise à jour de la matrice d’accès'
+                    $logDescription
                 );
             }
 
@@ -809,7 +910,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <?php endif; ?>
                 <?php else: ?>
                     <div class="aam-note">
-                        Cette matrice pilote les permissions réellement attribuées aux rôles.  
+                        Cette matrice pilote les permissions réellement attribuées aux rôles.
                         Utilise les filtres pour cibler rapidement un domaine, puis prévisualise avant enregistrement.
                     </div>
                 <?php endif; ?>

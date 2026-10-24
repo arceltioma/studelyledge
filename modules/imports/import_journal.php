@@ -83,6 +83,40 @@ $action = (string)($filters['action'] ?? '');
 $dateFrom = (string)($filters['from'] ?? '');
 $dateTo = (string)($filters['to'] ?? '');
 
+if (!function_exists('sl_import_journal_badge_class')) {
+    function sl_import_journal_badge_class(string $value): string
+    {
+        $normalized = strtolower(trim($value));
+
+        if (
+            str_contains($normalized, 'error') ||
+            str_contains($normalized, 'failed') ||
+            str_contains($normalized, 'danger')
+        ) {
+            return 'sij-chip--danger';
+        }
+
+        if (
+            str_contains($normalized, 'warning') ||
+            str_contains($normalized, 'duplicate') ||
+            str_contains($normalized, 'doublon')
+        ) {
+            return 'sij-chip--warning';
+        }
+
+        if (
+            str_contains($normalized, 'success') ||
+            str_contains($normalized, 'validated') ||
+            str_contains($normalized, 'import') ||
+            str_contains($normalized, 'preview')
+        ) {
+            return 'sij-chip--success';
+        }
+
+        return 'sij-chip--neutral';
+    }
+}
+
 require_once __DIR__ . '/../../includes/document_start.php';
 ?>
 
@@ -91,6 +125,254 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
+
+        <style>
+            .sij-shell {
+                display: grid;
+                gap: 20px;
+            }
+
+            .sij-toolbar,
+            .sij-panel,
+            .sij-kpi-card,
+            .sij-log-card {
+                border-radius: 20px;
+                background: #fff;
+                border: 1px solid rgba(148, 163, 184, 0.16);
+                box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
+            }
+
+            .sij-toolbar,
+            .sij-panel {
+                padding: 18px;
+            }
+
+            .sij-toolbar h3,
+            .sij-panel h3 {
+                margin: 0 0 8px;
+            }
+
+            .sij-subtitle {
+                margin: 0;
+                color: #64748b;
+                line-height: 1.55;
+            }
+
+            .sij-kpi-grid {
+                display: grid;
+                grid-template-columns: repeat(5, minmax(0, 1fr));
+                gap: 14px;
+            }
+
+            @media (max-width: 1200px) {
+                .sij-kpi-grid {
+                    grid-template-columns: repeat(3, minmax(0, 1fr));
+                }
+            }
+
+            @media (max-width: 760px) {
+                .sij-kpi-grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            .sij-kpi-card {
+                padding: 16px;
+                background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            }
+
+            .sij-kpi-label {
+                display: block;
+                font-size: 12px;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: .04em;
+                color: #64748b;
+                margin-bottom: 8px;
+            }
+
+            .sij-kpi-value {
+                display: block;
+                font-size: 28px;
+                font-weight: 900;
+                line-height: 1;
+                color: #0f172a;
+            }
+
+            .sij-kpi-meta {
+                display: block;
+                margin-top: 8px;
+                color: #64748b;
+                font-size: 12px;
+            }
+
+            .sij-filter-grid {
+                display: grid;
+                grid-template-columns: repeat(6, minmax(0, 1fr));
+                gap: 14px;
+            }
+
+            @media (max-width: 1200px) {
+                .sij-filter-grid {
+                    grid-template-columns: repeat(3, minmax(0, 1fr));
+                }
+            }
+
+            @media (max-width: 760px) {
+                .sij-filter-grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            .sij-help-box {
+                margin-top: 14px;
+                padding: 14px 16px;
+                border-radius: 14px;
+                background: rgba(99, 102, 241, 0.07);
+                border: 1px solid rgba(99, 102, 241, 0.16);
+                color: #3730a3;
+                line-height: 1.55;
+                font-size: 13px;
+            }
+
+            .sij-log-list {
+                display: grid;
+                gap: 12px;
+                margin-top: 14px;
+            }
+
+            .sij-log-card {
+                padding: 14px;
+                background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+            }
+
+            .sij-log-top {
+                display: grid;
+                grid-template-columns: minmax(0, 1.1fr) minmax(220px, 0.9fr);
+                gap: 14px;
+                align-items: start;
+            }
+
+            @media (max-width: 860px) {
+                .sij-log-top {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            .sij-log-title {
+                font-weight: 900;
+                color: #0f172a;
+                word-break: break-word;
+            }
+
+            .sij-log-sub {
+                display: block;
+                margin-top: 4px;
+                font-size: 12px;
+                color: #64748b;
+                word-break: break-word;
+            }
+
+            .sij-chip-row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-top: 10px;
+            }
+
+            .sij-chip {
+                display: inline-flex;
+                align-items: center;
+                padding: 5px 10px;
+                border-radius: 999px;
+                font-size: 11px;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: .04em;
+                white-space: nowrap;
+            }
+
+            .sij-chip--success {
+                background: rgba(16, 185, 129, 0.12);
+                color: #047857;
+            }
+
+            .sij-chip--warning {
+                background: rgba(245, 158, 11, 0.12);
+                color: #92400e;
+            }
+
+            .sij-chip--danger {
+                background: rgba(239, 68, 68, 0.10);
+                color: #b91c1c;
+            }
+
+            .sij-chip--neutral {
+                background: rgba(148, 163, 184, 0.14);
+                color: #475569;
+            }
+
+            .sij-log-details {
+                margin-top: 12px;
+                padding: 12px 14px;
+                border-radius: 14px;
+                background: rgba(248, 250, 252, 0.95);
+                border: 1px solid rgba(226, 232, 240, 0.9);
+                color: #334155;
+                font-size: 13px;
+                line-height: 1.6;
+                word-break: break-word;
+            }
+
+            .sij-meta-grid {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 10px;
+            }
+
+            @media (max-width: 860px) {
+                .sij-meta-grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            .sij-meta-item {
+                padding: 10px 12px;
+                border-radius: 14px;
+                background: rgba(248, 250, 252, 0.95);
+                border: 1px solid rgba(226, 232, 240, 0.9);
+            }
+
+            .sij-meta-item span {
+                display: block;
+                font-size: 11px;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: .04em;
+                color: #64748b;
+                margin-bottom: 6px;
+            }
+
+            .sij-meta-item strong {
+                color: #0f172a;
+                word-break: break-word;
+            }
+
+            .sij-pagination {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-top: 18px;
+            }
+
+            .sij-empty {
+                padding: 18px;
+                border-radius: 16px;
+                background: rgba(248, 250, 252, 0.95);
+                border: 1px dashed rgba(148, 163, 184, 0.35);
+                color: #475569;
+            }
+        </style>
 
         <?php if ($flashSuccess !== ''): ?>
             <div class="success"><?= e($flashSuccess) ?></div>
@@ -111,168 +393,207 @@ require_once __DIR__ . '/../../includes/document_start.php';
             </div>
         <?php endif; ?>
 
-        <section class="sl-kpi-grid sl-kpi-grid--compact" style="margin-bottom:20px;">
-            <div class="sl-kpi-card sl-kpi-card--blue">
-                <span class="sl-kpi-card__label">Lignes journal</span>
-                <strong class="sl-kpi-card__value"><?= (int)$kpis['total_logs'] ?></strong>
-                <span class="sl-kpi-card__meta">Historique global</span>
-            </div>
-
-            <div class="sl-kpi-card sl-kpi-card--emerald">
-                <span class="sl-kpi-card__label">Actions imports</span>
-                <strong class="sl-kpi-card__value"><?= (int)$kpis['imports_count'] ?></strong>
-                <span class="sl-kpi-card__meta">Module imports</span>
-            </div>
-
-            <div class="sl-kpi-card sl-kpi-card--violet">
-                <span class="sl-kpi-card__label">Modules</span>
-                <strong class="sl-kpi-card__value"><?= (int)$kpis['distinct_modules'] ?></strong>
-                <span class="sl-kpi-card__meta">Diversité suivie</span>
-            </div>
-
-            <div class="sl-kpi-card sl-kpi-card--amber">
-                <span class="sl-kpi-card__label">Actions</span>
-                <strong class="sl-kpi-card__value"><?= (int)$kpis['distinct_actions'] ?></strong>
-                <span class="sl-kpi-card__meta">Types journalisés</span>
-            </div>
-
-            <div class="sl-kpi-card sl-kpi-card--indigo">
-                <span class="sl-kpi-card__label">Aujourd'hui</span>
-                <strong class="sl-kpi-card__value"><?= (int)$kpis['today_logs'] ?></strong>
-                <span class="sl-kpi-card__meta">Activité du jour</span>
-            </div>
-        </section>
-
-        <section class="card" style="margin-bottom:20px;">
-            <h3>Filtres</h3>
-
-            <form method="GET">
-                <div class="dashboard-grid-5">
-                    <div>
-                        <label for="search">Recherche</label>
-                        <input type="text" id="search" name="search" value="<?= e($search) ?>" placeholder="Mot-clé, détail, action...">
-                    </div>
-
-                    <div>
-                        <label for="module">Module</label>
-                        <select id="module" name="module">
-                            <option value="">Tous</option>
-                            <?php foreach ($availableModules as $moduleOption): ?>
-                                <option value="<?= e((string)$moduleOption) ?>" <?= $module === (string)$moduleOption ? 'selected' : '' ?>>
-                                    <?= e((string)$moduleOption) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label for="action">Action</label>
-                        <select id="action" name="action">
-                            <option value="">Toutes</option>
-                            <?php foreach ($availableActions as $actionOption): ?>
-                                <option value="<?= e((string)$actionOption) ?>" <?= $action === (string)$actionOption ? 'selected' : '' ?>>
-                                    <?= e((string)$actionOption) ?>
-                                </option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label for="from">Du</label>
-                        <input type="date" id="from" name="from" value="<?= e($dateFrom) ?>">
-                    </div>
-
-                    <div>
-                        <label for="to">Au</label>
-                        <input type="date" id="to" name="to" value="<?= e($dateTo) ?>">
-                    </div>
-
-                    <div>
-                        <label for="per_page">Résultats</label>
-                        <select id="per_page" name="per_page">
-                            <?php foreach ([25, 50, 100, 200] as $size): ?>
-                                <option value="<?= $size ?>" <?= $perPage === $size ? 'selected' : '' ?>><?= $size ?></option>
-                            <?php endforeach; ?>
-                        </select>
-                    </div>
+        <div class="sij-shell">
+            <div class="sij-kpi-grid">
+                <div class="sij-kpi-card">
+                    <span class="sij-kpi-label">Lignes journal</span>
+                    <span class="sij-kpi-value"><?= (int)$kpis['total_logs'] ?></span>
+                    <span class="sij-kpi-meta">Historique global</span>
                 </div>
 
-                <div class="btn-group" style="margin-top:18px;">
-                    <button type="submit" class="btn btn-success">Filtrer</button>
-                    <a href="<?= e(APP_URL) ?>modules/imports/import_journal.php" class="btn btn-outline">Réinitialiser</a>
-                    <a href="<?= e(APP_URL) ?>modules/imports/import_upload.php" class="btn btn-secondary">Nouvel import</a>
+                <div class="sij-kpi-card">
+                    <span class="sij-kpi-label">Actions imports</span>
+                    <span class="sij-kpi-value"><?= (int)$kpis['imports_count'] ?></span>
+                    <span class="sij-kpi-meta">Module imports</span>
                 </div>
-            </form>
-        </section>
 
-        <section class="card">
-            <div class="sl-card-head">
-                <div>
-                    <h3>Historique des imports et actions liées</h3>
-                    <p class="sl-card-head-subtitle"><?= (int)$total ?> ligne(s) trouvée(s)</p>
+                <div class="sij-kpi-card">
+                    <span class="sij-kpi-label">Modules</span>
+                    <span class="sij-kpi-value"><?= (int)$kpis['distinct_modules'] ?></span>
+                    <span class="sij-kpi-meta">Diversité suivie</span>
+                </div>
+
+                <div class="sij-kpi-card">
+                    <span class="sij-kpi-label">Actions</span>
+                    <span class="sij-kpi-value"><?= (int)$kpis['distinct_actions'] ?></span>
+                    <span class="sij-kpi-meta">Types journalisés</span>
+                </div>
+
+                <div class="sij-kpi-card">
+                    <span class="sij-kpi-label">Aujourd'hui</span>
+                    <span class="sij-kpi-value"><?= (int)$kpis['today_logs'] ?></span>
+                    <span class="sij-kpi-meta">Activité du jour</span>
                 </div>
             </div>
 
-            <?php if (!$canUseLogs): ?>
-                <div class="warning">La table <strong>user_logs</strong> est absente. Le journal ne peut pas être affiché.</div>
-            <?php else: ?>
-                <div class="sl-table-wrap">
-                    <table class="sl-table">
-                        <thead>
-                            <tr>
-                                <th>Date</th>
-                                <th>Utilisateur</th>
-                                <th>Action</th>
-                                <th>Module</th>
-                                <th>Type entité</th>
-                                <th>ID entité</th>
-                                <th>Détails</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php if ($logs): ?>
-                                <?php foreach ($logs as $log): ?>
-                                    <tr>
-                                        <td><?= e((string)($log['created_at'] ?? '')) ?></td>
-                                        <td><?= e((string)($log['username'] ?? ($log['user_id'] ?? ''))) ?></td>
-                                        <td><?= e((string)($log['action'] ?? '')) ?></td>
-                                        <td><?= e((string)($log['module'] ?? '')) ?></td>
-                                        <td><?= e((string)($log['entity_type'] ?? '')) ?></td>
-                                        <td><?= e((string)($log['entity_id'] ?? '')) ?></td>
-                                        <td><?= e((string)($log['details'] ?? '')) ?></td>
-                                    </tr>
+            <section class="sij-toolbar">
+                <h3>Filtres</h3>
+                <p class="sij-subtitle">
+                    Affine l’historique par mot-clé, module, action, plage de dates et volume affiché.
+                </p>
+
+                <form method="GET">
+                    <div class="sij-filter-grid">
+                        <div>
+                            <label for="search">Recherche</label>
+                            <input type="text" id="search" name="search" value="<?= e($search) ?>" placeholder="Mot-clé, détail, action...">
+                        </div>
+
+                        <div>
+                            <label for="module">Module</label>
+                            <select id="module" name="module">
+                                <option value="">Tous</option>
+                                <?php foreach ($availableModules as $moduleOption): ?>
+                                    <option value="<?= e((string)$moduleOption) ?>" <?= $module === (string)$moduleOption ? 'selected' : '' ?>>
+                                        <?= e((string)$moduleOption) ?>
+                                    </option>
                                 <?php endforeach; ?>
-                            <?php else: ?>
-                                <tr>
-                                    <td colspan="7">Aucune ligne trouvée pour les filtres actuels.</td>
-                                </tr>
-                            <?php endif; ?>
-                        </tbody>
-                    </table>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label for="action">Action</label>
+                            <select id="action" name="action">
+                                <option value="">Toutes</option>
+                                <?php foreach ($availableActions as $actionOption): ?>
+                                    <option value="<?= e((string)$actionOption) ?>" <?= $action === (string)$actionOption ? 'selected' : '' ?>>
+                                        <?= e((string)$actionOption) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label for="from">Du</label>
+                            <input type="date" id="from" name="from" value="<?= e($dateFrom) ?>">
+                        </div>
+
+                        <div>
+                            <label for="to">Au</label>
+                            <input type="date" id="to" name="to" value="<?= e($dateTo) ?>">
+                        </div>
+
+                        <div>
+                            <label for="per_page">Résultats</label>
+                            <select id="per_page" name="per_page">
+                                <?php foreach ([25, 50, 100, 200] as $size): ?>
+                                    <option value="<?= $size ?>" <?= $perPage === $size ? 'selected' : '' ?>><?= $size ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="sij-help-box">
+                        Utilise le journal pour suivre les uploads, validations de mapping, prévisualisations, erreurs d’import et créations d’opérations.
+                    </div>
+
+                    <div class="btn-group" style="margin-top:18px;">
+                        <button type="submit" class="btn btn-success">Filtrer</button>
+                        <a href="<?= e(APP_URL) ?>modules/imports/import_journal.php" class="btn btn-outline">Réinitialiser</a>
+                        <a href="<?= e(APP_URL) ?>modules/imports/import_upload.php" class="btn btn-secondary">Nouvel import</a>
+                    </div>
+                </form>
+            </section>
+
+            <section class="sij-panel">
+                <div class="sl-card-head">
+                    <div>
+                        <h3>Historique des imports et actions liées</h3>
+                        <p class="sij-subtitle"><?= (int)$total ?> ligne(s) trouvée(s)</p>
+                    </div>
                 </div>
 
-                <?php if ($pages > 1): ?>
-                    <div class="btn-group" style="margin-top:18px;">
-                        <?php for ($p = 1; $p <= $pages; $p++): ?>
-                            <a
-                                class="btn <?= $p === $page ? 'btn-success' : 'btn-outline' ?>"
-                                href="<?= e(APP_URL) ?>modules/imports/import_journal.php?<?= http_build_query([
-                                    'search' => $search,
-                                    'module' => $module,
-                                    'action' => $action,
-                                    'from' => $dateFrom,
-                                    'to' => $dateTo,
-                                    'per_page' => $perPage,
-                                    'page' => $p,
-                                ]) ?>"
-                            >
-                                <?= $p ?>
-                            </a>
-                        <?php endfor; ?>
-                    </div>
+                <?php if (!$canUseLogs): ?>
+                    <div class="warning">La table <strong>user_logs</strong> est absente. Le journal ne peut pas être affiché.</div>
+                <?php else: ?>
+                    <?php if ($logs): ?>
+                        <div class="sij-log-list">
+                            <?php foreach ($logs as $log): ?>
+                                <?php
+                                $actionValue = (string)($log['action'] ?? '');
+                                $moduleValue = (string)($log['module'] ?? '');
+                                $entityTypeValue = (string)($log['entity_type'] ?? '');
+                                $detailsValue = (string)($log['details'] ?? '');
+                                $usernameValue = (string)($log['username'] ?? ($log['user_id'] ?? ''));
+                                $entityIdValue = (string)($log['entity_id'] ?? '');
+                                $createdAtValue = (string)($log['created_at'] ?? '');
+                                ?>
+                                <article class="sij-log-card">
+                                    <div class="sij-log-top">
+                                        <div>
+                                            <div class="sij-log-title"><?= e($actionValue !== '' ? $actionValue : 'Action non renseignée') ?></div>
+                                            <span class="sij-log-sub">
+                                                <?= e($createdAtValue !== '' ? $createdAtValue : 'Date inconnue') ?>
+                                                •
+                                                <?= e($usernameValue !== '' ? $usernameValue : 'Utilisateur inconnu') ?>
+                                            </span>
+
+                                            <div class="sij-chip-row">
+                                                <span class="sij-chip <?= e(sl_import_journal_badge_class($actionValue)) ?>">
+                                                    <?= e($actionValue !== '' ? $actionValue : 'action') ?>
+                                                </span>
+
+                                                <span class="sij-chip <?= e(sl_import_journal_badge_class($moduleValue)) ?>">
+                                                    <?= e($moduleValue !== '' ? $moduleValue : 'module') ?>
+                                                </span>
+
+                                                <span class="sij-chip sij-chip--neutral">
+                                                    <?= e($entityTypeValue !== '' ? $entityTypeValue : 'entity') ?>
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        <div class="sij-meta-grid">
+                                            <div class="sij-meta-item">
+                                                <span>Utilisateur</span>
+                                                <strong><?= e($usernameValue !== '' ? $usernameValue : '—') ?></strong>
+                                            </div>
+
+                                            <div class="sij-meta-item">
+                                                <span>ID entité</span>
+                                                <strong><?= e($entityIdValue !== '' ? $entityIdValue : '—') ?></strong>
+                                            </div>
+
+                                            <div class="sij-meta-item">
+                                                <span>Type entité</span>
+                                                <strong><?= e($entityTypeValue !== '' ? $entityTypeValue : '—') ?></strong>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="sij-log-details">
+                                        <?= e($detailsValue !== '' ? $detailsValue : 'Aucun détail disponible.') ?>
+                                    </div>
+                                </article>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php else: ?>
+                        <div class="sij-empty">Aucune ligne trouvée pour les filtres actuels.</div>
+                    <?php endif; ?>
+
+                    <?php if ($pages > 1): ?>
+                        <div class="sij-pagination">
+                            <?php for ($p = 1; $p <= $pages; $p++): ?>
+                                <a
+                                    class="btn <?= $p === $page ? 'btn-success' : 'btn-outline' ?>"
+                                    href="<?= e(APP_URL) ?>modules/imports/import_journal.php?<?= http_build_query([
+                                        'search' => $search,
+                                        'module' => $module,
+                                        'action' => $action,
+                                        'from' => $dateFrom,
+                                        'to' => $dateTo,
+                                        'per_page' => $perPage,
+                                        'page' => $p,
+                                    ]) ?>"
+                                >
+                                    <?= $p ?>
+                                </a>
+                            <?php endfor; ?>
+                        </div>
+                    <?php endif; ?>
                 <?php endif; ?>
-            <?php endif; ?>
-        </section>
+            </section>
+        </div>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>

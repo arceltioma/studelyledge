@@ -1103,30 +1103,120 @@ if (!function_exists('getClientAccountingContext')) {
     }
 }
 
-if (!function_exists('resolveServiceAccountFromServiceId')) {
-    function resolveServiceAccountFromServiceId(PDO $pdo, ?int $serviceId): ?array
+if (!function_exists('resolveAccountingOperation')) {
+    function resolveAccountingOperation(PDO $pdo, array $payload): array
     {
-        if ($serviceId === null || !tableExists($pdo, 'ref_services')) {
-            return null;
+        $operationTypeCode = strtoupper(trim((string)($payload['operation_type_code'] ?? '')));
+        $clientId = isset($payload['client_id']) ? (int)$payload['client_id'] : null;
+        $serviceId = isset($payload['service_id']) ? (int)$payload['service_id'] : null;
+        $sourceTreasuryCode = $payload['source_treasury_code'] ?? null;
+        $targetTreasuryCode = $payload['target_treasury_code'] ?? null;
+
+        if ($operationTypeCode === '') {
+            throw new RuntimeException('Type d’opération manquant.');
         }
 
-        $stmt = $pdo->prepare("
-            SELECT
-                rs.id,
-                rs.code,
-                rs.label,
-                rs.service_account_id,
-                sa.account_code,
-                sa.account_label
-            FROM ref_services rs
-            LEFT JOIN service_accounts sa ON sa.id = rs.service_account_id
-            WHERE rs.id = ?
-            LIMIT 1
-        ");
-        $stmt->execute([$serviceId]);
+        $clientContext = null;
+        if ($clientId) {
+            $clientContext = getClientAccountingContext($pdo, $clientId);
+            if (!$clientContext) {
+                throw new RuntimeException('Client introuvable pour la résolution comptable.');
+            }
+        }
 
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        return $row ?: null;
+        $serviceInfo = $serviceId ? resolveServiceAccountFromServiceId($pdo, $serviceId) : null;
+
+        $debit = null;
+        $credit = null;
+        $analytic = null;
+
+        switch ($operationTypeCode) {
+            case 'VERSEMENT':
+            case 'REGULARISATION_POSITIVE':
+            case 'CREDIT_CLIENT':
+                if (!$clientContext) {
+                    throw new RuntimeException('Client obligatoire.');
+                }
+                $debit = $sourceTreasuryCode ?: ($clientContext['treasury_account_code'] ?? null);
+                $credit = $clientContext['generated_client_account'] ?? null;
+                break;
+
+            case 'VIREMENT_MENSUEL':
+            case 'VIREMENT_EXCEPTIONEL':
+            case 'VIREMENT_REGULIER':
+            case 'REGULARISATION_NEGATIVE':
+            case 'FRAIS_BANCAIRES':
+            case 'DEBIT_CLIENT':
+                if (!$clientContext) {
+                    throw new RuntimeException('Client obligatoire.');
+                }
+                $debit = $clientContext['generated_client_account'] ?? null;
+                $credit = $sourceTreasuryCode ?: ($clientContext['treasury_account_code'] ?? null);
+                break;
+
+            case 'FRAIS_DE_SERVICE':
+            case 'FRAIS_SERVICE':
+                if (!$clientContext) {
+                    throw new RuntimeException('Client obligatoire.');
+                }
+
+                $manual706 = trim((string)($payload['destination_account_code'] ?? ''));
+
+                if ($manual706 !== '') {
+                    $debit = $clientContext['generated_client_account'] ?? null;
+                    $credit = $manual706;
+                    $analytic = [
+                        'account_code' => $manual706,
+                        'account_label' => null,
+                    ];
+                    break;
+                }
+
+                if (!$serviceInfo || empty($serviceInfo['account_code'])) {
+                    throw new RuntimeException('Le service choisi n’a pas de compte 706 associé.');
+                }
+
+                $debit = $clientContext['generated_client_account'] ?? null;
+                $credit = $serviceInfo['account_code'];
+                $analytic = [
+                    'account_code' => $serviceInfo['account_code'],
+                    'account_label' => $serviceInfo['account_label'] ?? null,
+                ];
+                break;
+
+            case 'VIREMENT_INTERNE':
+                if (!$sourceTreasuryCode || !$targetTreasuryCode) {
+                    throw new RuntimeException('Les comptes source et cible sont obligatoires.');
+                }
+                $debit = $sourceTreasuryCode;
+                $credit = $targetTreasuryCode;
+                break;
+
+            case 'MANUAL':
+            case 'IMPORT_RELEVE':
+            case 'REGULARISATION':
+                if (!$clientContext) {
+                    throw new RuntimeException('Client obligatoire.');
+                }
+                $debit = $clientContext['generated_client_account'] ?? null;
+                $credit = $sourceTreasuryCode ?: ($clientContext['treasury_account_code'] ?? null);
+                break;
+
+            default:
+                throw new RuntimeException('Type d’opération non géré par le moteur.');
+        }
+
+        if (!$debit || !$credit) {
+            throw new RuntimeException('Impossible de résoudre les comptes débit/crédit.');
+        }
+
+        return [
+            'debit_account_code' => $debit,
+            'credit_account_code' => $credit,
+            'analytic_account' => $analytic,
+            'client_context' => $clientContext,
+            'service_info' => $serviceInfo,
+        ];
     }
 }
 
@@ -1703,6 +1793,9 @@ if (!function_exists('resolveAccountingOperation')) {
         $sourceTreasuryCode = $payload['source_treasury_code'] ?? null;
         $targetTreasuryCode = $payload['target_treasury_code'] ?? null;
 
+        $manualDestinationAccountCode = trim((string)($payload['destination_account_code'] ?? ''));
+        $manualServiceAccountCode = trim((string)($payload['service_account_code'] ?? ''));
+
         if ($operationTypeCode === '') {
             throw new RuntimeException('Type d’opération manquant.');
         }
@@ -1747,12 +1840,37 @@ if (!function_exists('resolveAccountingOperation')) {
 
             case 'FRAIS_DE_SERVICE':
             case 'FRAIS_SERVICE':
+            case 'FRAIS_GESTION':
+            case 'COMMISSION_DE_TRANSFERT':
+            case 'CA_PLACEMENT':
                 if (!$clientContext) {
                     throw new RuntimeException('Client obligatoire.');
                 }
+
+                if ($manualDestinationAccountCode !== '') {
+                    $debit = $clientContext['generated_client_account'] ?? null;
+                    $credit = $manualDestinationAccountCode;
+                    $analytic = [
+                        'account_code' => $manualDestinationAccountCode,
+                        'account_label' => null,
+                    ];
+                    break;
+                }
+
+                if ($manualServiceAccountCode !== '') {
+                    $debit = $clientContext['generated_client_account'] ?? null;
+                    $credit = $manualServiceAccountCode;
+                    $analytic = [
+                        'account_code' => $manualServiceAccountCode,
+                        'account_label' => null,
+                    ];
+                    break;
+                }
+
                 if (!$serviceInfo || empty($serviceInfo['account_code'])) {
                     throw new RuntimeException('Le service choisi n’a pas de compte 706 associé.');
                 }
+
                 $debit = $clientContext['generated_client_account'] ?? null;
                 $credit = $serviceInfo['account_code'];
                 $analytic = [
@@ -1796,7 +1914,6 @@ if (!function_exists('resolveAccountingOperation')) {
         ];
     }
 }
-
 /*
 |--------------------------------------------------------------------------
 | Moteur comptable V2
@@ -1914,6 +2031,15 @@ if (!function_exists('resolveAccountingOperationV2')) {
         $clientId = isset($payload['client_id']) ? (int)$payload['client_id'] : null;
         $operationTypeId = isset($payload['operation_type_id']) ? (int)$payload['operation_type_id'] : 0;
 
+        $sourceTreasuryCode = trim((string)($payload['source_treasury_code'] ?? ''));
+        $targetTreasuryCode = trim((string)($payload['target_treasury_code'] ?? ''));
+
+        // Compatibilité UI premium : autorise un 706 manuel pour les frais client
+        $manualDebit = trim((string)($payload['manual_debit_account_code'] ?? ''));
+        $manualCredit = trim((string)($payload['manual_credit_account_code'] ?? ''));
+        $manualDestinationAccountCode = trim((string)($payload['destination_account_code'] ?? ''));
+        $manualServiceAccountCode = trim((string)($payload['service_account_code'] ?? ''));
+
         if ($operationTypeId > 0 && $serviceId > 0 && function_exists('sl_find_accounting_rule')) {
             $rule = sl_find_accounting_rule($pdo, $operationTypeId, $serviceId);
             if ($rule) {
@@ -1923,14 +2049,6 @@ if (!function_exists('resolveAccountingOperationV2')) {
 
         if ($operationTypeCode === '') {
             throw new RuntimeException('Type d’opération manquant.');
-        }
-
-        if ($serviceCode === '') {
-            throw new RuntimeException('Type de service manquant.');
-        }
-
-        if (!sl_service_allowed_for_type($operationTypeCode, $serviceCode)) {
-            throw new RuntimeException('Le type de service ne correspond pas au type d’opération.');
         }
 
         $clientContext = null;
@@ -1946,24 +2064,23 @@ if (!function_exists('resolveAccountingOperationV2')) {
             $serviceInfo = resolveServiceAccountFromServiceId($pdo, $serviceId);
         }
 
-        // Compatibilité de structure de retour
         $linkedBankAccount = null;
 
         $clientAccount = (string)($clientContext['generated_client_account'] ?? '');
         $clientTreasury = (string)($clientContext['treasury_account_code'] ?? '');
 
         $selectedTreasury = null;
-        if (sl_operation_uses_selected_treasury($operationTypeCode, $serviceCode)) {
+        if (function_exists('sl_operation_uses_selected_treasury') && sl_operation_uses_selected_treasury($operationTypeCode, $serviceCode)) {
             $selectedTreasury = sl_resolve_selected_treasury_account($pdo, $payload, $clientContext);
         }
-
-        $manualDebit = trim((string)($payload['manual_debit_account_code'] ?? ''));
-        $manualCredit = trim((string)($payload['manual_credit_account_code'] ?? ''));
-        $manualMode = sl_is_manual_accounting_case($operationTypeCode, $serviceCode);
 
         $debit = null;
         $credit = null;
         $analytic = null;
+
+        $manualMode = function_exists('sl_is_manual_accounting_case')
+            ? sl_is_manual_accounting_case($operationTypeCode, $serviceCode)
+            : false;
 
         if ($manualMode) {
             if ($manualDebit === '' || $manualCredit === '') {
@@ -1973,196 +2090,232 @@ if (!function_exists('resolveAccountingOperationV2')) {
             $debit = $manualDebit;
             $credit = $manualCredit;
         } else {
-            switch ($operationTypeCode . '::' . $serviceCode) {
-                case 'VERSEMENT::VERSEMENT':
-                    if (!$clientContext) {
-                        throw new RuntimeException('Client obligatoire pour un versement.');
-                    }
+            // 🔥 Cas spécial premium : frais client avec 706 manuel depuis l'UI
+            // On ne casse pas les autres cas, on ne l’ouvre que pour les familles de frais.
+            $isFeeLikeOperation = in_array($operationTypeCode, [
+                'FRAIS_SERVICE',
+                'FRAIS_DE_SERVICE',
+                'FRAIS_GESTION',
+                'COMMISSION_DE_TRANSFERT',
+                'CA_PLACEMENT',
+            ], true);
 
-                    $target512 = (string)($selectedTreasury['account_code'] ?? $clientTreasury);
-                    if ($target512 === '') {
-                        throw new RuntimeException('Compte 512 introuvable pour ce versement.');
-                    }
+            if ($isFeeLikeOperation && $clientAccount !== '') {
+                $manual706 = $manualDestinationAccountCode !== '' ? $manualDestinationAccountCode : $manualServiceAccountCode;
 
-                    $debit = $target512;
-                    $credit = $clientAccount;
-                    break;
-
-                case 'VIREMENT::INTERNE':
-                    $source = trim((string)($payload['source_treasury_code'] ?? ''));
-                    $target = trim((string)($payload['target_treasury_code'] ?? ''));
-                    if ($source === '' || $target === '') {
-                        throw new RuntimeException('Les comptes 512 source et cible sont obligatoires.');
-                    }
-                    if ($source === $target) {
-                        throw new RuntimeException('Les comptes 512 source et cible doivent être différents.');
-                    }
-                    $debit = $source;
-                    $credit = $target;
-                    break;
-
-                case 'VIREMENT::MENSUEL':
-                case 'VIREMENT::REGULIER':
-                case 'VIREMENT::EXCEPTIONEL':
-                    if (!$clientContext) {
-                        throw new RuntimeException('Client obligatoire pour ce virement.');
-                    }
-
-                    $target512 = (string)($selectedTreasury['account_code'] ?? $clientTreasury);
-                    if ($target512 === '') {
-                        throw new RuntimeException('Compte 512 introuvable pour ce virement.');
-                    }
-
+                if ($manual706 !== '') {
                     $debit = $clientAccount;
-                    $credit = $target512;
-                    break;
-
-                case 'REGULARISATION::POSITIVE':
-                    if (!$clientContext) {
-                        throw new RuntimeException('Client obligatoire pour une régularisation positive.');
-                    }
-
-                    $target512 = (string)($selectedTreasury['account_code'] ?? $clientTreasury);
-                    if ($target512 === '') {
-                        throw new RuntimeException('Compte 512 introuvable pour cette régularisation positive.');
-                    }
-
-                    $debit = $target512;
-                    $credit = $clientAccount;
-                    break;
-
-                case 'REGULARISATION::NEGATIVE':
-                    if (!$clientContext) {
-                        throw new RuntimeException('Client obligatoire pour une régularisation négative.');
-                    }
-
-                    $target512 = (string)($selectedTreasury['account_code'] ?? $clientTreasury);
-                    if ($target512 === '') {
-                        throw new RuntimeException('Compte 512 introuvable pour cette régularisation négative.');
-                    }
-
-                    $debit = $clientAccount;
-                    $credit = $target512;
-                    break;
-
-                case 'CA_PLACEMENT::CA_PLACEMENT':
-                    if (!$clientContext || !$serviceId) {
-                        throw new RuntimeException('Client et service obligatoires.');
-                    }
-
-                    $serviceAccount = sl_find_service_account_for_placement_by_label(
-                        $pdo,
-                        $serviceId,
-                        (string)($clientContext['country_commercial'] ?? '')
-                    );
-
-                    if (!$serviceAccount) {
-                        throw new RuntimeException('Aucun compte 706 trouvé pour CA PLACEMENT + pays commercial.');
-                    }
-
-                    $debit = $clientAccount;
-                    $credit = (string)$serviceAccount['account_code'];
+                    $credit = $manual706;
                     $analytic = [
-                        'account_code' => $serviceAccount['account_code'],
-                        'account_label' => $serviceAccount['account_label'] ?? null,
+                        'account_code' => $manual706,
+                        'account_label' => null,
                     ];
-                    break;
+                }
+            }
 
-                case 'FRAIS_GESTION::GESTION':
-                    if (!$clientContext || !$serviceId) {
-                        throw new RuntimeException('Client et service obligatoires.');
-                    }
+            if ($debit === null || $credit === null) {
+                if ($serviceCode === '' && !$isFeeLikeOperation) {
+                    throw new RuntimeException('Type de service manquant.');
+                }
 
-                    $serviceAccount = sl_find_service_account_for_management_by_label(
-                        $pdo,
-                        $serviceId,
-                        (string)($clientContext['country_commercial'] ?? '')
-                    );
+                if (
+                    function_exists('sl_service_allowed_for_type')
+                    && $serviceCode !== ''
+                    && !$isFeeLikeOperation
+                    && !sl_service_allowed_for_type($operationTypeCode, $serviceCode)
+                ) {
+                    throw new RuntimeException('Le type de service ne correspond pas au type d’opération.');
+                }
 
-                    if (!$serviceAccount) {
-                        throw new RuntimeException('Aucun compte 706 trouvé pour FRAIS DE GESTION + pays commercial.');
-                    }
+                switch ($operationTypeCode . '::' . $serviceCode) {
+                    case 'VERSEMENT::VERSEMENT':
+                        if (!$clientContext) {
+                            throw new RuntimeException('Client obligatoire pour un versement.');
+                        }
 
-                    $debit = $clientAccount;
-                    $credit = (string)$serviceAccount['account_code'];
-                    $analytic = [
-                        'account_code' => $serviceAccount['account_code'],
-                        'account_label' => $serviceAccount['account_label'] ?? null,
-                    ];
-                    break;
+                        $target512 = (string)($selectedTreasury['account_code'] ?? $clientTreasury);
+                        if ($target512 === '') {
+                            throw new RuntimeException('Compte 512 introuvable pour ce versement.');
+                        }
 
-                case 'FRAIS_SERVICE::AVI':
-                    if (!$clientContext || !$serviceId) {
-                        throw new RuntimeException('Client et service obligatoires.');
-                    }
+                        $debit = $target512;
+                        $credit = $clientAccount;
+                        break;
 
-                    $serviceAccount = sl_find_service_account_for_avi(
-                        $pdo,
-                        $serviceId,
-                        (string)($clientContext['country_destination'] ?? ''),
-                        (string)($clientContext['country_commercial'] ?? '')
-                    );
+                    case 'VIREMENT::INTERNE':
+                        if ($sourceTreasuryCode === '' || $targetTreasuryCode === '') {
+                            throw new RuntimeException('Les comptes 512 source et cible sont obligatoires.');
+                        }
+                        if ($sourceTreasuryCode === $targetTreasuryCode) {
+                            throw new RuntimeException('Les comptes 512 source et cible doivent être différents.');
+                        }
+                        $debit = $sourceTreasuryCode;
+                        $credit = $targetTreasuryCode;
+                        break;
 
-                    if (!$serviceAccount) {
-                        throw new RuntimeException('Aucun compte 706 trouvé pour AVI + pays destination + pays commercial.');
-                    }
+                    case 'VIREMENT::MENSUEL':
+                    case 'VIREMENT::REGULIER':
+                    case 'VIREMENT::EXCEPTIONEL':
+                        if (!$clientContext) {
+                            throw new RuntimeException('Client obligatoire pour ce virement.');
+                        }
 
-                    $debit = $clientAccount;
-                    $credit = (string)$serviceAccount['account_code'];
-                    $analytic = [
-                        'account_code' => $serviceAccount['account_code'],
-                        'account_label' => $serviceAccount['account_label'] ?? null,
-                    ];
-                    break;
+                        $target512 = (string)($selectedTreasury['account_code'] ?? $clientTreasury);
+                        if ($target512 === '') {
+                            throw new RuntimeException('Compte 512 introuvable pour ce virement.');
+                        }
 
-                case 'FRAIS_SERVICE::ATS':
-                    if (!$clientContext || !$serviceId) {
-                        throw new RuntimeException('Client et service obligatoires.');
-                    }
+                        $debit = $clientAccount;
+                        $credit = $target512;
+                        break;
 
-                    $serviceAccount = sl_find_service_account_for_ats(
-                        $pdo,
-                        $serviceId,
-                        (string)($clientContext['country_commercial'] ?? '')
-                    );
+                    case 'REGULARISATION::POSITIVE':
+                        if (!$clientContext) {
+                            throw new RuntimeException('Client obligatoire pour une régularisation positive.');
+                        }
 
-                    if (!$serviceAccount) {
-                        throw new RuntimeException('Aucun compte 706 trouvé pour ATS + pays commercial.');
-                    }
+                        $target512 = (string)($selectedTreasury['account_code'] ?? $clientTreasury);
+                        if ($target512 === '') {
+                            throw new RuntimeException('Compte 512 introuvable pour cette régularisation positive.');
+                        }
 
-                    $debit = $clientAccount;
-                    $credit = (string)$serviceAccount['account_code'];
-                    $analytic = [
-                        'account_code' => $serviceAccount['account_code'],
-                        'account_label' => $serviceAccount['account_label'] ?? null,
-                    ];
-                    break;
+                        $debit = $target512;
+                        $credit = $clientAccount;
+                        break;
 
-                case 'COMMISSION_DE_TRANSFERT::COMMISSION_DE_TRANSFERT':
-                    if (!$clientContext || !$serviceId) {
-                        throw new RuntimeException('Client et service obligatoires.');
-                    }
+                    case 'REGULARISATION::NEGATIVE':
+                        if (!$clientContext) {
+                            throw new RuntimeException('Client obligatoire pour une régularisation négative.');
+                        }
 
-                    $serviceAccount = sl_find_service_account_for_transfer_by_label(
-                        $pdo,
-                        $serviceId,
-                        (string)($clientContext['country_commercial'] ?? '')
-                    );
+                        $target512 = (string)($selectedTreasury['account_code'] ?? $clientTreasury);
+                        if ($target512 === '') {
+                            throw new RuntimeException('Compte 512 introuvable pour cette régularisation négative.');
+                        }
 
-                    if (!$serviceAccount) {
-                        throw new RuntimeException('Aucun compte 706 trouvé pour TRANSFERT + pays commercial.');
-                    }
+                        $debit = $clientAccount;
+                        $credit = $target512;
+                        break;
 
-                    $debit = $clientAccount;
-                    $credit = (string)$serviceAccount['account_code'];
-                    $analytic = [
-                        'account_code' => $serviceAccount['account_code'],
-                        'account_label' => $serviceAccount['account_label'] ?? null,
-                    ];
-                    break;
+                    case 'CA_PLACEMENT::CA_PLACEMENT':
+                        if (!$clientContext || !$serviceId) {
+                            throw new RuntimeException('Client et service obligatoires.');
+                        }
 
-                default:
-                    throw new RuntimeException('Règle comptable non définie pour ce couple type/service.');
+                        $serviceAccount = sl_find_service_account_for_placement_by_label(
+                            $pdo,
+                            $serviceId,
+                            (string)($clientContext['country_commercial'] ?? '')
+                        );
+
+                        if (!$serviceAccount) {
+                            throw new RuntimeException('Aucun compte 706 trouvé pour CA PLACEMENT + pays commercial.');
+                        }
+
+                        $debit = $clientAccount;
+                        $credit = (string)$serviceAccount['account_code'];
+                        $analytic = [
+                            'account_code' => $serviceAccount['account_code'],
+                            'account_label' => $serviceAccount['account_label'] ?? null,
+                        ];
+                        break;
+
+                    case 'FRAIS_GESTION::GESTION':
+                        if (!$clientContext || !$serviceId) {
+                            throw new RuntimeException('Client et service obligatoires.');
+                        }
+
+                        $serviceAccount = sl_find_service_account_for_management_by_label(
+                            $pdo,
+                            $serviceId,
+                            (string)($clientContext['country_commercial'] ?? '')
+                        );
+
+                        if (!$serviceAccount) {
+                            throw new RuntimeException('Aucun compte 706 trouvé pour FRAIS DE GESTION + pays commercial.');
+                        }
+
+                        $debit = $clientAccount;
+                        $credit = (string)$serviceAccount['account_code'];
+                        $analytic = [
+                            'account_code' => $serviceAccount['account_code'],
+                            'account_label' => $serviceAccount['account_label'] ?? null,
+                        ];
+                        break;
+
+                    case 'FRAIS_SERVICE::AVI':
+                        if (!$clientContext || !$serviceId) {
+                            throw new RuntimeException('Client et service obligatoires.');
+                        }
+
+                        $serviceAccount = sl_find_service_account_for_avi(
+                            $pdo,
+                            $serviceId,
+                            (string)($clientContext['country_destination'] ?? ''),
+                            (string)($clientContext['country_commercial'] ?? '')
+                        );
+
+                        if (!$serviceAccount) {
+                            throw new RuntimeException('Aucun compte 706 trouvé pour AVI + pays destination + pays commercial.');
+                        }
+
+                        $debit = $clientAccount;
+                        $credit = (string)$serviceAccount['account_code'];
+                        $analytic = [
+                            'account_code' => $serviceAccount['account_code'],
+                            'account_label' => $serviceAccount['account_label'] ?? null,
+                        ];
+                        break;
+
+                    case 'FRAIS_SERVICE::ATS':
+                        if (!$clientContext || !$serviceId) {
+                            throw new RuntimeException('Client et service obligatoires.');
+                        }
+
+                        $serviceAccount = sl_find_service_account_for_ats(
+                            $pdo,
+                            $serviceId,
+                            (string)($clientContext['country_commercial'] ?? '')
+                        );
+
+                        if (!$serviceAccount) {
+                            throw new RuntimeException('Aucun compte 706 trouvé pour ATS + pays commercial.');
+                        }
+
+                        $debit = $clientAccount;
+                        $credit = (string)$serviceAccount['account_code'];
+                        $analytic = [
+                            'account_code' => $serviceAccount['account_code'],
+                            'account_label' => $serviceAccount['account_label'] ?? null,
+                        ];
+                        break;
+
+                    case 'COMMISSION_DE_TRANSFERT::COMMISSION_DE_TRANSFERT':
+                        if (!$clientContext || !$serviceId) {
+                            throw new RuntimeException('Client et service obligatoires.');
+                        }
+
+                        $serviceAccount = sl_find_service_account_for_transfer_by_label(
+                            $pdo,
+                            $serviceId,
+                            (string)($clientContext['country_commercial'] ?? '')
+                        );
+
+                        if (!$serviceAccount) {
+                            throw new RuntimeException('Aucun compte 706 trouvé pour TRANSFERT + pays commercial.');
+                        }
+
+                        $debit = $clientAccount;
+                        $credit = (string)$serviceAccount['account_code'];
+                        $analytic = [
+                            'account_code' => $serviceAccount['account_code'],
+                            'account_label' => $serviceAccount['account_label'] ?? null,
+                        ];
+                        break;
+
+                    default:
+                        throw new RuntimeException('Règle comptable non définie pour ce couple type/service.');
+                }
             }
         }
 
@@ -2170,7 +2323,9 @@ if (!function_exists('resolveAccountingOperationV2')) {
             throw new RuntimeException('Impossible de déterminer les comptes débit/crédit.');
         }
 
-        $operationHash = sl_build_operation_hash($payload, $debit, $credit);
+        $operationHash = function_exists('sl_build_operation_hash')
+            ? sl_build_operation_hash($payload, $debit, $credit)
+            : md5(json_encode([$payload, $debit, $credit], JSON_UNESCAPED_UNICODE));
 
         return [
             'debit_account_code' => $debit,
@@ -9822,5 +9977,355 @@ if (!function_exists('sl_manual_balance_config_for_family')) {
                 'updated_at_column' => null,
             ],
         };
+    }
+}
+if (!function_exists('sl_client_apply_selected_fees')) {
+    function sl_client_apply_selected_fees(
+        PDO $pdo,
+        int $clientId,
+        string $clientCode,
+        string $fullName,
+        string $currencyCode,
+        string $client411AccountCode,
+        array $fees
+    ): array {
+        if (!$fees) {
+            return [
+                'count' => 0,
+                'total' => 0.0,
+                'operation_ids' => [],
+            ];
+        }
+
+        $createdOperationIds = [];
+        $total = 0.0;
+        $seq = 1;
+
+        foreach ($fees as $fee) {
+            $amount = (float)($fee['amount'] ?? 0);
+            $serviceId = (int)($fee['service_id'] ?? 0);
+            $serviceCode = trim((string)($fee['service_code'] ?? ''));
+            $serviceLabel = trim((string)($fee['service_label'] ?? ''));
+            $destinationAccountCode = trim((string)($fee['destination_account_code'] ?? ''));
+            $operationTypeCode = trim((string)($fee['operation_type_code'] ?? ''));
+
+            if ($amount <= 0) {
+                continue;
+            }
+
+            if ($client411AccountCode === '') {
+                throw new RuntimeException('Le compte 411 client est introuvable pour l’écriture des frais.');
+            }
+
+            if ($serviceId <= 0) {
+                throw new RuntimeException('Type de service manquant.');
+            }
+
+            if ($serviceCode === '') {
+                throw new RuntimeException('Code service manquant.');
+            }
+
+            if ($destinationAccountCode === '') {
+                throw new RuntimeException('Le compte 706 à créditer est obligatoire pour chaque frais sélectionné.');
+            }
+
+            $reference = 'FEE-' . $clientCode . '-' . str_pad((string)$seq, 2, '0', STR_PAD_LEFT) . '-' . date('YmdHis');
+
+            $payload = [
+                'operation_date' => date('Y-m-d'),
+                'amount' => $amount,
+                'currency_code' => $currencyCode !== '' ? $currencyCode : 'EUR',
+
+                'client_id' => $clientId,
+                'service_id' => $serviceId,
+                'service_code' => $serviceCode,
+
+                'operation_type_code' => $operationTypeCode !== '' ? $operationTypeCode : 'FRAIS_SERVICE',
+                'operation_kind' => 'fee',
+
+                // Compatibilité moteur V2 non-manuel
+                'destination_account_code' => $destinationAccountCode,
+                'service_account_code' => $destinationAccountCode,
+
+                // Compatibilité moteur V2 manuel
+                'manual_debit_account_code' => $client411AccountCode,
+                'manual_credit_account_code' => $destinationAccountCode,
+
+                'label' => 'Frais - ' . ($serviceLabel !== '' ? $serviceLabel : $serviceCode),
+                'reference' => $reference,
+                'notes' => 'Frais client ' . $clientCode . ' - ' . $fullName,
+                'source_type' => 'client_fee',
+            ];
+
+            $operationId = sl_client_create_operation_helper($pdo, $payload);
+
+            if ($operationId <= 0) {
+                throw new RuntimeException('Une opération de frais n’a pas pu être historisée correctement.');
+            }
+
+            $createdOperationIds[] = $operationId;
+            $total += $amount;
+            $seq++;
+        }
+
+        if (function_exists('recomputeAllBalances')) {
+            recomputeAllBalances($pdo);
+        }
+
+        return [
+            'count' => count($createdOperationIds),
+            'total' => round($total, 2),
+            'operation_ids' => $createdOperationIds,
+        ];
+    }
+}
+if (!function_exists('resolveServiceAccountFromServiceId')) {
+    function resolveServiceAccountFromServiceId(PDO $pdo, int $serviceId): ?array
+    {
+        if ($serviceId <= 0) {
+            return null;
+        }
+
+        if (!function_exists('tableExists') || !tableExists($pdo, 'ref_services')) {
+            return null;
+        }
+
+        $service = null;
+
+        $stmt = $pdo->prepare("
+            SELECT *
+            FROM ref_services
+            WHERE id = ?
+            LIMIT 1
+        ");
+        $stmt->execute([$serviceId]);
+        $service = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+
+        if (!$service) {
+            return null;
+        }
+
+        $serviceCode = trim((string)($service['code'] ?? ''));
+        $serviceLabel = trim((string)($service['label'] ?? ''));
+
+        if (!function_exists('tableExists') || !tableExists($pdo, 'service_accounts')) {
+            return null;
+        }
+
+        $candidates = [];
+
+        // 1. Si ref_services possède déjà un account_code ou service_account_code
+        foreach (['account_code', 'service_account_code', 'account_706_code'] as $column) {
+            if (function_exists('columnExists') && columnExists($pdo, 'ref_services', $column)) {
+                $accountCode = trim((string)($service[$column] ?? ''));
+                if ($accountCode !== '') {
+                    $stmt = $pdo->prepare("
+                        SELECT id, account_code, account_label
+                        FROM service_accounts
+                        WHERE account_code = ?
+                        LIMIT 1
+                    ");
+                    $stmt->execute([$accountCode]);
+                    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+                    if ($row) {
+                        return $row;
+                    }
+                }
+            }
+        }
+
+        // 2. Recherche prioritaire par code exact dans l'intitulé ou le code
+        if ($serviceCode !== '') {
+            $stmt = $pdo->prepare("
+                SELECT id, account_code, account_label
+                FROM service_accounts
+                WHERE COALESCE(is_active,1) = 1
+                  AND (
+                        account_code = ?
+                        OR account_label LIKE ?
+                      )
+                ORDER BY account_code ASC
+                LIMIT 20
+            ");
+            $stmt->execute([
+                $serviceCode,
+                '%' . $serviceCode . '%'
+            ]);
+            $candidates = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+            if (count($candidates) === 1) {
+                return $candidates[0];
+            }
+        }
+
+        // 3. Recherche par label service
+        if ($serviceLabel !== '') {
+            $stmt = $pdo->prepare("
+                SELECT id, account_code, account_label
+                FROM service_accounts
+                WHERE COALESCE(is_active,1) = 1
+                  AND account_label LIKE ?
+                ORDER BY account_code ASC
+                LIMIT 20
+            ");
+            $stmt->execute([
+                '%' . $serviceLabel . '%'
+            ]);
+            $labelMatches = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+            if (count($labelMatches) === 1) {
+                return $labelMatches[0];
+            }
+
+            if (!$candidates && $labelMatches) {
+                $candidates = $labelMatches;
+            }
+        }
+
+        // 4. Si plusieurs résultats, on prend celui dont le label ressemble le plus
+        if ($candidates) {
+            foreach ($candidates as $candidate) {
+                $candidateCode = trim((string)($candidate['account_code'] ?? ''));
+                $candidateLabel = mb_strtolower(trim((string)($candidate['account_label'] ?? '')), 'UTF-8');
+                $serviceCodeLower = mb_strtolower($serviceCode, 'UTF-8');
+                $serviceLabelLower = mb_strtolower($serviceLabel, 'UTF-8');
+
+                if (
+                    ($serviceCodeLower !== '' && $candidateCode === $serviceCode)
+                    || ($serviceCodeLower !== '' && str_contains($candidateLabel, $serviceCodeLower))
+                    || ($serviceLabelLower !== '' && str_contains($candidateLabel, $serviceLabelLower))
+                ) {
+                    return $candidate;
+                }
+            }
+
+            return $candidates[0];
+        }
+
+        return null;
+    }
+}
+if (!function_exists('sl_clients_list_enrich_pending_debits')) {
+    function sl_clients_list_enrich_pending_debits(PDO $pdo, array $rows): array
+    {
+        if (!$rows || !tableExists($pdo, 'pending_client_debits')) {
+            return $rows;
+        }
+
+        $clientIds = [];
+        foreach ($rows as $row) {
+            $id = (int)($row['id'] ?? 0);
+            if ($id > 0) {
+                $clientIds[] = $id;
+            }
+        }
+
+        $clientIds = array_values(array_unique($clientIds));
+        if (!$clientIds) {
+            return $rows;
+        }
+
+        if (!columnExists($pdo, 'pending_client_debits', 'client_id')) {
+            foreach ($rows as &$row) {
+                $row['pending_debits_open_count'] = 0;
+                $row['pending_debits_open_amount'] = 0.0;
+            }
+            unset($row);
+            return $rows;
+        }
+
+        $amountExpr = '0';
+        if (columnExists($pdo, 'pending_client_debits', 'remaining_amount')) {
+            $amountExpr = 'COALESCE(remaining_amount, 0)';
+        } elseif (columnExists($pdo, 'pending_client_debits', 'initial_amount')) {
+            $amountExpr = 'COALESCE(initial_amount, 0)';
+        }
+
+        $statusCondition = columnExists($pdo, 'pending_client_debits', 'status')
+            ? "LOWER(COALESCE(status, 'pending')) NOT IN ('resolved', 'settled', 'cancelled')"
+            : '1=1';
+
+        $placeholders = implode(',', array_fill(0, count($clientIds), '?'));
+
+        $stmt = $pdo->prepare("
+            SELECT
+                client_id,
+                COUNT(*) AS pending_debits_count,
+                COALESCE(SUM($amountExpr), 0) AS pending_debits_amount
+            FROM pending_client_debits
+            WHERE client_id IN ($placeholders)
+              AND $statusCondition
+            GROUP BY client_id
+        ");
+        $stmt->execute($clientIds);
+
+        $stats = [];
+        foreach (($stmt->fetchAll(PDO::FETCH_ASSOC) ?: []) as $item) {
+            $stats[(int)$item['client_id']] = [
+                'count' => (int)($item['pending_debits_count'] ?? 0),
+                'amount' => (float)($item['pending_debits_amount'] ?? 0),
+            ];
+        }
+
+        foreach ($rows as &$row) {
+            $id = (int)($row['id'] ?? 0);
+            $row['pending_debits_open_count'] = (int)($stats[$id]['count'] ?? 0);
+            $row['pending_debits_open_amount'] = (float)($stats[$id]['amount'] ?? 0);
+        }
+        unset($row);
+
+        return $rows;
+    }
+}
+if (!function_exists('sl_client_view_get_pending_debits_summary')) {
+    function sl_client_view_get_pending_debits_summary(PDO $pdo, int $clientId): array
+    {
+        $result = [
+            'count' => 0,
+            'amount' => 0.0,
+        ];
+
+        if ($clientId <= 0 || !tableExists($pdo, 'pending_client_debits')) {
+            return $result;
+        }
+
+        $amountExpr = '0';
+
+        if (columnExists($pdo, 'pending_client_debits', 'remaining_amount')) {
+            $amountExpr = 'COALESCE(remaining_amount, 0)';
+        } elseif (columnExists($pdo, 'pending_client_debits', 'initial_amount')) {
+            $amountExpr = 'COALESCE(initial_amount, 0)';
+        }
+
+        $statusExpr = columnExists($pdo, 'pending_client_debits', 'status')
+            ? "LOWER(COALESCE(status, 'pending')) NOT IN ('resolved', 'settled', 'cancelled')"
+            : '1=1';
+
+        $clientColumn = columnExists($pdo, 'pending_client_debits', 'client_id')
+            ? 'client_id'
+            : null;
+
+        if ($clientColumn === null) {
+            return $result;
+        }
+
+        $sql = "
+            SELECT
+                COUNT(*) AS total_count,
+                COALESCE(SUM($amountExpr), 0) AS total_amount
+            FROM pending_client_debits
+            WHERE {$clientColumn} = ?
+              AND {$statusExpr}
+        ";
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute([$clientId]);
+
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        $result['count'] = (int)($row['total_count'] ?? 0);
+        $result['amount'] = (float)($row['total_amount'] ?? 0);
+
+        return $result;
     }
 }

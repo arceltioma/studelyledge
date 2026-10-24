@@ -179,6 +179,18 @@ if (!function_exists('sl_preview_render_rules_summary')) {
     }
 }
 
+if (!function_exists('sl_preview_status_badge_class')) {
+    function sl_preview_status_badge_class(string $status): string
+    {
+        return match ($status) {
+            'ok' => 'badge-success',
+            'duplicate' => 'badge-warning',
+            'error' => 'badge-danger',
+            default => 'badge-secondary',
+        };
+    }
+}
+
 $preparedRows = [];
 $importableCount = 0;
 $errorCount = 0;
@@ -463,153 +475,499 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
+        <style>
+            .sip-shell {
+                display: grid;
+                gap: 20px;
+            }
+
+            .sip-grid-2 {
+                display: grid;
+                grid-template-columns: 1.05fr 0.95fr;
+                gap: 20px;
+            }
+
+            @media (max-width: 1100px) {
+                .sip-grid-2 {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            .sip-panel,
+            .sip-kpi-card,
+            .sip-toolbar {
+                border-radius: 20px;
+                background: #fff;
+                border: 1px solid rgba(148, 163, 184, 0.16);
+                box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
+            }
+
+            .sip-panel,
+            .sip-toolbar {
+                padding: 18px;
+            }
+
+            .sip-kpi-grid {
+                display: grid;
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                gap: 14px;
+            }
+
+            @media (max-width: 1200px) {
+                .sip-kpi-grid {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+            }
+
+            @media (max-width: 640px) {
+                .sip-kpi-grid {
+                    grid-template-columns: 1fr;
+                }
+            }
+
+            .sip-kpi-card {
+                padding: 16px;
+                background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+            }
+
+            .sip-kpi-label {
+                display: block;
+                font-size: 12px;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: .04em;
+                color: #64748b;
+                margin-bottom: 8px;
+            }
+
+            .sip-kpi-value {
+                display: block;
+                font-size: 28px;
+                font-weight: 900;
+                line-height: 1;
+                color: #0f172a;
+            }
+
+            .sip-kpi-meta {
+                display: block;
+                margin-top: 8px;
+                color: #64748b;
+                font-size: 12px;
+            }
+
+            .sip-note {
+                margin-top: 14px;
+                padding: 14px 16px;
+                border-radius: 14px;
+                background: rgba(99, 102, 241, 0.07);
+                border: 1px solid rgba(99, 102, 241, 0.16);
+                color: #3730a3;
+                line-height: 1.55;
+                font-size: 13px;
+            }
+
+            .sip-filter-bar {
+                display: flex;
+                gap: 12px;
+                flex-wrap: wrap;
+                align-items: center;
+                margin-top: 12px;
+            }
+
+            .sip-filter-bar input,
+            .sip-filter-bar select {
+                min-width: 180px;
+            }
+
+            .sip-chip {
+                display: inline-flex;
+                align-items: center;
+                padding: 5px 10px;
+                border-radius: 999px;
+                font-size: 11px;
+                font-weight: 800;
+                text-transform: uppercase;
+                letter-spacing: .04em;
+                white-space: nowrap;
+            }
+
+            .sip-chip--ok {
+                background: rgba(16, 185, 129, 0.12);
+                color: #047857;
+            }
+
+            .sip-chip--dup {
+                background: rgba(245, 158, 11, 0.12);
+                color: #92400e;
+            }
+
+            .sip-chip--err {
+                background: rgba(239, 68, 68, 0.10);
+                color: #b91c1c;
+            }
+
+            .sip-chip--info {
+                background: rgba(59, 130, 246, 0.10);
+                color: #1d4ed8;
+            }
+
+            .sip-chip--neutral {
+                background: rgba(148, 163, 184, 0.14);
+                color: #475569;
+            }
+
+            .sip-table td,
+            .sip-table th {
+                vertical-align: top;
+            }
+
+            .sip-account {
+                font-weight: 800;
+                color: #0f172a;
+            }
+
+            .sip-sub {
+                display: block;
+                margin-top: 4px;
+                font-size: 11px;
+                color: #64748b;
+            }
+
+            .sip-msg {
+                display: grid;
+                gap: 6px;
+            }
+
+            .sip-msg-line {
+                font-size: 12px;
+                line-height: 1.45;
+                color: #334155;
+                padding: 6px 8px;
+                border-radius: 10px;
+                background: rgba(248, 250, 252, 0.95);
+                border: 1px solid rgba(226, 232, 240, 0.9);
+            }
+
+            .sip-summary-list {
+                display: grid;
+                gap: 10px;
+            }
+
+            .sip-summary-item {
+                display: flex;
+                justify-content: space-between;
+                gap: 14px;
+                padding: 10px 12px;
+                border-radius: 14px;
+                background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+                border: 1px solid rgba(148, 163, 184, 0.14);
+            }
+
+            .sip-summary-item strong {
+                color: #0f172a;
+            }
+
+            .sip-table-compact th,
+            .sip-table-compact td {
+                padding-top: 8px;
+                padding-bottom: 8px;
+            }
+        </style>
+
         <?php if ($errorMessage !== ''): ?>
             <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
 
-        <div class="dashboard-grid-2">
-            <div class="form-card">
-                <h3>Validation de l’import</h3>
-                <p class="muted">Contrôle final avant insertion des lignes valides.</p>
+        <div class="sip-shell">
+            <div class="sip-toolbar">
+                <h3>Prévisualisation intelligente : <?= e($fileName) ?></h3>
+                <div class="sip-note">
+                    Cette étape simule la résolution métier et comptable de chaque ligne importée.
+                    Elle détecte les erreurs, doublons, règles spécifiques et anomalies avant insertion définitive.
+                </div>
 
-                <form method="POST">
-                    <?= csrf_input() ?>
+                <div class="sip-filter-bar">
+                    <input type="text" id="sip-search" placeholder="Rechercher client, type, service, message...">
+                    <select id="sip-status-filter">
+                        <option value="">Tous les statuts</option>
+                        <option value="ok">OK</option>
+                        <option value="duplicate">Doublon</option>
+                        <option value="error">Erreur</option>
+                    </select>
+                </div>
+            </div>
 
-                    <div class="sl-data-list">
-                        <div class="sl-data-list__row">
-                            <span>Fichier</span>
+            <div class="sip-kpi-grid">
+                <div class="sip-kpi-card">
+                    <span class="sip-kpi-label">Lignes importables</span>
+                    <span class="sip-kpi-value"><?= (int)$importableCount ?></span>
+                    <span class="sip-kpi-meta">Prêtes à être insérées</span>
+                </div>
+
+                <div class="sip-kpi-card">
+                    <span class="sip-kpi-label">Lignes bloquées</span>
+                    <span class="sip-kpi-value"><?= (int)($errorCount + $duplicateCount) ?></span>
+                    <span class="sip-kpi-meta">Erreurs + doublons</span>
+                </div>
+
+                <div class="sip-kpi-card">
+                    <span class="sip-kpi-label">Warnings</span>
+                    <span class="sip-kpi-value"><?= (int)$warningCount ?></span>
+                    <span class="sip-kpi-meta">Alertes métier</span>
+                </div>
+
+                <div class="sip-kpi-card">
+                    <span class="sip-kpi-label">Règles activées</span>
+                    <span class="sip-kpi-value"><?= (int)$rowsWithRulesCount ?></span>
+                    <span class="sip-kpi-meta">Lignes avec logique avancée</span>
+                </div>
+            </div>
+
+            <div class="sip-grid-2">
+                <div class="form-card">
+                    <h3>Validation de l’import</h3>
+                    <p class="muted">Contrôle final avant insertion des lignes valides.</p>
+
+                    <form method="POST">
+                        <?= csrf_input() ?>
+
+                        <div class="sl-data-list">
+                            <div class="sl-data-list__row">
+                                <span>Fichier</span>
+                                <strong><?= e($fileName) ?></strong>
+                            </div>
+                            <div class="sl-data-list__row">
+                                <span>Champs mappés</span>
+                                <strong><?= count(array_filter($finalMapping)) ?></strong>
+                            </div>
+                            <div class="sl-data-list__row">
+                                <span>Lignes importables</span>
+                                <strong><?= (int)$importableCount ?></strong>
+                            </div>
+                            <div class="sl-data-list__row">
+                                <span>Lignes bloquées</span>
+                                <strong><?= (int)($errorCount + $duplicateCount) ?></strong>
+                            </div>
+                        </div>
+
+                        <div class="btn-group" style="margin-top:20px;">
+                            <button type="submit" name="import_action" value="confirm_import" class="btn btn-success" <?= $importableCount <= 0 ? 'disabled' : '' ?>>
+                                Confirmer l’import
+                            </button>
+                            <button type="submit" name="import_action" value="cancel" class="btn btn-outline">
+                                Annuler
+                            </button>
+                            <a href="<?= e(APP_URL) ?>modules/imports/import_mapping.php" class="btn btn-secondary">Revoir le mapping</a>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="sip-panel">
+                    <h3>Résumé de contrôle</h3>
+
+                    <div class="sip-summary-list">
+                        <div class="sip-summary-item">
+                            <span>Fichier analysé</span>
                             <strong><?= e($fileName) ?></strong>
                         </div>
-                        <div class="sl-data-list__row">
-                            <span>Champs mappés</span>
-                            <strong><?= count(array_filter($finalMapping)) ?></strong>
+                        <div class="sip-summary-item">
+                            <span>Suggestions de mapping</span>
+                            <strong><?= count($suggestedMapping) ?></strong>
                         </div>
-                        <div class="sl-data-list__row">
-                            <span>Lignes importables</span>
-                            <strong><?= (int)$importableCount ?></strong>
+                        <div class="sip-summary-item">
+                            <span>Warnings</span>
+                            <strong><?= (int)$warningCount ?></strong>
                         </div>
-                        <div class="sl-data-list__row">
-                            <span>Lignes bloquées</span>
-                            <strong><?= (int)($errorCount + $duplicateCount) ?></strong>
+                        <div class="sip-summary-item">
+                            <span>Infos</span>
+                            <strong><?= (int)$infoCount ?></strong>
+                        </div>
+                        <div class="sip-summary-item">
+                            <span>Dangers</span>
+                            <strong><?= (int)$dangerCount ?></strong>
+                        </div>
+                        <div class="sip-summary-item">
+                            <span>Headers détectés</span>
+                            <strong><?= count($rawHeaders) ?></strong>
                         </div>
                     </div>
 
-                    <div class="btn-group" style="margin-top:20px;">
-                        <button type="submit" name="import_action" value="confirm_import" class="btn btn-success" <?= $importableCount <= 0 ? 'disabled' : '' ?>>
-                            Confirmer l’import
-                        </button>
-                        <button type="submit" name="import_action" value="cancel" class="btn btn-outline">
-                            Annuler
-                        </button>
-                        <a href="<?= e(APP_URL) ?>modules/imports/import_mapping.php" class="btn btn-secondary">Revoir le mapping</a>
-                    </div>
-                </form>
-            </div>
-
-            <div class="card">
-                <h3>Prévisualisation avant validation</h3>
-
-                <div class="sl-data-list">
-                    <div class="sl-data-list__row">
-                        <span>Règles intelligentes</span>
-                        <strong><?= (int)$rowsWithRulesCount ?></strong>
-                    </div>
-                    <div class="sl-data-list__row">
-                        <span>Warnings</span>
-                        <strong><?= (int)$warningCount ?></strong>
-                    </div>
-                    <div class="sl-data-list__row">
-                        <span>Infos</span>
-                        <strong><?= (int)$infoCount ?></strong>
-                    </div>
-                    <div class="sl-data-list__row">
-                        <span>Headers détectés</span>
-                        <strong><?= count($rawHeaders) ?></strong>
+                    <div class="sip-note">
+                        Vérifie particulièrement les comptes débit / crédit proposés,
+                        les doublons détectés, les cas manuels et les lignes avec messages LOT2.
                     </div>
                 </div>
-
-                <div class="dashboard-note" style="margin-top:18px;">
-                    Vérifie les comptes débit/crédit, les règles et les messages de contrôle dans le tableau ci-dessous avant de confirmer.
-                </div>
             </div>
-        </div>
 
-        <?php if ($suggestedMapping): ?>
-            <div class="card" style="margin-top:20px;">
-                <h3>Suggestions intelligentes de mapping</h3>
-                <div class="sl-table-wrap">
-                    <table class="sl-table">
+            <?php if ($suggestedMapping): ?>
+                <div class="sip-panel">
+                    <h3>Suggestions intelligentes de mapping</h3>
+
+                    <div class="table-responsive">
+                        <table class="modern-table sip-table-compact">
+                            <thead>
+                                <tr>
+                                    <th>Colonne source</th>
+                                    <th>Champ suggéré</th>
+                                    <th>Score</th>
+                                    <th>Match</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($suggestedMapping as $sourceHeader => $guess): ?>
+                                    <tr>
+                                        <td><?= e((string)$sourceHeader) ?></td>
+                                        <td><?= e((string)($guess['field'] ?? '')) ?></td>
+                                        <td><?= e((string)($guess['score'] ?? '0')) ?>%</td>
+                                        <td><?= e((string)($guess['matched_on'] ?? '')) ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            <?php endif; ?>
+
+            <div class="sip-panel">
+                <h3>Prévisualisation détaillée</h3>
+
+                <div class="table-responsive">
+                    <table class="modern-table sip-table" id="sip-preview-table">
                         <thead>
                             <tr>
-                                <th>Colonne source</th>
-                                <th>Champ suggéré</th>
-                                <th>Score</th>
-                                <th>Match</th>
+                                <th>Ligne</th>
+                                <th>Statut</th>
+                                <th>Date</th>
+                                <th>Client</th>
+                                <th>Type / Service</th>
+                                <th>Montant</th>
+                                <th>Débit / Crédit</th>
+                                <th>Règles</th>
+                                <th>Messages</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($suggestedMapping as $sourceHeader => $guess): ?>
-                                <tr>
-                                    <td><?= e((string)$sourceHeader) ?></td>
-                                    <td><?= e((string)($guess['field'] ?? '')) ?></td>
-                                    <td><?= e((string)($guess['score'] ?? '0')) ?>%</td>
-                                    <td><?= e((string)($guess['matched_on'] ?? '')) ?></td>
+                            <?php foreach ($preparedRows as $row): ?>
+                                <?php
+                                $status = (string)($row['status'] ?? 'error');
+                                $searchBlob = mb_strtolower(trim(
+                                    (string)($row['raw']['client_code'] ?? '') . ' ' .
+                                    (string)($row['raw']['operation_type'] ?? '') . ' ' .
+                                    (string)($row['raw']['service'] ?? '') . ' ' .
+                                    implode(' ', $row['messages'] ?? [])
+                                ), 'UTF-8');
+                                ?>
+                                <tr
+                                    data-status="<?= e($status) ?>"
+                                    data-search="<?= e($searchBlob) ?>"
+                                >
+                                    <td><?= (int)$row['line'] ?></td>
+
+                                    <td>
+                                        <?php if ($status === 'ok'): ?>
+                                            <span class="sip-chip sip-chip--ok">OK</span>
+                                        <?php elseif ($status === 'duplicate'): ?>
+                                            <span class="sip-chip sip-chip--dup">Doublon</span>
+                                        <?php else: ?>
+                                            <span class="sip-chip sip-chip--err">Erreur</span>
+                                        <?php endif; ?>
+                                    </td>
+
+                                    <td><?= e((string)($row['raw']['operation_date'] ?? '')) ?></td>
+
+                                    <td>
+                                        <span class="sip-account"><?= e((string)($row['raw']['client_code'] ?? '')) ?></span>
+                                        <span class="sip-sub"><?= e((string)($row['client_row']['full_name'] ?? '')) ?></span>
+                                    </td>
+
+                                    <td>
+                                        <span class="sip-account"><?= e((string)($row['raw']['operation_type'] ?? '')) ?></span>
+                                        <span class="sip-sub"><?= e((string)($row['raw']['service'] ?? '')) ?></span>
+                                    </td>
+
+                                    <td>
+                                        <span class="sip-account"><?= e((string)($row['raw']['amount'] ?? '')) ?></span>
+                                        <span class="sip-sub"><?= e((string)($row['raw']['currency_code'] ?? 'EUR')) ?></span>
+                                    </td>
+
+                                    <td>
+                                        <span class="sip-account"><?= e((string)($row['preview']['debit_account_code'] ?? '')) ?></span>
+                                        <span class="sip-sub">→ <?= e((string)($row['preview']['credit_account_code'] ?? '')) ?></span>
+                                    </td>
+
+                                    <td><?= e(sl_preview_render_rules_summary($row['rules_summary'] ?? [])) ?></td>
+
+                                    <td>
+                                        <?php if (!empty($row['messages'])): ?>
+                                            <div class="sip-msg">
+                                                <?php foreach ($row['messages'] as $message): ?>
+                                                    <div class="sip-msg-line"><?= e((string)$message) ?></div>
+                                                <?php endforeach; ?>
+                                            </div>
+                                        <?php else: ?>
+                                            <span class="sip-chip sip-chip--neutral">—</span>
+                                        <?php endif; ?>
+                                    </td>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
                     </table>
                 </div>
             </div>
-        <?php endif; ?>
-
-        <div class="card" style="margin-top:20px;">
-            <h3>Prévisualisation détaillée</h3>
-
-            <div class="sl-table-wrap">
-                <table class="sl-table">
-                    <thead>
-                        <tr>
-                            <th>Ligne</th>
-                            <th>Statut</th>
-                            <th>Date</th>
-                            <th>Client</th>
-                            <th>Type</th>
-                            <th>Service</th>
-                            <th>Montant</th>
-                            <th>Débit</th>
-                            <th>Crédit</th>
-                            <th>Règles</th>
-                            <th>Messages</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($preparedRows as $row): ?>
-                            <tr>
-                                <td><?= (int)$row['line'] ?></td>
-                                <td>
-                                    <?php if ($row['status'] === 'ok'): ?>
-                                        <span class="badge badge-success">OK</span>
-                                    <?php elseif ($row['status'] === 'duplicate'): ?>
-                                        <span class="badge badge-warning">Doublon</span>
-                                    <?php else: ?>
-                                        <span class="badge badge-danger">Erreur</span>
-                                    <?php endif; ?>
-                                </td>
-                                <td><?= e((string)($row['raw']['operation_date'] ?? '')) ?></td>
-                                <td><?= e((string)($row['raw']['client_code'] ?? '')) ?></td>
-                                <td><?= e((string)($row['raw']['operation_type'] ?? '')) ?></td>
-                                <td><?= e((string)($row['raw']['service'] ?? '')) ?></td>
-                                <td><?= e((string)($row['raw']['amount'] ?? '')) ?></td>
-                                <td><?= e((string)($row['preview']['debit_account_code'] ?? '')) ?></td>
-                                <td><?= e((string)($row['preview']['credit_account_code'] ?? '')) ?></td>
-                                <td><?= e(sl_preview_render_rules_summary($row['rules_summary'] ?? [])) ?></td>
-                                <td><?= e($row['messages'] ? implode(' | ', $row['messages']) : '—') ?></td>
-                            </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
         </div>
+
+        <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const searchInput = document.getElementById('sip-search');
+            const statusFilter = document.getElementById('sip-status-filter');
+            const table = document.getElementById('sip-preview-table');
+
+            if (!table) {
+                return;
+            }
+
+            const rows = Array.from(table.querySelectorAll('tbody tr'));
+
+            function normalize(value) {
+                return (value || '')
+                    .toString()
+                    .toLowerCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .trim();
+            }
+
+            function applyFilters() {
+                const searchValue = normalize(searchInput ? searchInput.value : '');
+                const statusValue = normalize(statusFilter ? statusFilter.value : '');
+
+                rows.forEach(function (row) {
+                    const rowSearch = normalize(row.getAttribute('data-search') || '');
+                    const rowStatus = normalize(row.getAttribute('data-status') || '');
+
+                    let visible = true;
+
+                    if (searchValue !== '' && !rowSearch.includes(searchValue)) {
+                        visible = false;
+                    }
+
+                    if (statusValue !== '' && rowStatus !== statusValue) {
+                        visible = false;
+                    }
+
+                    row.style.display = visible ? '' : 'none';
+                });
+            }
+
+            if (searchInput) {
+                searchInput.addEventListener('input', applyFilters);
+            }
+
+            if (statusFilter) {
+                statusFilter.addEventListener('change', applyFilters);
+            }
+        });
+        </script>
 
         <?php require_once __DIR__ . '/../../includes/footer.php'; ?>
     </div>

@@ -282,6 +282,93 @@ if (!function_exists('sl_import_upload_create_notification')) {
     }
 }
 
+$expectedFields = [
+    [
+        'field' => 'operation_date',
+        'label' => 'Date opération',
+        'required' => 'Oui',
+        'examples' => 'date, date_operation, operation_date',
+        'description' => 'Date comptable ou date de l’opération.',
+    ],
+    [
+        'field' => 'amount',
+        'label' => 'Montant',
+        'required' => 'Oui',
+        'examples' => 'montant, amount, somme',
+        'description' => 'Montant de l’opération, positif selon le flux importé.',
+    ],
+    [
+        'field' => 'client_code',
+        'label' => 'Code client',
+        'required' => 'Oui',
+        'examples' => 'client, code_client, client_code',
+        'description' => 'Référence du client Studely Ledger.',
+    ],
+    [
+        'field' => 'operation_type',
+        'label' => 'Type d’opération',
+        'required' => 'Oui',
+        'examples' => 'type, type_operation, operation_type',
+        'description' => 'Nature métier de l’opération.',
+    ],
+    [
+        'field' => 'label',
+        'label' => 'Libellé',
+        'required' => 'Oui',
+        'examples' => 'libelle, label, description',
+        'description' => 'Libellé lisible de l’écriture.',
+    ],
+    [
+        'field' => 'service',
+        'label' => 'Service',
+        'required' => 'Recommandé',
+        'examples' => 'service, service_code, service_label',
+        'description' => 'Service ou type de service lié à l’opération.',
+    ],
+    [
+        'field' => 'currency_code',
+        'label' => 'Devise',
+        'required' => 'Recommandé',
+        'examples' => 'devise, currency, currency_code',
+        'description' => 'Devise de l’opération, par exemple EUR.',
+    ],
+    [
+        'field' => 'reference',
+        'label' => 'Référence',
+        'required' => 'Optionnel',
+        'examples' => 'reference, ref, numero_reference',
+        'description' => 'Référence externe ou interne.',
+    ],
+    [
+        'field' => 'notes',
+        'label' => 'Notes',
+        'required' => 'Optionnel',
+        'examples' => 'notes, note, commentaire, motif',
+        'description' => 'Commentaire libre ou justification.',
+    ],
+    [
+        'field' => 'source_account_code',
+        'label' => 'Compte source',
+        'required' => 'Selon cas',
+        'examples' => 'compte_source, source_account_code, debit_account',
+        'description' => 'Compte débité si fourni par le fichier.',
+    ],
+    [
+        'field' => 'destination_account_code',
+        'label' => 'Compte destination',
+        'required' => 'Selon cas',
+        'examples' => 'compte_destination, destination_account_code, credit_account',
+        'description' => 'Compte crédité si fourni par le fichier.',
+    ],
+    [
+        'field' => 'linked_bank_account_id',
+        'label' => 'Compte bancaire lié',
+        'required' => 'Optionnel',
+        'examples' => 'bank_account_id, linked_bank_account_id',
+        'description' => 'Identifiant du compte bancaire lié si disponible.',
+    ],
+];
+
 $errorMessage = '';
 $previewData = null;
 
@@ -404,13 +491,74 @@ require_once __DIR__ . '/../../includes/document_start.php';
     <div class="main">
         <?php require_once __DIR__ . '/../../includes/header.php'; ?>
 
+        <style>
+            .slu-grid-2 {
+                display: grid;
+                grid-template-columns: 1.05fr 0.95fr;
+                gap: 20px;
+            }
+            @media (max-width: 1100px) {
+                .slu-grid-2 {
+                    grid-template-columns: 1fr;
+                }
+            }
+            .slu-panel {
+                border-radius: 18px;
+                background: #fff;
+                border: 1px solid rgba(148, 163, 184, 0.16);
+                box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+                padding: 18px;
+            }
+            .slu-note {
+                margin-top: 14px;
+                padding: 14px 16px;
+                border-radius: 14px;
+                background: rgba(99, 102, 241, 0.07);
+                border: 1px solid rgba(99, 102, 241, 0.16);
+                color: #3730a3;
+                line-height: 1.55;
+                font-size: 13px;
+            }
+            .slu-chip {
+                display: inline-flex;
+                align-items: center;
+                padding: 5px 10px;
+                border-radius: 999px;
+                font-size: 11px;
+                font-weight: 800;
+                letter-spacing: .04em;
+                text-transform: uppercase;
+            }
+            .slu-chip--req {
+                background: rgba(239, 68, 68, 0.10);
+                color: #b91c1c;
+            }
+            .slu-chip--rec {
+                background: rgba(245, 158, 11, 0.12);
+                color: #92400e;
+            }
+            .slu-chip--opt {
+                background: rgba(148, 163, 184, 0.14);
+                color: #475569;
+            }
+            .slu-chip--cond {
+                background: rgba(16, 185, 129, 0.10);
+                color: #047857;
+            }
+            .slu-subtitle {
+                color: #64748b;
+                margin-top: 4px;
+            }
+        </style>
+
         <?php if ($errorMessage !== ''): ?>
             <div class="error"><?= e($errorMessage) ?></div>
         <?php endif; ?>
 
-        <div class="dashboard-grid-2">
+        <div class="slu-grid-2">
             <div class="form-card">
                 <h3>Uploader un fichier</h3>
+                <div class="slu-subtitle">Formats acceptés : CSV, TXT, XLSX — taille max 10 Mo.</div>
 
                 <form method="POST" enctype="multipart/form-data">
                     <?= csrf_input() ?>
@@ -418,6 +566,11 @@ require_once __DIR__ . '/../../includes/document_start.php';
                     <div>
                         <label for="import_file">Fichier CSV / TXT / XLSX</label>
                         <input type="file" id="import_file" name="import_file" accept=".csv,.txt,.xlsx" required>
+                    </div>
+
+                    <div class="slu-note">
+                        Le moteur détecte automatiquement les entêtes, tente un pré-mapping intelligent,
+                        puis prépare la session de travail avant l’étape de mapping métier.
                     </div>
 
                     <div class="btn-group" style="margin-top:20px;">
@@ -428,7 +581,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 </form>
             </div>
 
-            <div class="card">
+            <div class="slu-panel">
                 <h3>Prévisualisation</h3>
 
                 <?php if ($previewData): ?>
@@ -451,6 +604,60 @@ require_once __DIR__ . '/../../includes/document_start.php';
                         <div class="sl-data-list__row"><span>4. Import</span><strong>Insertion transactionnelle</strong></div>
                     </div>
                 <?php endif; ?>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top:20px;">
+            <h3>Modèle CSV attendu</h3>
+            <div class="slu-subtitle">
+                Tu peux utiliser ces noms exacts ou des variantes proches : le pré-mapping tente de les reconnaître automatiquement.
+            </div>
+
+            <div class="table-responsive" style="margin-top:14px;">
+                <table class="modern-table">
+                    <thead>
+                        <tr>
+                            <th>Champ cible</th>
+                            <th>Libellé métier</th>
+                            <th>Obligation</th>
+                            <th>Exemples d’entêtes reconnus</th>
+                            <th>Description</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($expectedFields as $field): ?>
+                            <?php
+                            $required = (string)$field['required'];
+                            $chipClass = 'slu-chip--opt';
+
+                            if ($required === 'Oui') {
+                                $chipClass = 'slu-chip--req';
+                            } elseif ($required === 'Recommandé') {
+                                $chipClass = 'slu-chip--rec';
+                            } elseif ($required === 'Selon cas') {
+                                $chipClass = 'slu-chip--cond';
+                            }
+                            ?>
+                            <tr>
+                                <td><strong><?= e((string)$field['field']) ?></strong></td>
+                                <td><?= e((string)$field['label']) ?></td>
+                                <td><span class="slu-chip <?= e($chipClass) ?>"><?= e($required) ?></span></td>
+                                <td><?= e((string)$field['examples']) ?></td>
+                                <td><?= e((string)$field['description']) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="slu-note">
+                Minimum conseillé pour un import propre :
+                <strong>operation_date</strong>,
+                <strong>amount</strong>,
+                <strong>client_code</strong>,
+                <strong>operation_type</strong>,
+                <strong>label</strong>.  
+                Les comptes source / destination peuvent être fournis si le fichier les porte déjà, sinon ils pourront être complétés ou résolus au mapping selon les règles métier.
             </div>
         </div>
 
