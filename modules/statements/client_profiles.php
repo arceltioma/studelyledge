@@ -288,14 +288,14 @@ require_once __DIR__ . '/../../includes/document_start.php';
                 <?php if ($previewPdf !== ''): ?>
                     <div style="height:780px; border:1px solid rgba(148,163,184,0.18); border-radius:14px; overflow:hidden;">
                         <iframe
-                            src="<?= e(APP_URL . ltrim($previewPdf, '/')) ?>"
+                            src="<?= e(APP_URL . 'modules/statements/export_file.php?file=' . rawurlencode(basename($previewPdf))) ?>"
                             style="width:100%; height:100%; border:none; overflow:auto;"
                             title="Aperçu PDF fiches clients"
                         ></iframe>
                     </div>
 
                     <div class="btn-group" style="margin-top:16px;">
-                        <a class="btn btn-secondary" href="<?= e(APP_URL . ltrim($previewPdf, '/')) ?>" target="_blank">Ouvrir l’aperçu</a>
+                        <a class="btn btn-secondary" href="<?= e(APP_URL . 'modules/statements/export_file.php?file=' . rawurlencode(basename($previewPdf))) ?>" target="_blank">Ouvrir l’aperçu</a>
                     </div>
                 <?php else: ?>
                     <div class="dashboard-note">

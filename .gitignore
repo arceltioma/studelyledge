@@ -1,0 +1,28 @@
+# Dépendances Composer (installer avec : composer install)
+/vendor/
+
+# Configuration propre à chaque environnement (identifiants, URL)
+/config/local.php
+.env
+.env.*
+
+# Données générées : exports clients, imports, journaux
+/exports/*
+!/exports/.htaccess
+/uploads/**/*
+!/uploads/.htaccess
+!/uploads/*/
+!/uploads/*/.htaccess
+/logs/*
+!/logs/.htaccess
+
+# Dumps et sauvegardes de base contenant des données réelles
+/database/local/
+*.sql.gz
+*.bak
+
+# Éditeurs / OS
+/.idea/
+/.vscode/
+.DS_Store
+Thumbs.db

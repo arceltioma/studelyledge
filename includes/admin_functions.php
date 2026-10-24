@@ -39,41 +39,48 @@ if (!function_exists('e')) {
     }
 }
 
-if (!function_exists('clean_input')) {
-    function clean_input(?string $value): string
+require_once __DIR__ . '/../config/security.php';
+
+if (!function_exists('sl_schema_map')) {
+    /**
+     * Carte table => colonnes de la base courante, chargée en une seule requête par requête HTTP.
+     * Remplace les centaines d'appels information_schema faits par tableExists()/columnExists().
+     */
+    function sl_schema_map(PDO $pdo): array
     {
-        return trim((string)($value ?? ''));
+        static $cache = [];
+
+        $key = spl_object_id($pdo);
+        if (!isset($cache[$key])) {
+            $schema = [];
+            $rows = $pdo->query("
+                SELECT TABLE_NAME, COLUMN_NAME
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+            ")->fetchAll(PDO::FETCH_NUM);
+
+            foreach ($rows as $row) {
+                $schema[strtolower((string)$row[0])][strtolower((string)$row[1])] = true;
+            }
+
+            $cache[$key] = $schema;
+        }
+
+        return $cache[$key];
     }
 }
 
 if (!function_exists('tableExists')) {
     function tableExists(PDO $pdo, string $tableName): bool
     {
-        $stmt = $pdo->prepare("
-            SELECT COUNT(*)
-            FROM information_schema.TABLES
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = ?
-        ");
-        $stmt->execute([$tableName]);
-
-        return (int)$stmt->fetchColumn() > 0;
+        return isset(sl_schema_map($pdo)[strtolower($tableName)]);
     }
 }
 
 if (!function_exists('columnExists')) {
     function columnExists(PDO $pdo, string $tableName, string $columnName): bool
     {
-        $stmt = $pdo->prepare("
-            SELECT COUNT(*)
-            FROM information_schema.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = ?
-              AND COLUMN_NAME = ?
-        ");
-        $stmt->execute([$tableName, $columnName]);
-
-        return (int)$stmt->fetchColumn() > 0;
+        return isset(sl_schema_map($pdo)[strtolower($tableName)][strtolower($columnName)]);
     }
 }
 
@@ -10327,5 +10334,34 @@ if (!function_exists('sl_client_view_get_pending_debits_summary')) {
         $result['amount'] = (float)($row['total_amount'] ?? 0);
 
         return $result;
+    }
+}
+
+/*
+|--------------------------------------------------------------------------
+| Relevés : solde d'ouverture avant une date
+|--------------------------------------------------------------------------
+| Partagé par le relevé écran (client_statement.php) et les PDF en masse.
+|--------------------------------------------------------------------------
+*/
+if (!function_exists('findClientOpeningBalanceBeforeDate')) {
+    function findClientOpeningBalanceBeforeDate(PDO $pdo, int $clientId, string $accountNumber, float $initialBalance, string $dateFrom = ''): float
+    {
+        if ($dateFrom === '' || $accountNumber === '') {
+            return $initialBalance;
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT
+                COALESCE(SUM(CASE WHEN debit_account_code = ? THEN amount ELSE 0 END), 0) AS total_debit,
+                COALESCE(SUM(CASE WHEN credit_account_code = ? THEN amount ELSE 0 END), 0) AS total_credit
+            FROM operations
+            WHERE client_id = ?
+              AND operation_date < ?
+        ");
+        $stmt->execute([$accountNumber, $accountNumber, $clientId, $dateFrom]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+        return $initialBalance - (float)($row['total_debit'] ?? 0) + (float)($row['total_credit'] ?? 0);
     }
 }

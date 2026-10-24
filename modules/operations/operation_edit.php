@@ -517,7 +517,7 @@ require_once __DIR__ . '/../../includes/document_start.php';
 
         <script>
         document.addEventListener('DOMContentLoaded', function () {
-            const map = <?= json_encode(function_exists('sl_operation_service_map') ? sl_operation_service_map() : [], JSON_UNESCAPED_UNICODE) ?>;
+            const map = <?= json_for_script(function_exists('sl_operation_service_map') ? sl_operation_service_map() : []) ?>;
             const typeSelect = document.getElementById('operation_type_id');
             const serviceSelect = document.getElementById('service_id');
             const clientWrapper = document.getElementById('client-wrapper');

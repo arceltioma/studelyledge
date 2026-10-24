@@ -187,11 +187,15 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                             <a class="btn btn-sm btn-secondary" href="<?= e(APP_URL) ?>modules/treasury/treasury_view.php?id=<?= (int)$row['id'] ?>">Voir</a>
                                             <a class="btn btn-sm btn-outline" href="<?= e(APP_URL) ?>modules/treasury/treasury_edit.php?id=<?= (int)$row['id'] ?>">Modifier</a>
 
-                                            <?php if ($isActive): ?>
-                                                <a class="btn btn-sm btn-danger" href="<?= e(APP_URL) ?>modules/treasury/treasury_archive.php?id=<?= (int)$row['id'] ?>">Archiver</a>
-                                            <?php else: ?>
-                                                <a class="btn btn-sm btn-success" href="<?= e(APP_URL) ?>modules/treasury/treasury_archive.php?id=<?= (int)$row['id'] ?>&action=reactivate">Réactiver</a>
-                                            <?php endif; ?>
+                                            <form method="POST" action="<?= e(APP_URL) ?>modules/treasury/treasury_archive.php" style="display:inline;" onsubmit="return confirm(<?= e(json_for_script($isActive ? 'Archiver ce compte de trésorerie ?' : 'Réactiver ce compte de trésorerie ?')) ?>);">
+                                                <?= csrf_input() ?>
+                                                <input type="hidden" name="id" value="<?= (int)$row['id'] ?>">
+                                                <?php if ($isActive): ?>
+                                                    <button type="submit" class="btn btn-sm btn-danger">Archiver</button>
+                                                <?php else: ?>
+                                                    <button type="submit" class="btn btn-sm btn-success">Réactiver</button>
+                                                <?php endif; ?>
+                                            </form>
                                         </div>
                                     </td>
                                 </tr>

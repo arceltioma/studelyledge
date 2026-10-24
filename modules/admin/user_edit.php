@@ -124,6 +124,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Rôle invalide.');
         }
 
+        studelyGuardUserRoleChange($roleId, isset($user['role_id']) ? (int)$user['role_id'] : null);
+
+        if ($password !== '') {
+            studelyValidatePasswordStrength($password);
+        }
+
+        if ($userId === (int)($_SESSION['user_id'] ?? 0) && $isActive !== 1) {
+            throw new RuntimeException('Vous ne pouvez pas désactiver votre propre compte.');
+        }
+
         if ($action === 'preview') {
             $permissionCount = 0;
             if (tableExists($pdo, 'role_permissions')) {

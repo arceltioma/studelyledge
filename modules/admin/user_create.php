@@ -97,6 +97,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Rôle invalide.');
         }
 
+        studelyGuardUserRoleChange($roleId);
+        studelyValidatePasswordStrength($password);
+
         if ($action === 'preview') {
             $permissionCount = 0;
             if (tableExists($pdo, 'role_permissions')) {

@@ -53,7 +53,9 @@ if (!function_exists('pmw_consume_intended_url')) {
 
         unset($_SESSION['intended_url']);
 
-        return (string)$url;
+        $fallback = $default ?? (defined('APP_URL') ? APP_URL . 'modules/dashboard/dashboard.php' : '/');
+
+        return safe_redirect_target((string)$url, $fallback);
     }
 }
 
@@ -240,7 +242,6 @@ if (!function_exists('studely_page_permission_map')) {
             'modules/imports/import_upload.php' => 'imports_upload_page',
             'modules/imports/import_preview.php' => 'imports_preview_page',
             'modules/imports/import_validate.php' => 'imports_validate_page',
-            'modules/imports/validate_import_batch.php' => 'imports_validate_batch_page',
             'modules/imports/import_journal.php' => 'imports_journal_page',
             'modules/imports/import_mapping.php' => 'imports_mapping_page',
             'modules/imports/rejected_rows.php' => 'imports_rejected_rows_page',
@@ -293,6 +294,7 @@ if (!function_exists('studely_page_permission_map')) {
             'modules/statements/bulk_statement_export.php' => 'bulk_statement_export_page',
             'modules/statements/generate_statement_pdf.php' => 'generate_statement_pdf_page',
             'modules/statements/generate_bulk_pdf.php' => 'generate_bulk_pdf_page',
+            'modules/statements/export_file.php' => 'statements_view_page',
 
             // Notifications / support
             'modules/notifications/notifications.php' => 'notifications_view_page',
@@ -351,9 +353,88 @@ if (!function_exists('studely_get_page_permission_for_current_script')) {
     }
 }
 
+if (!function_exists('studelyRefreshAuthenticatedUser')) {
+    /**
+     * Revalide l'utilisateur connecté à chaque requête : un compte désactivé ou supprimé
+     * est déconnecté immédiatement, un changement de rôle est pris en compte sans reconnexion.
+     */
+    function studelyRefreshAuthenticatedUser(PDO $pdo): void
+    {
+        static $done = false;
+        if ($done || !pmw_is_logged_in()) {
+            return;
+        }
+        $done = true;
+
+        $stmt = $pdo->prepare("SELECT id, username, role_id, is_active FROM users WHERE id = ? LIMIT 1");
+        $stmt->execute([(int)$_SESSION['user_id']]);
+        $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$user || (int)($user['is_active'] ?? 0) !== 1) {
+            $_SESSION = [];
+            session_regenerate_id(true);
+            pmw_redirect((defined('APP_URL') ? APP_URL : '/') . 'login.php?disabled=1');
+        }
+
+        $roleId = isset($user['role_id']) ? (int)$user['role_id'] : 0;
+        if ($roleId !== (int)($_SESSION['role_id'] ?? 0)) {
+            $_SESSION['role_id'] = $roleId;
+
+            $stmtRole = $pdo->prepare("SELECT code, label FROM roles WHERE id = ? LIMIT 1");
+            $stmtRole->execute([$roleId]);
+            $role = $stmtRole->fetch(PDO::FETCH_ASSOC) ?: [];
+
+            $_SESSION['role_name'] = (string)($role['label'] ?? '');
+            $_SESSION['role'] = (string)($role['code'] ?? '');
+        }
+
+        $_SESSION['username'] = (string)($user['username'] ?? '');
+    }
+}
+
+if (!function_exists('studelyIsSuperAdmin')) {
+    function studelyIsSuperAdmin(): bool
+    {
+        return pmw_is_logged_in() && (int)($_SESSION['role_id'] ?? 0) === 1;
+    }
+}
+
+if (!function_exists('studelyGuardUserRoleChange')) {
+    /**
+     * Empêche l'escalade de privilèges : seul un super administrateur peut attribuer le rôle
+     * super administrateur ou modifier / archiver un compte super administrateur.
+     */
+    function studelyGuardUserRoleChange(?int $targetRoleId, ?int $currentTargetRoleId = null): void
+    {
+        if (studelyIsSuperAdmin()) {
+            return;
+        }
+
+        if ($targetRoleId === 1 || $currentTargetRoleId === 1) {
+            throw new RuntimeException('Seul un super administrateur peut gérer un compte super administrateur.');
+        }
+    }
+}
+
+if (!function_exists('studelyValidatePasswordStrength')) {
+    function studelyValidatePasswordStrength(string $password): void
+    {
+        if (mb_strlen($password, 'UTF-8') < 10) {
+            throw new RuntimeException('Le mot de passe doit contenir au moins 10 caractères.');
+        }
+
+        if (!preg_match('/[A-Za-z]/', $password) || !preg_match('/\d/', $password)) {
+            throw new RuntimeException('Le mot de passe doit contenir au moins une lettre et un chiffre.');
+        }
+    }
+}
+
 if (!function_exists('studelyEnforceCurrentPageAccess')) {
     function studelyEnforceCurrentPageAccess(PDO $pdo): void
     {
+        ensureAuthenticated();
+        studelyRefreshAuthenticatedUser($pdo);
+
         $permissionCode = studely_get_page_permission_for_current_script();
 
         if ($permissionCode === null || $permissionCode === '') {

@@ -161,7 +161,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const warningBox = document.getElementById('bulkWarning');
 
     const totalClients = <?= (int)$totalActiveClients ?>;
-    const statusLabels = <?= json_encode(array_column($statuses, 'name', 'id'), JSON_UNESCAPED_UNICODE) ?>;
+    const statusLabels = <?= json_for_script(array_column($statuses, 'name', 'id')) ?>;
 
     function updateCounter() {
         const selected = Array.from(clients.options).filter(opt => opt.selected).length;

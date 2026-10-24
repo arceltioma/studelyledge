@@ -2,6 +2,7 @@
 require_once __DIR__ . '/../config/app.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../config/security.php';
+require_once __DIR__ . '/../includes/admin_functions.php';
 
 $pdo = getPDO();
 
@@ -20,6 +21,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $subject = trim((string)($_POST['subject'] ?? ''));
         $message = trim((string)($_POST['message'] ?? ''));
 
+        // Champ piège invisible : rempli uniquement par les robots
+        if (trim((string)($_POST['website'] ?? '')) !== '') {
+            throw new RuntimeException('Message refusé.');
+        }
+
+        // Limite anti-spam : 3 messages par session toutes les 10 minutes
+        $recentSends = array_filter(
+            (array)($_SESSION['contact_sent_at'] ?? []),
+            static fn($ts) => (int)$ts > time() - 600
+        );
+        if (count($recentSends) >= 3) {
+            throw new RuntimeException('Trop de messages envoyés. Merci de réessayer dans quelques minutes.');
+        }
+
         if ($name === '' || $email === '' || $subject === '' || $message === '') {
             throw new RuntimeException('Tous les champs sont obligatoires.');
         }
@@ -28,19 +43,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new RuntimeException('Adresse email invalide.');
         }
 
-        if (tableExists($pdo, 'contact_messages')) {
-            $stmt = $pdo->prepare("
-                INSERT INTO contact_messages (name, email, subject, message, created_at)
-                VALUES (?, ?, ?, ?, NOW())
-            ");
-            $stmt->execute([$name, $email, $subject, $message]);
+        if (mb_strlen($name, 'UTF-8') > 150 || mb_strlen($email, 'UTF-8') > 190
+            || mb_strlen($subject, 'UTF-8') > 190 || mb_strlen($message, 'UTF-8') > 5000) {
+            throw new RuntimeException('Un des champs dépasse la longueur autorisée.');
         }
+
+        if (!tableExists($pdo, 'contact_messages')) {
+            throw new RuntimeException('Le service de contact est momentanément indisponible.');
+        }
+
+        $stmt = $pdo->prepare("
+            INSERT INTO contact_messages (full_name, email, subject, message, source_page, ip_address, user_agent, created_at)
+            VALUES (?, ?, ?, ?, 'pages/contact.php', ?, ?, NOW())
+        ");
+        $stmt->execute([
+            $name,
+            $email,
+            $subject,
+            $message,
+            substr((string)($_SERVER['REMOTE_ADDR'] ?? ''), 0, 45),
+            mb_substr((string)($_SERVER['HTTP_USER_AGENT'] ?? ''), 0, 255, 'UTF-8'),
+        ]);
+
+        $recentSends[] = time();
+        $_SESSION['contact_sent_at'] = array_values($recentSends);
 
         $successMessage = 'Votre message a été envoyé avec succès.';
         $_POST = [];
 
     } catch (Throwable $e) {
-        $errorMessage = $e->getMessage();
+        $errorMessage = ($e instanceof RuntimeException && !$e instanceof PDOException)
+            ? $e->getMessage()
+            : 'Envoi impossible pour le moment. Merci de réessayer plus tard.';
     }
 }
 
@@ -116,6 +150,11 @@ require_once __DIR__ . '/../includes/document_start.php';
 
                 <form method="POST" style="display:grid; gap:14px;">
                     <?= csrf_input() ?>
+
+                    <div style="position:absolute; left:-10000px;" aria-hidden="true">
+                        <label>Site web</label>
+                        <input type="text" name="website" tabindex="-1" autocomplete="off">
+                    </div>
 
                     <div>
                         <label>Nom</label>

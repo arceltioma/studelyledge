@@ -17,8 +17,9 @@ $successMessage = '';
 $errorMessage = '';
 
 $editId = (int)($_GET['edit'] ?? $_POST['edit_id'] ?? 0);
-$archiveId = (int)($_GET['archive'] ?? 0);
-$restoreId = (int)($_GET['restore'] ?? 0);
+$isPost = $_SERVER['REQUEST_METHOD'] === 'POST';
+$archiveId = $isPost ? (int)($_POST['archive'] ?? 0) : 0;
+$restoreId = $isPost ? (int)($_POST['restore'] ?? 0) : 0;
 
 if ($archiveId > 0) {
     $pdo->prepare("UPDATE service_accounts SET is_active = 0, updated_at = NOW() WHERE id = ?")->execute([$archiveId]);
@@ -228,11 +229,16 @@ require_once __DIR__ . '/../../includes/document_start.php';
                             <td>
                                 <div class="btn-group">
                                     <a class="btn btn-secondary" href="<?= e(APP_URL) ?>modules/treasury/service_accounts.php?edit=<?= (int)$row['id'] ?>">Modifier</a>
-                                    <?php if ((int)($row['is_active'] ?? 1) === 1): ?>
-                                        <a class="btn btn-danger" href="<?= e(APP_URL) ?>modules/treasury/service_accounts.php?archive=<?= (int)$row['id'] ?>">Archiver</a>
-                                    <?php else: ?>
-                                        <a class="btn btn-outline" href="<?= e(APP_URL) ?>modules/treasury/service_accounts.php?restore=<?= (int)$row['id'] ?>">Réactiver</a>
-                                    <?php endif; ?>
+                                    <form method="POST" action="<?= e(APP_URL) ?>modules/treasury/service_accounts.php" style="display:inline;">
+                                        <?= csrf_input() ?>
+                                        <?php if ((int)($row['is_active'] ?? 1) === 1): ?>
+                                            <input type="hidden" name="archive" value="<?= (int)$row['id'] ?>">
+                                            <button type="submit" class="btn btn-danger" onclick="return confirm('Archiver ce compte ?');">Archiver</button>
+                                        <?php else: ?>
+                                            <input type="hidden" name="restore" value="<?= (int)$row['id'] ?>">
+                                            <button type="submit" class="btn btn-outline">Réactiver</button>
+                                        <?php endif; ?>
+                                    </form>
                                 </div>
                             </td>
                         </tr>

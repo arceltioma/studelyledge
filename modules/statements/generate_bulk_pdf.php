@@ -624,7 +624,7 @@ if (!function_exists('pdfEnsurePublicExportDir')) {
     {
         $exportDir = APP_ROOT . 'exports' . DIRECTORY_SEPARATOR;
         if (!is_dir($exportDir)) {
-            mkdir($exportDir, 0777, true);
+            mkdir($exportDir, 0775, true);
         }
         return $exportDir;
     }
@@ -766,15 +766,23 @@ if (!$clients) {
 
 $options = new Options();
 $options->set('defaultFont', 'DejaVu Sans');
-$options->set('isRemoteEnabled', true);
+$options->set('isRemoteEnabled', false);
 $options->set('isHtml5ParserEnabled', true);
 
 $tmpDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'studelyledger_export_' . uniqid('', true);
-if (!mkdir($tmpDir, 0777, true) && !is_dir($tmpDir)) {
+if (!mkdir($tmpDir, 0700, true) && !is_dir($tmpDir)) {
     $_SESSION['error_message'] = 'Impossible de créer le répertoire temporaire.';
     header('Location: ' . APP_URL . 'modules/statements/index.php');
     exit;
 }
+
+// Nettoyage du répertoire temporaire une fois la réponse envoyée
+register_shutdown_function(static function () use ($tmpDir): void {
+    foreach (glob($tmpDir . DIRECTORY_SEPARATOR . '*') ?: [] as $tmpFile) {
+        @unlink($tmpFile);
+    }
+    @rmdir($tmpDir);
+});
 
 $logoDataUri = pdfLoadLogoDataUri();
 $pdfFiles = [];

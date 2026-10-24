@@ -47,9 +47,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'creat
     }
 }
 
-if (isset($_GET['delete'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'delete') {
     try {
-        $id = (int)$_GET['delete'];
+        $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
             $stmt = $pdo->prepare("DELETE FROM statuses WHERE id = ?");
             $stmt->execute([$id]);
@@ -134,13 +134,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
                                     <td><?= e($status['name']) ?></td>
                                     <td><?= (int)$status['sort_order'] ?></td>
                                     <td>
-                                        <a
-                                            href="<?= e(APP_URL) ?>modules/admin/statuses.php?delete=<?= (int)$status['id'] ?>"
-                                            class="btn btn-danger"
-                                            onclick="return confirm('Supprimer ce statut ?')"
-                                        >
-                                            Supprimer
-                                        </a>
+                                        <form method="POST" action="<?= e(APP_URL) ?>modules/admin/statuses.php" style="display:inline;">
+                                            <?= csrf_input() ?>
+                                            <input type="hidden" name="action" value="delete">
+                                            <input type="hidden" name="id" value="<?= (int)$status['id'] ?>">
+                                            <button type="submit" class="btn btn-danger" onclick="return confirm('Supprimer ce statut ?')">Supprimer</button>
+                                        </form>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>

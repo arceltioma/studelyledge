@@ -1,11 +1,9 @@
 <?php
 
+require_once __DIR__ . '/../config/app.php';
+
 if (session_status() !== PHP_SESSION_ACTIVE) {
     session_start();
-}
-
-if (!defined('APP_URL')) {
-    require_once __DIR__ . '/../config/app.php';
 }
 
 if (!function_exists('isUserLoggedIn')) {
@@ -55,7 +53,7 @@ if (!function_exists('consumeIntendedUrl')) {
 
         unset($_SESSION['intended_url']);
 
-        return $url;
+        return safe_redirect_target($url, $fallback);
     }
 }
 

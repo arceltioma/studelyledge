@@ -76,7 +76,7 @@ if ($userId <= 0) {
 }
 
 $stmtUser = $pdo->prepare("
-    SELECT id, username, is_active
+    SELECT id, username, role_id, is_active
     FROM users
     WHERE id = ?
     LIMIT 1
@@ -112,6 +112,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($currentUserId > 0 && $currentUserId === $userId) {
             throw new RuntimeException('Tu ne peux pas archiver ton propre compte connecté.');
         }
+
+        studelyGuardUserRoleChange(null, isset($user['role_id']) ? (int)$user['role_id'] : null);
 
         $stmt = $pdo->prepare("
             UPDATE users

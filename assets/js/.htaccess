@@ -1,7 +1,6 @@
 Options -Indexes
-RewriteEngine On
 
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-
-RewriteRule ^ index.php [L]
+# Ressources statiques uniquement : aucun script exécutable
+<FilesMatch "\.(php|php[0-9]|phtml|phar)$">
+    Require all denied
+</FilesMatch>

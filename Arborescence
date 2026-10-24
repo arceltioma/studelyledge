@@ -3,12 +3,19 @@ StudelyLedge/
 ├── Arborescence
 ├── composer.json
 ├── composer.lock
-├── hash.php
 ├── index.php
 ├── login.php
 ├── logout.php
-├── project_context_studely_ledger.md
-├── studelyledge.sql
+├── README.md
+│
+├── database/
+│   ├── schema.sql
+│   ├── seed_reference.sql
+│   ├── migrations/
+│   └── local/                (sauvegardes non versionnées)
+│
+├── tools/
+│   └── create_admin.php      (CLI)
 │
 ├── assets/
 │   ├── .htaccess

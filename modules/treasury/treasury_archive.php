@@ -16,7 +16,13 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-$id = (int)($_GET['id'] ?? $_POST['id'] ?? 0);
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    $_SESSION['error_message'] = 'Action non autorisée : utilisez le bouton d’archivage.';
+    header('Location: ' . APP_URL . 'modules/treasury/index.php');
+    exit;
+}
+
+$id = (int)($_POST['id'] ?? 0);
 $userId = (int)($_SESSION['user_id'] ?? 0);
 
 if ($id <= 0) {

@@ -1134,12 +1134,12 @@ require_once __DIR__ . '/../../includes/document_start.php';
 <?php if (!empty($chartLabels)): ?>
 <script>
 window.analyticsChartData = {
-    labels: <?= json_encode($chartLabels, JSON_UNESCAPED_UNICODE) ?>,
-    creditValues: <?= json_encode($creditValues, JSON_UNESCAPED_UNICODE) ?>,
-    debitValues: <?= json_encode($debitValues, JSON_UNESCAPED_UNICODE) ?>,
-    netValues: <?= json_encode($netValues, JSON_UNESCAPED_UNICODE) ?>,
-    xAxisLabel: <?= json_encode($xAxisLabels[$xAxis], JSON_UNESCAPED_UNICODE) ?>,
-    chartType: <?= json_encode($chartType, JSON_UNESCAPED_UNICODE) ?>
+    labels: <?= json_for_script($chartLabels) ?>,
+    creditValues: <?= json_for_script($creditValues) ?>,
+    debitValues: <?= json_for_script($debitValues) ?>,
+    netValues: <?= json_for_script($netValues) ?>,
+    xAxisLabel: <?= json_for_script($xAxisLabels[$xAxis]) ?>,
+    chartType: <?= json_for_script($chartType) ?>
 };
 
 document.addEventListener('DOMContentLoaded', function () {
