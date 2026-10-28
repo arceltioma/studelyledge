@@ -157,7 +157,7 @@ if (!function_exists('sl_treasury_parse_csv_preview')) {
         $delimiter = sl_treasury_detect_delimiter($firstLine);
         rewind($handle);
 
-        $headers = fgetcsv($handle, 0, $delimiter);
+        $headers = fgetcsv($handle, 0, $delimiter, '"', '\\');
         if (!$headers) {
             fclose($handle);
             throw new RuntimeException('Entêtes introuvables.');
@@ -196,7 +196,7 @@ if (!function_exists('sl_treasury_parse_csv_preview')) {
         $rows = [];
         $line = 1;
 
-        while (($data = fgetcsv($handle, 0, $delimiter)) !== false) {
+        while (($data = fgetcsv($handle, 0, $delimiter, '"', '\\')) !== false) {
             $line++;
 
             if (count(array_filter($data, static fn($v) => trim((string)$v) !== '')) === 0) {

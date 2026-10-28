@@ -59,7 +59,7 @@ if (!function_exists('sl_parse_monthly_payment_csv')) {
 
         $header = null;
 
-        while (($data = fgetcsv($handle, 0, ';')) !== false) {
+        while (($data = fgetcsv($handle, 0, ';', '"', '\\')) !== false) {
             if ($header === null) {
                 $header = array_map(static function ($value) {
                     return sl_monthly_normalize_header((string)$value);

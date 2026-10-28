@@ -212,10 +212,10 @@ function sl_parse_csv_file(string $path): array
         return $rows;
     }
 
-    $headers = fgetcsv($handle, 0, ';');
+    $headers = fgetcsv($handle, 0, ';', '"', '\\');
     if (!$headers) {
         rewind($handle);
-        $headers = fgetcsv($handle, 0, ',');
+        $headers = fgetcsv($handle, 0, ',', '"', '\\');
         if (!$headers) {
             fclose($handle);
             return [];
@@ -233,7 +233,7 @@ function sl_parse_csv_file(string $path): array
         return [];
     }
 
-    $headers = fgetcsv($handle, 0, $delimiter);
+    $headers = fgetcsv($handle, 0, $delimiter, '"', '\\');
     if (!$headers) {
         fclose($handle);
         return [];
@@ -242,7 +242,7 @@ function sl_parse_csv_file(string $path): array
     $normalizedHeaders = array_map(static fn($h) => trim((string)$h), $headers);
 
     $line = 1;
-    while (($data = fgetcsv($handle, 0, $delimiter)) !== false) {
+    while (($data = fgetcsv($handle, 0, $delimiter, '"', '\\')) !== false) {
         $line++;
         if (count(array_filter($data, static fn($v) => trim((string)$v) !== '')) === 0) {
             continue;

@@ -4095,7 +4095,7 @@ if (!function_exists('sl_monthly_payment_parse_csv')) {
             throw new RuntimeException('Impossible d’ouvrir le fichier CSV.');
         }
 
-        $header = fgetcsv($handle, 0, $delimiter);
+        $header = fgetcsv($handle, 0, $delimiter, '"', '\\');
         if (!$header) {
             fclose($handle);
             throw new RuntimeException('Le fichier CSV est vide.');
@@ -4109,7 +4109,7 @@ if (!function_exists('sl_monthly_payment_parse_csv')) {
         }, $header);
 
         $lineNumber = 1;
-        while (($data = fgetcsv($handle, 0, $delimiter)) !== false) {
+        while (($data = fgetcsv($handle, 0, $delimiter, '"', '\\')) !== false) {
             $lineNumber++;
             if (count(array_filter($data, static fn($v) => trim((string)$v) !== '')) === 0) {
                 continue;

@@ -123,7 +123,7 @@ if (!function_exists('sl_service_import_read_csv')) {
         $delimiter = sl_service_import_detect_delimiter($firstLine);
         rewind($handle);
 
-        $headers = fgetcsv($handle, 0, $delimiter);
+        $headers = fgetcsv($handle, 0, $delimiter, '"', '\\');
         if (!$headers) {
             fclose($handle);
             throw new RuntimeException('Entêtes CSV introuvables.');
@@ -133,7 +133,7 @@ if (!function_exists('sl_service_import_read_csv')) {
         $rows = [];
         $lineNumber = 1;
 
-        while (($row = fgetcsv($handle, 0, $delimiter)) !== false) {
+        while (($row = fgetcsv($handle, 0, $delimiter, '"', '\\')) !== false) {
             $lineNumber++;
 
             if ($row === [null] || count(array_filter($row, static fn($v) => trim((string)$v) !== '')) === 0) {

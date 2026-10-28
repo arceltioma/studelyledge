@@ -474,7 +474,7 @@ if ($export === 'csv') {
 
     $out = fopen('php://output', 'w');
     fprintf($out, chr(0xEF) . chr(0xBB) . chr(0xBF));
-    fputcsv($out, [$xAxisLabels[$xAxis], 'Credits', 'Debits', 'Net'], ';');
+    fputcsv($out, [$xAxisLabels[$xAxis], 'Credits', 'Debits', 'Net'], ';', '"', '\\');
 
     foreach ($rows as $row) {
         fputcsv($out, [
@@ -482,7 +482,7 @@ if ($export === 'csv') {
             number_format((float)$row['total_credit'], 2, '.', ''),
             number_format((float)$row['total_debit'], 2, '.', ''),
             number_format((float)$row['total_net'], 2, '.', ''),
-        ], ';');
+        ], ';', '"', '\\');
     }
 
     fclose($out);

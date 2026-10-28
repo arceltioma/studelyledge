@@ -314,7 +314,7 @@ if (!function_exists('bsp_parse_statement_file')) {
             throw new RuntimeException('Impossible de lire le fichier importé.');
         }
 
-        $headerRow = fgetcsv($handle, 0, $delimiter);
+        $headerRow = fgetcsv($handle, 0, $delimiter, '"', '\\');
         if (!$headerRow) {
             fclose($handle);
             throw new RuntimeException('Le fichier est vide.');
@@ -329,7 +329,7 @@ if (!function_exists('bsp_parse_statement_file')) {
         $rows = [];
         $rowNo = 1;
 
-        while (($data = fgetcsv($handle, 0, $delimiter)) !== false) {
+        while (($data = fgetcsv($handle, 0, $delimiter, '"', '\\')) !== false) {
             $rowNo++;
             $assoc = [];
 
